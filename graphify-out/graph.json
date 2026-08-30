@@ -4,20 +4,36 @@
   "graph": {
     "hyperedges": [
       {
-        "id": "skill_instruction_separation_pattern",
-        "label": "Skill Instructions Kept Separate From CLAUDE.md",
+        "id": "brayn_core_capabilities",
+        "label": "Shared Customer Intelligence Foundation",
         "nodes": [
-          "claudemd_graphify",
-          "claudemd_caveman",
-          "claudemd_ponytail",
-          "claudemd_agent_browser",
-          "claudemd_pr_review_toolkit",
-          "claudemd_security"
+          "brayn_unified_customer_intelligence_record",
+          "brayn_customer_intelligence_view",
+          "brayn_customer_activity_history",
+          "brayn_customer_risk_engagement_state",
+          "brayn_revenue_opportunity_detector",
+          "brayn_merchant_knowledge_policy_store",
+          "brayn_merchant_business_analyst",
+          "brayn_ai_action_control",
+          "brayn_business_action_automation"
+        ],
+        "relation": "participate_in",
+        "confidence": "EXTRACTED",
+        "confidence_score": 1.0,
+        "source_file": "README.md"
+      },
+      {
+        "id": "brayn_action_governance",
+        "label": "AI Action Governance Flow",
+        "nodes": [
+          "brayn_ai_action_control",
+          "brayn_business_action_automation",
+          "brayn_principle_permission_aware_actions"
         ],
         "relation": "form",
         "confidence": "EXTRACTED",
         "confidence_score": 1.0,
-        "source_file": "CLAUDE.md"
+        "source_file": "README.md"
       }
     ]
   },
@@ -31,9 +47,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_brayn_project",
       "community": 0,
-      "norm_label": "brayn"
+      "norm_label": "brayn",
+      "id": "claudemd_brayn_project"
     },
     {
       "label": "Authority (Rule 1)",
@@ -44,9 +60,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_authority",
-      "community": 2,
-      "norm_label": "authority (rule 1)"
+      "community": 0,
+      "norm_label": "authority (rule 1)",
+      "id": "claudemd_authority"
     },
     {
       "label": "Obsidian",
@@ -57,9 +73,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_obsidian",
-      "community": 2,
-      "norm_label": "obsidian"
+      "community": 0,
+      "norm_label": "obsidian",
+      "id": "claudemd_obsidian"
     },
     {
       "label": "Claude Responsibility (Rule 2)",
@@ -70,9 +86,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_claude_responsibility",
       "community": 0,
-      "norm_label": "claude responsibility (rule 2)"
+      "norm_label": "claude responsibility (rule 2)",
+      "id": "claudemd_claude_responsibility"
     },
     {
       "label": "Part-by-Part Implementation (Rule 3)",
@@ -83,9 +99,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_part_by_part_implementation",
-      "community": 3,
-      "norm_label": "part-by-part implementation (rule 3)"
+      "community": 0,
+      "norm_label": "part-by-part implementation (rule 3)",
+      "id": "claudemd_part_by_part_implementation"
     },
     {
       "label": "Before Coding (Rule 4)",
@@ -96,9 +112,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_before_coding",
       "community": 0,
-      "norm_label": "before coding (rule 4)"
+      "norm_label": "before coding (rule 4)",
+      "id": "claudemd_before_coding"
     },
     {
       "label": "Graphify",
@@ -109,9 +125,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_graphify",
-      "community": 2,
-      "norm_label": "graphify"
+      "community": 0,
+      "norm_label": "graphify",
+      "id": "claudemd_graphify"
     },
     {
       "label": "Context Efficiency (Rule 5)",
@@ -122,9 +138,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_context_efficiency",
-      "community": 2,
-      "norm_label": "context efficiency (rule 5)"
+      "community": 0,
+      "norm_label": "context efficiency (rule 5)",
+      "id": "claudemd_context_efficiency"
     },
     {
       "label": "Claude-Mem",
@@ -135,9 +151,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_claude_mem",
-      "community": 2,
-      "norm_label": "claude-mem"
+      "community": 0,
+      "norm_label": "claude-mem",
+      "id": "claudemd_claude_mem"
     },
     {
       "label": "Caveman",
@@ -148,9 +164,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_caveman",
-      "community": 2,
-      "norm_label": "caveman"
+      "community": 0,
+      "norm_label": "caveman",
+      "id": "claudemd_caveman"
     },
     {
       "label": "Scope Control (Rule 6)",
@@ -161,9 +177,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_scope_control",
       "community": 0,
-      "norm_label": "scope control (rule 6)"
+      "norm_label": "scope control (rule 6)",
+      "id": "claudemd_scope_control"
     },
     {
       "label": "Existing Code & Reuse (Rule 7)",
@@ -174,9 +190,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_existing_code_reuse",
       "community": 0,
-      "norm_label": "existing code & reuse (rule 7)"
+      "norm_label": "existing code & reuse (rule 7)",
+      "id": "claudemd_existing_code_reuse"
     },
     {
       "label": "Architecture Discipline (Rule 8)",
@@ -187,9 +203,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_architecture_discipline",
-      "community": 1,
-      "norm_label": "architecture discipline (rule 8)"
+      "community": 0,
+      "norm_label": "architecture discipline (rule 8)",
+      "id": "claudemd_architecture_discipline"
     },
     {
       "label": "Security (Rule 9)",
@@ -200,9 +216,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_security",
-      "community": 1,
-      "norm_label": "security (rule 9)"
+      "community": 0,
+      "norm_label": "security (rule 9)",
+      "id": "claudemd_security"
     },
     {
       "label": "Testing & Verification (Rule 10)",
@@ -213,9 +229,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_testing_verification",
-      "community": 3,
-      "norm_label": "testing & verification (rule 10)"
+      "community": 0,
+      "norm_label": "testing & verification (rule 10)",
+      "id": "claudemd_testing_verification"
     },
     {
       "label": "Failure & Ambiguity (Rule 11)",
@@ -226,9 +242,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_failure_ambiguity",
-      "community": 4,
-      "norm_label": "failure & ambiguity (rule 11)"
+      "community": 0,
+      "norm_label": "failure & ambiguity (rule 11)",
+      "id": "claudemd_failure_ambiguity"
     },
     {
       "label": "No Guessing (Rule 12)",
@@ -239,9 +255,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_no_guessing",
-      "community": 4,
-      "norm_label": "no guessing (rule 12)"
+      "community": 0,
+      "norm_label": "no guessing (rule 12)",
+      "id": "claudemd_no_guessing"
     },
     {
       "label": "Result-Driven Development (Rule 13)",
@@ -252,9 +268,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_result_driven_development",
-      "community": 3,
-      "norm_label": "result-driven development (rule 13)"
+      "community": 0,
+      "norm_label": "result-driven development (rule 13)",
+      "id": "claudemd_result_driven_development"
     },
     {
       "label": "Completion Report (Rule 14)",
@@ -265,9 +281,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_completion_report",
-      "community": 3,
-      "norm_label": "completion report (rule 14)"
+      "community": 0,
+      "norm_label": "completion report (rule 14)",
+      "id": "claudemd_completion_report"
     },
     {
       "label": "Human Approval (Rule 15)",
@@ -278,9 +294,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_human_approval",
       "community": 0,
-      "norm_label": "human approval (rule 15)"
+      "norm_label": "human approval (rule 15)",
+      "id": "claudemd_human_approval"
     },
     {
       "label": "Ponytail",
@@ -291,9 +307,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_ponytail",
-      "community": 1,
-      "norm_label": "ponytail"
+      "community": 0,
+      "norm_label": "ponytail",
+      "id": "claudemd_ponytail"
     },
     {
       "label": "Agent Browser",
@@ -304,9 +320,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_agent_browser",
-      "community": 1,
-      "norm_label": "agent browser"
+      "community": 0,
+      "norm_label": "agent browser",
+      "id": "claudemd_agent_browser"
     },
     {
       "label": "pr-review-toolkit",
@@ -317,9 +333,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_pr_review_toolkit",
-      "community": 1,
-      "norm_label": "pr-review-toolkit"
+      "community": 0,
+      "norm_label": "pr-review-toolkit",
+      "id": "claudemd_pr_review_toolkit"
     },
     {
       "label": "Skill Instruction Separation",
@@ -330,9 +346,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "claudemd_skill_separation_design",
-      "community": 1,
-      "norm_label": "skill instruction separation"
+      "community": 0,
+      "norm_label": "skill instruction separation",
+      "id": "claudemd_skill_separation_design"
     },
     {
       "label": "BRAYN (README)",
@@ -343,9 +359,895 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "readme_brayn_project",
       "community": 0,
-      "norm_label": "brayn (readme)"
+      "norm_label": "brayn (readme)",
+      "id": "readme_brayn_project"
+    },
+    {
+      "label": ".prettierrc.json",
+      "file_type": "code",
+      "source_file": ".prettierrc.json",
+      "source_location": "L1",
+      "community": 7,
+      "norm_label": ".prettierrc.json",
+      "id": "prettierrc_json"
+    },
+    {
+      "label": "semi",
+      "file_type": "code",
+      "source_file": ".prettierrc.json",
+      "source_location": "L2",
+      "community": 7,
+      "norm_label": "semi",
+      "id": "brayn_prettierrc_semi"
+    },
+    {
+      "label": "singleQuote",
+      "file_type": "code",
+      "source_file": ".prettierrc.json",
+      "source_location": "L3",
+      "community": 7,
+      "norm_label": "singlequote",
+      "id": "brayn_prettierrc_singlequote"
+    },
+    {
+      "label": "trailingComma",
+      "file_type": "code",
+      "source_file": ".prettierrc.json",
+      "source_location": "L4",
+      "community": 7,
+      "norm_label": "trailingcomma",
+      "id": "brayn_prettierrc_trailingcomma"
+    },
+    {
+      "label": "printWidth",
+      "file_type": "code",
+      "source_file": ".prettierrc.json",
+      "source_location": "L5",
+      "community": 7,
+      "norm_label": "printwidth",
+      "id": "brayn_prettierrc_printwidth"
+    },
+    {
+      "label": "eslint.config.mjs",
+      "file_type": "code",
+      "source_file": "eslint.config.mjs",
+      "source_location": "L1",
+      "community": 10,
+      "norm_label": "eslint.config.mjs",
+      "id": "eslint_config_mjs"
+    },
+    {
+      "label": "package.json",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L1",
+      "community": 1,
+      "norm_label": "package.json",
+      "id": "package_json"
+    },
+    {
+      "label": "name",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L2",
+      "community": 1,
+      "norm_label": "name",
+      "id": "brayn_package_name"
+    },
+    {
+      "label": "private",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L3",
+      "community": 1,
+      "norm_label": "private",
+      "id": "brayn_package_private"
+    },
+    {
+      "label": "type",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L4",
+      "community": 1,
+      "norm_label": "type",
+      "id": "brayn_package_type"
+    },
+    {
+      "label": "packageManager",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L5",
+      "community": 1,
+      "norm_label": "packagemanager",
+      "id": "brayn_package_packagemanager"
+    },
+    {
+      "label": "engines",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L6",
+      "community": 1,
+      "norm_label": "engines",
+      "id": "brayn_package_engines"
+    },
+    {
+      "label": "node",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L7",
+      "community": 1,
+      "norm_label": "node",
+      "id": "brayn_package_engines_node"
+    },
+    {
+      "label": "scripts",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L9",
+      "community": 1,
+      "norm_label": "scripts",
+      "id": "brayn_package_scripts"
+    },
+    {
+      "label": "build",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L10",
+      "community": 1,
+      "norm_label": "build",
+      "id": "brayn_package_scripts_build"
+    },
+    {
+      "label": "dev",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L11",
+      "community": 1,
+      "norm_label": "dev",
+      "id": "brayn_package_scripts_dev"
+    },
+    {
+      "label": "lint",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L12",
+      "community": 1,
+      "norm_label": "lint",
+      "id": "brayn_package_scripts_lint"
+    },
+    {
+      "label": "test",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L13",
+      "community": 1,
+      "norm_label": "test",
+      "id": "brayn_package_scripts_test"
+    },
+    {
+      "label": "typecheck",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L14",
+      "community": 1,
+      "norm_label": "typecheck",
+      "id": "brayn_package_scripts_typecheck"
+    },
+    {
+      "label": "format",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L15",
+      "community": 1,
+      "norm_label": "format",
+      "id": "brayn_package_scripts_format"
+    },
+    {
+      "label": "format:check",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L16",
+      "community": 1,
+      "norm_label": "format:check",
+      "id": "brayn_package_scripts_format_check"
+    },
+    {
+      "label": "devDependencies",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L18",
+      "community": 5,
+      "norm_label": "devdependencies",
+      "id": "brayn_package_devdependencies"
+    },
+    {
+      "label": "@types/node",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L19",
+      "community": 5,
+      "norm_label": "@types/node",
+      "id": "brayn_package_devdependencies_types_node"
+    },
+    {
+      "label": "eslint",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L20",
+      "community": 5,
+      "norm_label": "eslint",
+      "id": "brayn_package_devdependencies_eslint"
+    },
+    {
+      "label": "eslint-config-prettier",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L21",
+      "community": 5,
+      "norm_label": "eslint-config-prettier",
+      "id": "brayn_package_devdependencies_eslint_config_prettier"
+    },
+    {
+      "label": "prettier",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L22",
+      "community": 5,
+      "norm_label": "prettier",
+      "id": "brayn_package_devdependencies_prettier"
+    },
+    {
+      "label": "turbo",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L23",
+      "community": 5,
+      "norm_label": "turbo",
+      "id": "brayn_package_devdependencies_turbo"
+    },
+    {
+      "label": "typescript",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L24",
+      "community": 5,
+      "norm_label": "typescript",
+      "id": "brayn_package_devdependencies_typescript"
+    },
+    {
+      "label": "typescript-eslint",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L25",
+      "community": 5,
+      "norm_label": "typescript-eslint",
+      "id": "brayn_package_devdependencies_typescript_eslint"
+    },
+    {
+      "label": "vitest",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L26",
+      "community": 5,
+      "norm_label": "vitest",
+      "id": "brayn_package_devdependencies_vitest"
+    },
+    {
+      "label": "dependencies",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L28",
+      "community": 1,
+      "norm_label": "dependencies",
+      "id": "brayn_package_dependencies"
+    },
+    {
+      "label": "zod",
+      "file_type": "code",
+      "source_file": "package.json",
+      "source_location": "L29",
+      "community": 1,
+      "norm_label": "zod",
+      "id": "brayn_package_dependencies_zod"
+    },
+    {
+      "label": "skills-lock.json",
+      "file_type": "code",
+      "source_file": "skills-lock.json",
+      "source_location": "L1",
+      "community": 6,
+      "norm_label": "skills-lock.json",
+      "id": "skills_lock_json"
+    },
+    {
+      "label": "version",
+      "file_type": "code",
+      "source_file": "skills-lock.json",
+      "source_location": "L2",
+      "community": 6,
+      "norm_label": "version",
+      "id": "brayn_skills_lock_version"
+    },
+    {
+      "label": "skills",
+      "file_type": "code",
+      "source_file": "skills-lock.json",
+      "source_location": "L3",
+      "community": 6,
+      "norm_label": "skills",
+      "id": "brayn_skills_lock_skills"
+    },
+    {
+      "label": "agent-browser",
+      "file_type": "code",
+      "source_file": "skills-lock.json",
+      "source_location": "L4",
+      "community": 6,
+      "norm_label": "agent-browser",
+      "id": "brayn_skills_lock_skills_agent_browser"
+    },
+    {
+      "label": "source",
+      "file_type": "code",
+      "source_file": "skills-lock.json",
+      "source_location": "L5",
+      "community": 6,
+      "norm_label": "source",
+      "id": "brayn_skills_lock_agent_browser_source"
+    },
+    {
+      "label": "sourceType",
+      "file_type": "code",
+      "source_file": "skills-lock.json",
+      "source_location": "L6",
+      "community": 6,
+      "norm_label": "sourcetype",
+      "id": "brayn_skills_lock_agent_browser_sourcetype"
+    },
+    {
+      "label": "skillPath",
+      "file_type": "code",
+      "source_file": "skills-lock.json",
+      "source_location": "L7",
+      "community": 6,
+      "norm_label": "skillpath",
+      "id": "brayn_skills_lock_agent_browser_skillpath"
+    },
+    {
+      "label": "computedHash",
+      "file_type": "code",
+      "source_file": "skills-lock.json",
+      "source_location": "L8",
+      "community": 6,
+      "norm_label": "computedhash",
+      "id": "brayn_skills_lock_agent_browser_computedhash"
+    },
+    {
+      "label": "tsconfig.base.json",
+      "file_type": "code",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L1",
+      "community": 2,
+      "norm_label": "tsconfig.base.json",
+      "id": "tsconfig_base_json"
+    },
+    {
+      "label": "$schema",
+      "file_type": "code",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L2",
+      "community": 2,
+      "norm_label": "$schema",
+      "id": "brayn_tsconfig_base_schema"
+    },
+    {
+      "label": "compilerOptions",
+      "file_type": "code",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L3",
+      "community": 2,
+      "norm_label": "compileroptions",
+      "id": "brayn_tsconfig_base_compileroptions"
+    },
+    {
+      "label": "target",
+      "file_type": "code",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L4",
+      "community": 2,
+      "norm_label": "target",
+      "id": "brayn_tsconfig_base_compileroptions_target"
+    },
+    {
+      "label": "lib",
+      "file_type": "code",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L5",
+      "community": 2,
+      "norm_label": "lib",
+      "id": "brayn_tsconfig_base_compileroptions_lib"
+    },
+    {
+      "label": "module",
+      "file_type": "code",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L6",
+      "community": 2,
+      "norm_label": "module",
+      "id": "brayn_tsconfig_base_compileroptions_module"
+    },
+    {
+      "label": "moduleResolution",
+      "file_type": "code",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L7",
+      "community": 2,
+      "norm_label": "moduleresolution",
+      "id": "brayn_tsconfig_base_compileroptions_moduleresolution"
+    },
+    {
+      "label": "strict",
+      "file_type": "code",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L8",
+      "community": 2,
+      "norm_label": "strict",
+      "id": "brayn_tsconfig_base_compileroptions_strict"
+    },
+    {
+      "label": "noUncheckedIndexedAccess",
+      "file_type": "code",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L9",
+      "community": 2,
+      "norm_label": "nouncheckedindexedaccess",
+      "id": "brayn_tsconfig_base_compileroptions_nouncheckedindexedaccess"
+    },
+    {
+      "label": "esModuleInterop",
+      "file_type": "code",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L10",
+      "community": 2,
+      "norm_label": "esmoduleinterop",
+      "id": "brayn_tsconfig_base_compileroptions_esmoduleinterop"
+    },
+    {
+      "label": "forceConsistentCasingInFileNames",
+      "file_type": "code",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L11",
+      "community": 2,
+      "norm_label": "forceconsistentcasinginfilenames",
+      "id": "brayn_tsconfig_base_compileroptions_forceconsistentcasinginfilenames"
+    },
+    {
+      "label": "skipLibCheck",
+      "file_type": "code",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L12",
+      "community": 2,
+      "norm_label": "skiplibcheck",
+      "id": "brayn_tsconfig_base_compileroptions_skiplibcheck"
+    },
+    {
+      "label": "resolveJsonModule",
+      "file_type": "code",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L13",
+      "community": 2,
+      "norm_label": "resolvejsonmodule",
+      "id": "brayn_tsconfig_base_compileroptions_resolvejsonmodule"
+    },
+    {
+      "label": "isolatedModules",
+      "file_type": "code",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L14",
+      "community": 2,
+      "norm_label": "isolatedmodules",
+      "id": "brayn_tsconfig_base_compileroptions_isolatedmodules"
+    },
+    {
+      "label": "declaration",
+      "file_type": "code",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L15",
+      "community": 2,
+      "norm_label": "declaration",
+      "id": "brayn_tsconfig_base_compileroptions_declaration"
+    },
+    {
+      "label": "sourceMap",
+      "file_type": "code",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L16",
+      "community": 2,
+      "norm_label": "sourcemap",
+      "id": "brayn_tsconfig_base_compileroptions_sourcemap"
+    },
+    {
+      "label": "turbo.json",
+      "file_type": "code",
+      "source_file": "turbo.json",
+      "source_location": "L1",
+      "community": 4,
+      "norm_label": "turbo.json",
+      "id": "turbo_json"
+    },
+    {
+      "label": "$schema",
+      "file_type": "code",
+      "source_file": "turbo.json",
+      "source_location": "L2",
+      "community": 4,
+      "norm_label": "$schema",
+      "id": "brayn_turbo_schema"
+    },
+    {
+      "label": "tasks",
+      "file_type": "code",
+      "source_file": "turbo.json",
+      "source_location": "L3",
+      "community": 4,
+      "norm_label": "tasks",
+      "id": "brayn_turbo_tasks"
+    },
+    {
+      "label": "build",
+      "file_type": "code",
+      "source_file": "turbo.json",
+      "source_location": "L4",
+      "community": 4,
+      "norm_label": "build",
+      "id": "brayn_turbo_tasks_build"
+    },
+    {
+      "label": "dependsOn",
+      "file_type": "code",
+      "source_file": "turbo.json",
+      "source_location": "L5",
+      "community": 4,
+      "norm_label": "dependson",
+      "id": "brayn_turbo_build_dependson"
+    },
+    {
+      "label": "outputs",
+      "file_type": "code",
+      "source_file": "turbo.json",
+      "source_location": "L6",
+      "community": 4,
+      "norm_label": "outputs",
+      "id": "brayn_turbo_build_outputs"
+    },
+    {
+      "label": "dev",
+      "file_type": "code",
+      "source_file": "turbo.json",
+      "source_location": "L8",
+      "community": 4,
+      "norm_label": "dev",
+      "id": "brayn_turbo_tasks_dev"
+    },
+    {
+      "label": "cache",
+      "file_type": "code",
+      "source_file": "turbo.json",
+      "source_location": "L9",
+      "community": 4,
+      "norm_label": "cache",
+      "id": "brayn_turbo_dev_cache"
+    },
+    {
+      "label": "persistent",
+      "file_type": "code",
+      "source_file": "turbo.json",
+      "source_location": "L10",
+      "community": 4,
+      "norm_label": "persistent",
+      "id": "brayn_turbo_dev_persistent"
+    },
+    {
+      "label": "lint",
+      "file_type": "code",
+      "source_file": "turbo.json",
+      "source_location": "L12",
+      "community": 4,
+      "norm_label": "lint",
+      "id": "brayn_turbo_tasks_lint"
+    },
+    {
+      "label": "typecheck",
+      "file_type": "code",
+      "source_file": "turbo.json",
+      "source_location": "L13",
+      "community": 4,
+      "norm_label": "typecheck",
+      "id": "brayn_turbo_tasks_typecheck"
+    },
+    {
+      "label": "test",
+      "file_type": "code",
+      "source_file": "turbo.json",
+      "source_location": "L14",
+      "community": 4,
+      "norm_label": "test",
+      "id": "brayn_turbo_tasks_test"
+    },
+    {
+      "label": "settings.json",
+      "file_type": "code",
+      "source_file": ".claude/settings.json",
+      "source_location": "L1",
+      "community": 9,
+      "norm_label": "settings.json",
+      "id": "claude_settings_json"
+    },
+    {
+      "label": "hooks",
+      "file_type": "code",
+      "source_file": ".claude/settings.json",
+      "source_location": "L2",
+      "community": 9,
+      "norm_label": "hooks",
+      "id": "claude_settings_hooks"
+    },
+    {
+      "label": "PreToolUse",
+      "file_type": "code",
+      "source_file": ".claude/settings.json",
+      "source_location": "L3",
+      "community": 9,
+      "norm_label": "pretooluse",
+      "id": "claude_settings_hooks_pretooluse"
+    },
+    {
+      "label": "pnpm Workspace Config",
+      "file_type": "code",
+      "source_file": "pnpm-workspace.yaml",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "community": 3,
+      "norm_label": "pnpm workspace config",
+      "id": "pnpm_workspace_config"
+    },
+    {
+      "label": "BRAYN README",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "community": 3,
+      "norm_label": "brayn readme",
+      "id": "readme_brayn"
+    },
+    {
+      "label": "Unified Customer Intelligence Record",
+      "file_type": "rationale",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "community": 3,
+      "norm_label": "unified customer intelligence record",
+      "id": "brayn_unified_customer_intelligence_record"
+    },
+    {
+      "label": "Customer Intelligence View",
+      "file_type": "rationale",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "community": 3,
+      "norm_label": "customer intelligence view",
+      "id": "brayn_customer_intelligence_view"
+    },
+    {
+      "label": "Customer Activity History",
+      "file_type": "rationale",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "community": 3,
+      "norm_label": "customer activity history",
+      "id": "brayn_customer_activity_history"
+    },
+    {
+      "label": "Customer Risk & Engagement State",
+      "file_type": "rationale",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "community": 3,
+      "norm_label": "customer risk & engagement state",
+      "id": "brayn_customer_risk_engagement_state"
+    },
+    {
+      "label": "Revenue Opportunity Detector",
+      "file_type": "rationale",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "community": 3,
+      "norm_label": "revenue opportunity detector",
+      "id": "brayn_revenue_opportunity_detector"
+    },
+    {
+      "label": "Merchant Knowledge & Policy Store",
+      "file_type": "rationale",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "community": 3,
+      "norm_label": "merchant knowledge & policy store",
+      "id": "brayn_merchant_knowledge_policy_store"
+    },
+    {
+      "label": "Merchant Business Analyst",
+      "file_type": "rationale",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "community": 3,
+      "norm_label": "merchant business analyst",
+      "id": "brayn_merchant_business_analyst"
+    },
+    {
+      "label": "AI Action Control",
+      "file_type": "rationale",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "community": 3,
+      "norm_label": "ai action control",
+      "id": "brayn_ai_action_control"
+    },
+    {
+      "label": "Business Action Automation",
+      "file_type": "rationale",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "community": 3,
+      "norm_label": "business action automation",
+      "id": "brayn_business_action_automation"
+    },
+    {
+      "label": "WAPon",
+      "file_type": "rationale",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "community": 3,
+      "norm_label": "wapon",
+      "id": "brayn_wapon"
+    },
+    {
+      "label": "BRAYN Monorepo Structure",
+      "file_type": "rationale",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "community": 3,
+      "norm_label": "brayn monorepo structure",
+      "id": "brayn_monorepo_structure"
+    },
+    {
+      "label": "Tenant Isolation Principle",
+      "file_type": "rationale",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "community": 3,
+      "norm_label": "tenant isolation principle",
+      "id": "brayn_principle_tenant_isolation"
+    },
+    {
+      "label": "Permission-Aware & Auditable Actions Principle",
+      "file_type": "rationale",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "community": 3,
+      "norm_label": "permission-aware & auditable actions principle",
+      "id": "brayn_principle_permission_aware_actions"
+    },
+    {
+      "label": "Deterministic Business Logic / AI-Enhanced Reasoning Principle",
+      "file_type": "rationale",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "community": 3,
+      "norm_label": "deterministic business logic / ai-enhanced reasoning principle",
+      "id": "brayn_principle_deterministic_ai"
+    },
+    {
+      "label": "agent-browser SKILL (.agents)",
+      "file_type": "document",
+      "source_file": ".agents/skills/agent-browser/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "community": 8,
+      "norm_label": "agent-browser skill (.agents)",
+      "id": "agent_browser_skill_agents"
+    },
+    {
+      "label": "agent-browser SKILL (.claude)",
+      "file_type": "document",
+      "source_file": ".claude/skills/agent-browser/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "community": 8,
+      "norm_label": "agent-browser skill (.claude)",
+      "id": "agent_browser_skill_claude"
+    },
+    {
+      "label": "agent-browser Observability Dashboard",
+      "file_type": "rationale",
+      "source_file": ".agents/skills/agent-browser/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "community": 8,
+      "norm_label": "agent-browser observability dashboard",
+      "id": "agent_browser_dashboard"
     }
   ],
   "links": [
@@ -516,8 +1418,8 @@
       "source_file": "README.md",
       "source_location": "title",
       "weight": 1.0,
-      "source": "readme_brayn_project",
-      "target": "claudemd_brayn_project"
+      "source": "claudemd_brayn_project",
+      "target": "readme_brayn_project"
     },
     {
       "relation": "references",
@@ -556,8 +1458,8 @@
       "source_file": "CLAUDE.md",
       "source_location": "sections 1,15",
       "weight": 1.0,
-      "source": "claudemd_human_approval",
-      "target": "claudemd_authority"
+      "source": "claudemd_authority",
+      "target": "claudemd_human_approval"
     },
     {
       "relation": "conceptually_related_to",
@@ -616,8 +1518,8 @@
       "source_file": "CLAUDE.md",
       "source_location": "section 5",
       "weight": 1.0,
-      "source": "claudemd_context_efficiency",
-      "target": "claudemd_graphify"
+      "source": "claudemd_graphify",
+      "target": "claudemd_context_efficiency"
     },
     {
       "relation": "references",
@@ -626,8 +1528,8 @@
       "source_file": "CLAUDE.md",
       "source_location": "closing note",
       "weight": 1.0,
-      "source": "claudemd_skill_separation_design",
-      "target": "claudemd_graphify"
+      "source": "claudemd_graphify",
+      "target": "claudemd_skill_separation_design"
     },
     {
       "relation": "references",
@@ -656,8 +1558,8 @@
       "source_file": "CLAUDE.md",
       "source_location": "closing note",
       "weight": 1.0,
-      "source": "claudemd_skill_separation_design",
-      "target": "claudemd_caveman"
+      "source": "claudemd_caveman",
+      "target": "claudemd_skill_separation_design"
     },
     {
       "relation": "conceptually_related_to",
@@ -696,8 +1598,8 @@
       "source_file": "CLAUDE.md",
       "source_location": "closing note",
       "weight": 1.0,
-      "source": "claudemd_skill_separation_design",
-      "target": "claudemd_security"
+      "source": "claudemd_security",
+      "target": "claudemd_skill_separation_design"
     },
     {
       "relation": "conceptually_related_to",
@@ -726,8 +1628,8 @@
       "source_file": "CLAUDE.md",
       "source_location": "closing note",
       "weight": 1.0,
-      "source": "claudemd_skill_separation_design",
-      "target": "claudemd_ponytail"
+      "source": "claudemd_ponytail",
+      "target": "claudemd_skill_separation_design"
     },
     {
       "relation": "references",
@@ -736,8 +1638,8 @@
       "source_file": "CLAUDE.md",
       "source_location": "closing note",
       "weight": 1.0,
-      "source": "claudemd_skill_separation_design",
-      "target": "claudemd_agent_browser"
+      "source": "claudemd_agent_browser",
+      "target": "claudemd_skill_separation_design"
     },
     {
       "relation": "references",
@@ -746,27 +1648,963 @@
       "source_file": "CLAUDE.md",
       "source_location": "closing note",
       "weight": 1.0,
-      "source": "claudemd_skill_separation_design",
-      "target": "claudemd_pr_review_toolkit"
+      "source": "claudemd_pr_review_toolkit",
+      "target": "claudemd_skill_separation_design"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".prettierrc.json",
+      "source_location": "L2",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "prettierrc_json",
+      "target": "brayn_prettierrc_semi"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".prettierrc.json",
+      "source_location": "L3",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "prettierrc_json",
+      "target": "brayn_prettierrc_singlequote"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".prettierrc.json",
+      "source_location": "L4",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "prettierrc_json",
+      "target": "brayn_prettierrc_trailingcomma"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".prettierrc.json",
+      "source_location": "L5",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "prettierrc_json",
+      "target": "brayn_prettierrc_printwidth"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L2",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "package_json",
+      "target": "brayn_package_name"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L3",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "package_json",
+      "target": "brayn_package_private"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L4",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "package_json",
+      "target": "brayn_package_type"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L5",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "package_json",
+      "target": "brayn_package_packagemanager"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L6",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "package_json",
+      "target": "brayn_package_engines"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L9",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "package_json",
+      "target": "brayn_package_scripts"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L18",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "package_json",
+      "target": "brayn_package_devdependencies"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L28",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "package_json",
+      "target": "brayn_package_dependencies"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L7",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_package_engines",
+      "target": "brayn_package_engines_node"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L10",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_package_scripts",
+      "target": "brayn_package_scripts_build"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L11",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_package_scripts",
+      "target": "brayn_package_scripts_dev"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L12",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_package_scripts",
+      "target": "brayn_package_scripts_lint"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L13",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_package_scripts",
+      "target": "brayn_package_scripts_test"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L14",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_package_scripts",
+      "target": "brayn_package_scripts_typecheck"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L15",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_package_scripts",
+      "target": "brayn_package_scripts_format"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L16",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_package_scripts",
+      "target": "brayn_package_scripts_format_check"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L19",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_package_devdependencies",
+      "target": "brayn_package_devdependencies_types_node"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L20",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_package_devdependencies",
+      "target": "brayn_package_devdependencies_eslint"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L21",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_package_devdependencies",
+      "target": "brayn_package_devdependencies_eslint_config_prettier"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L22",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_package_devdependencies",
+      "target": "brayn_package_devdependencies_prettier"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L23",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_package_devdependencies",
+      "target": "brayn_package_devdependencies_turbo"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L24",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_package_devdependencies",
+      "target": "brayn_package_devdependencies_typescript"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L25",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_package_devdependencies",
+      "target": "brayn_package_devdependencies_typescript_eslint"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L26",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_package_devdependencies",
+      "target": "brayn_package_devdependencies_vitest"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "package.json",
+      "source_location": "L29",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_package_dependencies",
+      "target": "brayn_package_dependencies_zod"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "skills-lock.json",
+      "source_location": "L2",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "skills_lock_json",
+      "target": "brayn_skills_lock_version"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "skills-lock.json",
+      "source_location": "L3",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "skills_lock_json",
+      "target": "brayn_skills_lock_skills"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "skills-lock.json",
+      "source_location": "L4",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_skills_lock_skills",
+      "target": "brayn_skills_lock_skills_agent_browser"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "skills-lock.json",
+      "source_location": "L5",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_skills_lock_skills_agent_browser",
+      "target": "brayn_skills_lock_agent_browser_source"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "skills-lock.json",
+      "source_location": "L6",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_skills_lock_skills_agent_browser",
+      "target": "brayn_skills_lock_agent_browser_sourcetype"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "skills-lock.json",
+      "source_location": "L7",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_skills_lock_skills_agent_browser",
+      "target": "brayn_skills_lock_agent_browser_skillpath"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "skills-lock.json",
+      "source_location": "L8",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_skills_lock_skills_agent_browser",
+      "target": "brayn_skills_lock_agent_browser_computedhash"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L2",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "tsconfig_base_json",
+      "target": "brayn_tsconfig_base_schema"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L3",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "tsconfig_base_json",
+      "target": "brayn_tsconfig_base_compileroptions"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L4",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_tsconfig_base_compileroptions",
+      "target": "brayn_tsconfig_base_compileroptions_target"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L5",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_tsconfig_base_compileroptions",
+      "target": "brayn_tsconfig_base_compileroptions_lib"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L6",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_tsconfig_base_compileroptions",
+      "target": "brayn_tsconfig_base_compileroptions_module"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L7",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_tsconfig_base_compileroptions",
+      "target": "brayn_tsconfig_base_compileroptions_moduleresolution"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L8",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_tsconfig_base_compileroptions",
+      "target": "brayn_tsconfig_base_compileroptions_strict"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L9",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_tsconfig_base_compileroptions",
+      "target": "brayn_tsconfig_base_compileroptions_nouncheckedindexedaccess"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L10",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_tsconfig_base_compileroptions",
+      "target": "brayn_tsconfig_base_compileroptions_esmoduleinterop"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L11",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_tsconfig_base_compileroptions",
+      "target": "brayn_tsconfig_base_compileroptions_forceconsistentcasinginfilenames"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L12",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_tsconfig_base_compileroptions",
+      "target": "brayn_tsconfig_base_compileroptions_skiplibcheck"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L13",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_tsconfig_base_compileroptions",
+      "target": "brayn_tsconfig_base_compileroptions_resolvejsonmodule"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L14",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_tsconfig_base_compileroptions",
+      "target": "brayn_tsconfig_base_compileroptions_isolatedmodules"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L15",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_tsconfig_base_compileroptions",
+      "target": "brayn_tsconfig_base_compileroptions_declaration"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tsconfig.base.json",
+      "source_location": "L16",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_tsconfig_base_compileroptions",
+      "target": "brayn_tsconfig_base_compileroptions_sourcemap"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "turbo.json",
+      "source_location": "L2",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "turbo_json",
+      "target": "brayn_turbo_schema"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "turbo.json",
+      "source_location": "L3",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "turbo_json",
+      "target": "brayn_turbo_tasks"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "turbo.json",
+      "source_location": "L4",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_turbo_tasks",
+      "target": "brayn_turbo_tasks_build"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "turbo.json",
+      "source_location": "L8",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_turbo_tasks",
+      "target": "brayn_turbo_tasks_dev"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "turbo.json",
+      "source_location": "L12",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_turbo_tasks",
+      "target": "brayn_turbo_tasks_lint"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "turbo.json",
+      "source_location": "L13",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_turbo_tasks",
+      "target": "brayn_turbo_tasks_typecheck"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "turbo.json",
+      "source_location": "L14",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_turbo_tasks",
+      "target": "brayn_turbo_tasks_test"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "turbo.json",
+      "source_location": "L5",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_turbo_tasks_build",
+      "target": "brayn_turbo_build_dependson"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "turbo.json",
+      "source_location": "L6",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_turbo_tasks_build",
+      "target": "brayn_turbo_build_outputs"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "turbo.json",
+      "source_location": "L9",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_turbo_tasks_dev",
+      "target": "brayn_turbo_dev_cache"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "turbo.json",
+      "source_location": "L10",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "brayn_turbo_tasks_dev",
+      "target": "brayn_turbo_dev_persistent"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".claude/settings.json",
+      "source_location": "L2",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "claude_settings_json",
+      "target": "claude_settings_hooks"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".claude/settings.json",
+      "source_location": "L3",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "claude_settings_hooks",
+      "target": "claude_settings_hooks_pretooluse"
+    },
+    {
+      "relation": "shares_data_with",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "pnpm-workspace.yaml",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "pnpm_workspace_config",
+      "target": "brayn_monorepo_structure"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "readme_brayn",
+      "target": "brayn_unified_customer_intelligence_record"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "readme_brayn",
+      "target": "brayn_customer_intelligence_view"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "readme_brayn",
+      "target": "brayn_customer_activity_history"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "readme_brayn",
+      "target": "brayn_customer_risk_engagement_state"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "readme_brayn",
+      "target": "brayn_revenue_opportunity_detector"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "readme_brayn",
+      "target": "brayn_merchant_knowledge_policy_store"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "readme_brayn",
+      "target": "brayn_merchant_business_analyst"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "readme_brayn",
+      "target": "brayn_ai_action_control"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "readme_brayn",
+      "target": "brayn_business_action_automation"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "readme_brayn",
+      "target": "brayn_wapon"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "readme_brayn",
+      "target": "brayn_monorepo_structure"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "readme_brayn",
+      "target": "brayn_principle_tenant_isolation"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "readme_brayn",
+      "target": "brayn_principle_permission_aware_actions"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "readme_brayn",
+      "target": "brayn_principle_deterministic_ai"
+    },
+    {
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "brayn_unified_customer_intelligence_record",
+      "target": "brayn_revenue_opportunity_detector"
+    },
+    {
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "brayn_unified_customer_intelligence_record",
+      "target": "brayn_customer_intelligence_view"
+    },
+    {
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "brayn_unified_customer_intelligence_record",
+      "target": "brayn_customer_activity_history"
+    },
+    {
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "brayn_unified_customer_intelligence_record",
+      "target": "brayn_customer_risk_engagement_state"
+    },
+    {
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "brayn_unified_customer_intelligence_record",
+      "target": "brayn_merchant_business_analyst"
+    },
+    {
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "brayn_unified_customer_intelligence_record",
+      "target": "brayn_business_action_automation"
+    },
+    {
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "brayn_merchant_knowledge_policy_store",
+      "target": "brayn_merchant_business_analyst"
+    },
+    {
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "brayn_ai_action_control",
+      "target": "brayn_business_action_automation"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "brayn_ai_action_control",
+      "target": "brayn_principle_permission_aware_actions"
+    },
+    {
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.65,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "brayn_ai_action_control",
+      "target": "agent_browser_skill_agents"
+    },
+    {
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": ".agents/skills/agent-browser/SKILL.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "agent_browser_skill_agents",
+      "target": "agent_browser_skill_claude"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": ".agents/skills/agent-browser/SKILL.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "agent_browser_skill_agents",
+      "target": "agent_browser_dashboard"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": ".claude/skills/agent-browser/SKILL.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "agent_browser_skill_claude",
+      "target": "agent_browser_dashboard"
     }
   ],
   "hyperedges": [
     {
-      "id": "skill_instruction_separation_pattern",
-      "label": "Skill Instructions Kept Separate From CLAUDE.md",
+      "id": "brayn_core_capabilities",
+      "label": "Shared Customer Intelligence Foundation",
       "nodes": [
-        "claudemd_graphify",
-        "claudemd_caveman",
-        "claudemd_ponytail",
-        "claudemd_agent_browser",
-        "claudemd_pr_review_toolkit",
-        "claudemd_security"
+        "brayn_unified_customer_intelligence_record",
+        "brayn_customer_intelligence_view",
+        "brayn_customer_activity_history",
+        "brayn_customer_risk_engagement_state",
+        "brayn_revenue_opportunity_detector",
+        "brayn_merchant_knowledge_policy_store",
+        "brayn_merchant_business_analyst",
+        "brayn_ai_action_control",
+        "brayn_business_action_automation"
+      ],
+      "relation": "participate_in",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md"
+    },
+    {
+      "id": "brayn_action_governance",
+      "label": "AI Action Governance Flow",
+      "nodes": [
+        "brayn_ai_action_control",
+        "brayn_business_action_automation",
+        "brayn_principle_permission_aware_actions"
       ],
       "relation": "form",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
-      "source_file": "CLAUDE.md"
+      "source_file": "README.md"
     }
   ],
-  "built_at_commit": "792e7f425bb14e5fb224aefd332c530d265c95bf"
+  "built_at_commit": "00495a5d0cc27288da487301782d2c50fbd9ea12"
 }

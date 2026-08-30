@@ -1,0 +1,10 @@
+packages:
+  - "backend"
+  - "frontend"
+  - "packages/*"
+onlyBuiltDependencies:
+  - "@nestjs/core"
+minimumReleaseAgeExclude:
+  - '@types/node@26.4.0'
+allowBuilds:
+  '@nestjs/core': true

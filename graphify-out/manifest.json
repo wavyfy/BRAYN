@@ -5,8 +5,58 @@
     "semantic_hash": "37d29e54425c312941c1ee6f9ad64ad8"
   },
   "D:\\PROJECTS\\BRAYN\\README.md": {
-    "mtime": 1787836554.5659215,
-    "ast_hash": "c5467917e24da653afeeec4dfc1dd214",
-    "semantic_hash": "c5467917e24da653afeeec4dfc1dd214"
+    "mtime": 1787852475.964746,
+    "ast_hash": "d60cc3201ffa6035da4cea5d4be2749d",
+    "semantic_hash": "d60cc3201ffa6035da4cea5d4be2749d"
+  },
+  "D:\\PROJECTS\\BRAYN\\.prettierrc.json": {
+    "mtime": 1787854741.5161486,
+    "ast_hash": "609bb7f60f4a8eb73782ecbb203381a8",
+    "semantic_hash": "609bb7f60f4a8eb73782ecbb203381a8"
+  },
+  "D:\\PROJECTS\\BRAYN\\eslint.config.mjs": {
+    "mtime": 1787854738.410643,
+    "ast_hash": "c5c04a81967e96b544d450fd0b953d76",
+    "semantic_hash": "c5c04a81967e96b544d450fd0b953d76"
+  },
+  "D:\\PROJECTS\\BRAYN\\package.json": {
+    "mtime": 1787854724.1896932,
+    "ast_hash": "cccc43d53ddb96a13ec7c942384a9613",
+    "semantic_hash": "cccc43d53ddb96a13ec7c942384a9613"
+  },
+  "D:\\PROJECTS\\BRAYN\\skills-lock.json": {
+    "mtime": 1787843035.801717,
+    "ast_hash": "e34765f085e4ff5913d6064b155e2aee",
+    "semantic_hash": "e34765f085e4ff5913d6064b155e2aee"
+  },
+  "D:\\PROJECTS\\BRAYN\\tsconfig.base.json": {
+    "mtime": 1787854734.800553,
+    "ast_hash": "377c694d9d4b61d521a8643e387ecd4c",
+    "semantic_hash": "377c694d9d4b61d521a8643e387ecd4c"
+  },
+  "D:\\PROJECTS\\BRAYN\\turbo.json": {
+    "mtime": 1787854730.6603527,
+    "ast_hash": "d71cc330581cb85797dbfb1c099ecd34",
+    "semantic_hash": "d71cc330581cb85797dbfb1c099ecd34"
+  },
+  "D:\\PROJECTS\\BRAYN\\.claude\\settings.json": {
+    "mtime": 1787846778.8648052,
+    "ast_hash": "d8c6f68d3426d9227d45a26b3ff04c9f",
+    "semantic_hash": "d8c6f68d3426d9227d45a26b3ff04c9f"
+  },
+  "D:\\PROJECTS\\BRAYN\\pnpm-workspace.yaml": {
+    "mtime": 1787854795.7636364,
+    "ast_hash": "9dfe45be60beaf29105701576e552a41",
+    "semantic_hash": "9dfe45be60beaf29105701576e552a41"
+  },
+  "D:\\PROJECTS\\BRAYN\\.agents\\skills\\agent-browser\\SKILL.md": {
+    "mtime": 1787843035.801717,
+    "ast_hash": "ed92243681e40e1c279a284e1c7e9735",
+    "semantic_hash": "ed92243681e40e1c279a284e1c7e9735"
+  },
+  "D:\\PROJECTS\\BRAYN\\.claude\\skills\\agent-browser\\SKILL.md": {
+    "mtime": 1787843035.801717,
+    "ast_hash": "ed92243681e40e1c279a284e1c7e9735",
+    "semantic_hash": "ed92243681e40e1c279a284e1c7e9735"
   }
 }

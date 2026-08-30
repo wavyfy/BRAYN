@@ -3,6 +3,5 @@ dist
 .next
 .turbo
 coverage
-.env
-.env.*
-!.env.example
+pnpm-lock.yaml
+next-env.d.ts
