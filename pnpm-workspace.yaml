@@ -7,4 +7,5 @@ onlyBuiltDependencies:
 minimumReleaseAgeExclude:
   - '@types/node@26.4.0'
 allowBuilds:
+  '@clerk/shared': true
   '@nestjs/core': true

@@ -2,15 +2,24 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 export interface RequestContextStore {
   correlationId: string;
+  /** Set by AuthGuard once a session token is verified. */
+  userId?: string;
+  /**
+   * Set once workspace membership can actually be resolved — requires the
+   * Workspace domain (Phase 2) and Database Foundation (Step 5), neither
+   * of which exist yet. The slot exists now so every log line already has
+   * a place for it per "18. BRAYN Security, Observability & Reliability"
+   * (Logging).
+   */
+  workspaceId?: string;
 }
 
 const storage = new AsyncLocalStorage<RequestContextStore>();
 
 /**
- * Ambient per-request context (correlation id today; workspace/user once
- * those domains exist). Runs the given callback with the context attached
- * so any log call anywhere in the request's async chain can read it
- * without threading it through every function signature.
+ * Ambient per-request context. Runs the given callback with the context
+ * attached so any log call anywhere in the request's async chain can read
+ * it without threading it through every function signature.
  *
  * See "18. BRAYN Security, Observability & Reliability" (Correlation &
  * Traceability).
@@ -28,6 +37,14 @@ export const RequestContext = {
    */
   start(store: RequestContextStore): void {
     storage.enterWith(store);
+  },
+
+  /** Merges fields into the current store in place (e.g. after auth resolves). */
+  update(patch: Partial<Omit<RequestContextStore, 'correlationId'>>): void {
+    const current = storage.getStore();
+    if (current) {
+      Object.assign(current, patch);
+    }
   },
 
   get(): RequestContextStore | undefined {

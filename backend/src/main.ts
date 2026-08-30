@@ -5,9 +5,11 @@ import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { AppModule } from './app.module';
+import { warnOnMissingProductionSecrets } from './common/config/startup-checks';
 import { registerHttpLogging } from './common/logging/http-logging.hook';
 import { StructuredLoggerService } from './common/logging/structured-logger.service';
 import { initSentry } from './common/observability/sentry';
+import { loadConfiguration } from './config/configuration';
 import type { Env } from './config/env.schema';
 
 async function bootstrap() {
@@ -29,6 +31,7 @@ async function bootstrap() {
 
   const configService = app.get(ConfigService<Env, true>);
   initSentry(configService.get('SENTRY_DSN', { infer: true }));
+  warnOnMissingProductionSecrets(loadConfiguration(), logger);
 
   const port = configService.get('PORT', { infer: true });
   await app.listen(port, '0.0.0.0');

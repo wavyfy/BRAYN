@@ -9,6 +9,8 @@ interface LogLine {
   context?: string;
   message: string;
   correlationId?: string;
+  userId?: string;
+  workspaceId?: string;
   [key: string]: unknown;
 }
 
@@ -60,12 +62,15 @@ export class StructuredLoggerService implements LoggerService {
     context?: string,
     meta?: Record<string, unknown>,
   ): void {
+    const store = RequestContext.get();
     const line: LogLine = {
       timestamp: new Date().toISOString(),
       level,
       context,
       message: typeof message === 'string' ? message : JSON.stringify(message),
-      correlationId: RequestContext.correlationId(),
+      correlationId: store?.correlationId,
+      userId: store?.userId,
+      workspaceId: store?.workspaceId,
       ...meta,
     };
 
