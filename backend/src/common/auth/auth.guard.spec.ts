@@ -4,6 +4,7 @@ import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fa
 import { Test } from '@nestjs/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AuthGuard } from './auth.guard';
+import { Public } from './public.decorator';
 import { AllExceptionsFilter } from '../errors/all-exceptions.filter';
 import { StructuredLoggerService } from '../logging/structured-logger.service';
 
@@ -23,11 +24,23 @@ class ProtectedController {
   secure() {
     return { ok: true };
   }
+
+  @Get('open')
+  @UseGuards(AuthGuard)
+  @Public()
+  open() {
+    return { ok: true };
+  }
 }
 
+/**
+ * ignoreEnvFile: true — ConfigModule.forRoot() reloads backend/.env by
+ * default, which would silently repopulate a var these tests deleted
+ * from process.env. See database.service.spec.ts for the same fix.
+ */
 async function buildApp(): Promise<NestFastifyApplication> {
   const moduleRef = await Test.createTestingModule({
-    imports: [ConfigModule.forRoot({ isGlobal: true })],
+    imports: [ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true })],
     controllers: [ProtectedController],
     providers: [AuthGuard],
   }).compile();
@@ -115,5 +128,12 @@ describe('AuthGuard (e2e) — Clerk not configured', () => {
 
     expect(res.statusCode).toBe(502);
     expect(res.json().error.code).toBe('PROVIDER_ERROR');
+  });
+
+  it('still lets a @Public() route through with no token and no Clerk configured', async () => {
+    const res = await app.inject({ method: 'GET', url: '/test/open' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
   });
 });

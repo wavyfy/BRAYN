@@ -1,10 +1,12 @@
 import { Module } from '@nestjs/common';
-import { APP_FILTER } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { loadConfiguration } from './config/configuration';
 import { AllExceptionsFilter } from './common/errors/all-exceptions.filter';
+import { AuthGuard } from './common/auth/auth.guard';
 import { LoggingModule } from './common/logging/logging.module';
+import { DatabaseModule } from './database/database.module';
 import { WorkspaceModule } from './domains/workspace/workspace.module';
 import { IntegrationModule } from './domains/integration/integration.module';
 import { IdentityResolutionModule } from './domains/identity-resolution/identity-resolution.module';
@@ -22,6 +24,7 @@ import { AutomationModule } from './domains/automation/automation.module';
       load: [loadConfiguration],
     }),
     LoggingModule,
+    DatabaseModule,
     WorkspaceModule,
     IntegrationModule,
     IdentityResolutionModule,
@@ -33,6 +36,9 @@ import { AutomationModule } from './domains/automation/automation.module';
     AutomationModule,
   ],
   controllers: [AppController],
-  providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
+  providers: [
+    { provide: APP_FILTER, useClass: AllExceptionsFilter },
+    { provide: APP_GUARD, useClass: AuthGuard },
+  ],
 })
 export class AppModule {}

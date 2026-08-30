@@ -9,3 +9,4 @@ minimumReleaseAgeExclude:
 allowBuilds:
   '@clerk/shared': true
   '@nestjs/core': true
+  esbuild: true

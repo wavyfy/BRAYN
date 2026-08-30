@@ -25,6 +25,10 @@ async function bootstrap() {
 
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, adapter);
 
+  // doc 29 §6 — REST API is versioned under /api/v1. health stays
+  // unversioned: it's an infrastructure liveness check, not a business API.
+  app.setGlobalPrefix('api/v1', { exclude: ['health'] });
+
   const logger = app.get(StructuredLoggerService);
   app.useLogger(logger);
   registerHttpLogging(app.getHttpAdapter().getInstance(), logger);

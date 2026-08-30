@@ -1,16 +1,19 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Reflector } from '@nestjs/core';
 import { verifyToken } from '@clerk/backend';
 import type { FastifyRequest } from 'fastify';
 import { ProviderError, UnauthenticatedError } from '../errors/app-error';
 import { RequestContext } from '../logging/request-context';
+import { IS_PUBLIC_KEY } from './public.decorator';
 import type { Env } from '../../config/env.schema';
 
 /**
  * Verifies the caller's Clerk session token (doc 29 §11 — Clerk is the
- * locked auth provider). Not applied to any route yet: nothing needs
- * authentication until Phase 2 introduces protected endpoints. Attach via
- * `@UseGuards(AuthGuard)` once one does.
+ * locked auth provider). Registered globally as APP_GUARD (see
+ * app.module.ts) — every route requires a valid session unless marked
+ * with @Public(), so a new controller is secure by default rather than
+ * depending on someone remembering to add a guard.
  *
  * Authentication only establishes *who* the caller is — see
  * "05. BRAYN Workspace, Identity & Permissions": it does not determine
@@ -20,9 +23,20 @@ import type { Env } from '../../config/env.schema';
  */
 @Injectable()
 export class AuthGuard implements CanActivate {
-  constructor(private readonly config: ConfigService<Env, true>) {}
+  constructor(
+    private readonly config: ConfigService<Env, true>,
+    private readonly reflector: Reflector,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPublic) {
+      return true;
+    }
+
     const request = context.switchToHttp().getRequest<FastifyRequest>();
     const token = this.extractBearerToken(request);
 
