@@ -28,6 +28,7 @@ describe('WorkspaceController (e2e)', () => {
   const workspaceService = {
     create: vi.fn(async (name: string) => ({ id: 'ws_1', name })),
     findById: vi.fn(async (id: string) => (id === 'ws_1' ? { id: 'ws_1', name: 'Acme' } : null)),
+    rename: vi.fn(async (id: string, name: string) => (id === 'ws_1' ? { id: 'ws_1', name } : null)),
   };
   const userService = {
     findOrCreateByClerkId: vi.fn(async (clerkUserId: string) => ({ id: 'user_1', clerkUserId })),
@@ -78,6 +79,7 @@ describe('WorkspaceController (e2e)', () => {
 
   beforeEach(() => {
     workspaceService.findById.mockClear();
+    workspaceService.rename.mockClear();
   });
 
   it('rejects an unauthenticated create request', async () => {
@@ -158,5 +160,85 @@ describe('WorkspaceController (e2e)', () => {
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe('UNAUTHORIZED');
     expect(workspaceService.findById).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unauthenticated rename request', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/workspaces/ws_1',
+      payload: { name: 'New Name' },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('renames a workspace for an owner/admin member', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/workspaces/ws_1',
+      headers: { authorization: 'Bearer valid-token' },
+      payload: { name: 'New Name' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ id: 'ws_1', name: 'New Name' });
+  });
+
+  it('rejects renaming with an empty name', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/workspaces/ws_1',
+      headers: { authorization: 'Bearer valid-token' },
+      payload: { name: '' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects renaming for a member without owner/admin role', async () => {
+    membershipService.findMembership.mockResolvedValueOnce({
+      id: 'mem_1',
+      workspaceId: 'ws_1',
+      userId: 'user_1',
+      role: 'support',
+    });
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/workspaces/ws_1',
+      headers: { authorization: 'Bearer valid-token' },
+      payload: { name: 'New Name' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('UNAUTHORIZED');
+    expect(workspaceService.rename).not.toHaveBeenCalled();
+  });
+
+  it('rejects renaming a workspace the caller is not a member of', async () => {
+    membershipService.findMembership.mockResolvedValueOnce(null);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/workspaces/ws_2',
+      headers: { authorization: 'Bearer valid-token' },
+      payload: { name: 'New Name' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('UNAUTHORIZED');
+    expect(workspaceService.rename).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 renaming a missing workspace once membership/role is confirmed', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/workspaces/missing',
+      headers: { authorization: 'Bearer valid-token' },
+      payload: { name: 'New Name' },
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe('NOT_FOUND');
   });
 });

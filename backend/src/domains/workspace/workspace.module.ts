@@ -14,9 +14,12 @@ import { WorkspaceMembershipGuard } from './workspace-membership.guard';
  *
  * Phase 2 part 1: workspace entity. Part 2: user entity. Part 3: workspace
  * membership — creator is auto-added as 'owner'. Part 4: WorkspaceMembershipGuard
- * (this change) centralizes the Authenticated User -> Workspace Membership ->
- * Required Role check (doc 05/28) that Parts 1/3 had inlined per-controller.
- * Fine-grained capability permissions (doc 28 Permission Categories) land later.
+ * centralizes the Authenticated User -> Workspace Membership -> Required
+ * Role check (doc 05/28) that Parts 1/3 had inlined per-controller. Part 5:
+ * onboarding foundation (this change) — GET /users/me/workspaces, so a
+ * signed-in user can discover which workspace(s) to open (doc 19 Visible
+ * Result "Access a workspace"). Fine-grained capability permissions
+ * (doc 28 Permission Categories) land later.
  */
 @Module({
   controllers: [WorkspaceController, UserController, WorkspaceMembershipController],

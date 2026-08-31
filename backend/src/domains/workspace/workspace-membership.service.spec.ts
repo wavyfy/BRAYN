@@ -8,6 +8,7 @@ function makeChain(finalResult: unknown) {
     onConflictDoNothing: vi.fn(() => chain),
     returning: vi.fn(async () => finalResult),
     from: vi.fn(() => chain),
+    innerJoin: vi.fn(() => chain),
     where: vi.fn(() => chain),
     limit: vi.fn(async () => finalResult),
     // Drizzle's query builder is itself awaitable at any point in the
@@ -50,6 +51,17 @@ describe('WorkspaceMembershipService', () => {
     const result = await service.listByWorkspace('ws_1');
 
     expect(result).toEqual(members);
+  });
+
+  it('listByUser() returns the workspaces a user belongs to with their role', async () => {
+    const rows = [{ id: 'ws_1', name: 'Acme', role: 'owner' }];
+    const chain = makeChain(rows);
+    const client = { select: vi.fn(() => chain) };
+    const service = new WorkspaceMembershipService({ client } as unknown as DatabaseService);
+
+    const result = await service.listByUser('user_1');
+
+    expect(result).toEqual(rows);
   });
 
   it('findMembership() returns null when no membership exists', async () => {

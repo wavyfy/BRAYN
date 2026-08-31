@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ZodValidationPipe } from '../../common/api/zod-validation.pipe';
 import { NotFoundError, UnauthenticatedError } from '../../common/errors/app-error';
 import { RequestContext } from '../../common/logging/request-context';
@@ -6,7 +6,9 @@ import { WorkspaceService } from './workspace.service';
 import { UserService } from './user.service';
 import { WorkspaceMembershipService } from './workspace-membership.service';
 import { WorkspaceMembershipGuard } from './workspace-membership.guard';
+import { RequireWorkspaceRole } from './require-workspace-role.decorator';
 import { createWorkspaceSchema, type CreateWorkspaceInput } from './dto/create-workspace.schema';
+import { updateWorkspaceSchema, type UpdateWorkspaceInput } from './dto/update-workspace.schema';
 
 /**
  * Protected by the global AuthGuard by default (Step 6) — no @Public().
@@ -46,6 +48,23 @@ export class WorkspaceController {
   @UseGuards(WorkspaceMembershipGuard)
   async findById(@Param('workspaceId') workspaceId: string) {
     const workspace = await this.workspaceService.findById(workspaceId);
+    if (!workspace) {
+      throw new NotFoundError('Workspace not found.');
+    }
+
+    return workspace;
+  }
+
+  /** Doc 28 Phase 1 Permission Matrix — "Critical workspace settings": Owner Full, Admin Limited, no one else. */
+  @Patch(':workspaceId')
+  @UseGuards(WorkspaceMembershipGuard)
+  @RequireWorkspaceRole('owner', 'admin')
+  async rename(
+    @Param('workspaceId') workspaceId: string,
+    @Body(new ZodValidationPipe(updateWorkspaceSchema))
+    body: UpdateWorkspaceInput,
+  ) {
+    const workspace = await this.workspaceService.rename(workspaceId, body.name);
     if (!workspace) {
       throw new NotFoundError('Workspace not found.');
     }

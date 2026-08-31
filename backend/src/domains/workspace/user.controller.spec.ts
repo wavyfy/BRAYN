@@ -5,6 +5,7 @@ import { Test } from '@nestjs/testing';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { UserController } from './user.controller';
 import { UserService } from './user.service';
+import { WorkspaceMembershipService } from './workspace-membership.service';
 import { AuthGuard } from '../../common/auth/auth.guard';
 import { AllExceptionsFilter } from '../../common/errors/all-exceptions.filter';
 import { registerHttpLogging } from '../../common/logging/http-logging.hook';
@@ -25,6 +26,9 @@ describe('UserController (e2e)', () => {
   const userService = {
     findOrCreateByClerkId: vi.fn(async (clerkUserId: string) => ({ id: 'user_1', clerkUserId })),
   };
+  const membershipService = {
+    listByUser: vi.fn(async () => [{ id: 'ws_1', name: 'Acme', role: 'owner' }]),
+  };
 
   beforeAll(async () => {
     process.env.CLERK_SECRET_KEY = 'test-secret';
@@ -34,6 +38,7 @@ describe('UserController (e2e)', () => {
       controllers: [UserController],
       providers: [
         { provide: UserService, useValue: userService },
+        { provide: WorkspaceMembershipService, useValue: membershipService },
         { provide: APP_GUARD, useClass: AuthGuard },
       ],
     }).compile();
@@ -68,5 +73,22 @@ describe('UserController (e2e)', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ id: 'user_1', clerkUserId: 'clerk_1' });
     expect(userService.findOrCreateByClerkId).toHaveBeenCalledWith('clerk_1');
+  });
+
+  it('rejects an unauthenticated my-workspaces request', async () => {
+    const res = await app.inject({ method: 'GET', url: '/users/me/workspaces' });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('lists the workspaces the current user belongs to', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/users/me/workspaces',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual([{ id: 'ws_1', name: 'Acme', role: 'owner' }]);
+    expect(membershipService.listByUser).toHaveBeenCalledWith('user_1');
   });
 });

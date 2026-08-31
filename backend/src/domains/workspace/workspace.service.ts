@@ -22,4 +22,14 @@ export class WorkspaceService {
 
     return workspace ?? null;
   }
+
+  async rename(id: string, name: string) {
+    const [workspace] = await this.database.client
+      .update(workspaces)
+      .set({ name })
+      .where(eq(workspaces.id, id))
+      .returning();
+
+    return workspace ?? null;
+  }
 }
