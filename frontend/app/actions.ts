@@ -16,3 +16,18 @@ export async function addMember(workspaceId: string, userId: string, role: strin
     body: JSON.stringify({ userId, role }),
   });
 }
+
+export async function updateMemberRole(workspaceId: string, userId: string, role: string) {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/members/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ role }),
+  });
+}
+
+export async function removeMember(workspaceId: string, userId: string) {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/members/${userId}`, { method: 'DELETE' });
+}
+
+export async function transferOwnership(workspaceId: string, userId: string) {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/members/${userId}/ownership-transfer`, { method: 'POST' });
+}

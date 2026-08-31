@@ -7,6 +7,7 @@ import { renameWorkspace } from '../../actions';
 export function RenameWorkspaceForm({ workspaceId, currentName }: { workspaceId: string; currentName: string }) {
   const [name, setName] = useState(currentName);
   const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
   return (
@@ -14,9 +15,15 @@ export function RenameWorkspaceForm({ workspaceId, currentName }: { workspaceId:
       onSubmit={async (e) => {
         e.preventDefault();
         setPending(true);
-        await renameWorkspace(workspaceId, name);
-        setPending(false);
-        router.refresh();
+        setError(null);
+        try {
+          await renameWorkspace(workspaceId, name);
+          router.refresh();
+        } catch {
+          setError('Could not rename the workspace. Please try again.');
+        } finally {
+          setPending(false);
+        }
       }}
     >
       <label htmlFor="workspace-name">Rename workspace</label>
@@ -24,6 +31,7 @@ export function RenameWorkspaceForm({ workspaceId, currentName }: { workspaceId:
       <button type="submit" disabled={pending}>
         Save
       </button>
+      {error && <p role="alert">{error}</p>}
     </form>
   );
 }

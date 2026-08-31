@@ -7,6 +7,7 @@ import { createWorkspace } from './actions';
 export function CreateWorkspaceForm() {
   const [name, setName] = useState('');
   const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
   return (
@@ -14,8 +15,14 @@ export function CreateWorkspaceForm() {
       onSubmit={async (e) => {
         e.preventDefault();
         setPending(true);
-        const workspace = await createWorkspace(name);
-        router.push(`/workspace/${workspace.id}`);
+        setError(null);
+        try {
+          const workspace = await createWorkspace(name);
+          router.push(`/workspace/${workspace.id}`);
+        } catch {
+          setError('Could not create the workspace. Please try again.');
+          setPending(false);
+        }
       }}
     >
       <input
@@ -28,6 +35,7 @@ export function CreateWorkspaceForm() {
       <button type="submit" disabled={pending}>
         Create workspace
       </button>
+      {error && <p role="alert">{error}</p>}
     </form>
   );
 }

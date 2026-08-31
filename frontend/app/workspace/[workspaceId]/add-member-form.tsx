@@ -9,6 +9,7 @@ export function AddMemberForm({ workspaceId }: { workspaceId: string }) {
   const [userId, setUserId] = useState('');
   const [role, setRole] = useState<(typeof workspaceRoles)[number]>('support');
   const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
   return (
@@ -16,10 +17,16 @@ export function AddMemberForm({ workspaceId }: { workspaceId: string }) {
       onSubmit={async (e) => {
         e.preventDefault();
         setPending(true);
-        await addMember(workspaceId, userId, role);
-        setPending(false);
-        setUserId('');
-        router.refresh();
+        setError(null);
+        try {
+          await addMember(workspaceId, userId, role);
+          setUserId('');
+          router.refresh();
+        } catch {
+          setError('Could not add this member. They may already belong to the workspace.');
+        } finally {
+          setPending(false);
+        }
       }}
     >
       <label htmlFor="member-user-id">Add member (BRAYN user ID)</label>
@@ -34,6 +41,7 @@ export function AddMemberForm({ workspaceId }: { workspaceId: string }) {
       <button type="submit" disabled={pending}>
         Add
       </button>
+      {error && <p role="alert">{error}</p>}
     </form>
   );
 }
