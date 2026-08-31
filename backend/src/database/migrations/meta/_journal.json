@@ -22,6 +22,13 @@
       "when": 1788102279295,
       "tag": "0002_dashing_warbird",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788166383620,
+      "tag": "0003_wild_black_bird",
+      "breakpoints": true
     }
   ]
 }
