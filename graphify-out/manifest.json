@@ -320,14 +320,14 @@
     "semantic_hash": "932db1ed2a4bae51906e3b8a96dc1359"
   },
   "D:\\PROJECTS\\BRAYN\\backend\\src\\database\\migrations\\meta\\_journal.json": {
-    "mtime": 1788166383.6203558,
-    "ast_hash": "ef64245b676c78418ad2382736fd74bd",
-    "semantic_hash": "ef64245b676c78418ad2382736fd74bd"
+    "mtime": 1788167174.830969,
+    "ast_hash": "92c4e176c3a1caf97ff5301f4db0c3f3",
+    "semantic_hash": "92c4e176c3a1caf97ff5301f4db0c3f3"
   },
   "D:\\PROJECTS\\BRAYN\\backend\\src\\database\\schema\\columns.ts": {
-    "mtime": 1788099319.4079192,
-    "ast_hash": "de4e4dbeac7a3c9df1de152c3b807524",
-    "semantic_hash": "de4e4dbeac7a3c9df1de152c3b807524"
+    "mtime": 1788167158.7876506,
+    "ast_hash": "4413c7a053130cc93c72bfe96d2f44eb",
+    "semantic_hash": "4413c7a053130cc93c72bfe96d2f44eb"
   },
   "D:\\PROJECTS\\BRAYN\\backend\\src\\database\\schema\\idempotency-keys.ts": {
     "mtime": 1788101513.0678885,
@@ -380,19 +380,19 @@
     "semantic_hash": "40443705fc374ad87773766845b1ad47"
   },
   "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\workspace.controller.spec.ts": {
-    "mtime": 1788102330.2970865,
-    "ast_hash": "e7e7c07263a74179185b88359268e014",
-    "semantic_hash": "e7e7c07263a74179185b88359268e014"
+    "mtime": 1788168328.9773567,
+    "ast_hash": "ac4c9ff7e763dac8e0d6d6be945fa3e3",
+    "semantic_hash": "ac4c9ff7e763dac8e0d6d6be945fa3e3"
   },
   "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\workspace.controller.ts": {
-    "mtime": 1788102330.3114812,
-    "ast_hash": "ee7576e1fe19e9c76d827850014edfba",
-    "semantic_hash": "ee7576e1fe19e9c76d827850014edfba"
+    "mtime": 1788168286.4420817,
+    "ast_hash": "6d762baabe9d4b6bdfac2a151f4d1079",
+    "semantic_hash": "6d762baabe9d4b6bdfac2a151f4d1079"
   },
   "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\workspace.module.ts": {
-    "mtime": 1788166359.0523963,
-    "ast_hash": "d1b2f8824d6885de1b34a58cef9df295",
-    "semantic_hash": "d1b2f8824d6885de1b34a58cef9df295"
+    "mtime": 1788167055.1007428,
+    "ast_hash": "64aa43939872d29e27cfa2c8bf43d7cb",
+    "semantic_hash": "64aa43939872d29e27cfa2c8bf43d7cb"
   },
   "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\workspace.service.spec.ts": {
     "mtime": 1788102330.3131845,
@@ -508,5 +508,45 @@
     "mtime": 1788166345.7315874,
     "ast_hash": "b8c8a4d730e5fac394b5c0278b1dff9b",
     "semantic_hash": "b8c8a4d730e5fac394b5c0278b1dff9b"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\database\\migrations\\0004_square_doctor_octopus.sql": {
+    "mtime": 1788167174.830969,
+    "ast_hash": "69caf183bd9d1df0ce1e051f8687b9c2",
+    "semantic_hash": "69caf183bd9d1df0ce1e051f8687b9c2"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\database\\migrations\\meta\\0004_snapshot.json": {
+    "mtime": 1788167174.830969,
+    "ast_hash": "84a017264f767ea5b9a8f89f2360ce29",
+    "semantic_hash": "84a017264f767ea5b9a8f89f2360ce29"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\database\\schema\\workspace-memberships.ts": {
+    "mtime": 1788167166.996738,
+    "ast_hash": "7ec19c31d082e1f6683e8ed69588775e",
+    "semantic_hash": "7ec19c31d082e1f6683e8ed69588775e"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\workspace-membership.controller.spec.ts": {
+    "mtime": 1788167512.3204498,
+    "ast_hash": "e60e7226794224be51b7b9c1acdcc6b0",
+    "semantic_hash": "e60e7226794224be51b7b9c1acdcc6b0"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\workspace-membership.controller.ts": {
+    "mtime": 1788167486.389474,
+    "ast_hash": "a2f0908a4264ab8f573a4ccbe8d39315",
+    "semantic_hash": "a2f0908a4264ab8f573a4ccbe8d39315"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\workspace-membership.service.spec.ts": {
+    "mtime": 1788167230.832325,
+    "ast_hash": "ff62ede964e10aeff9c68077afc443e2",
+    "semantic_hash": "ff62ede964e10aeff9c68077afc443e2"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\workspace-membership.service.ts": {
+    "mtime": 1788167018.6128626,
+    "ast_hash": "388cc1eed332eba8ffb69be65c88859c",
+    "semantic_hash": "388cc1eed332eba8ffb69be65c88859c"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\dto\\add-member.schema.ts": {
+    "mtime": 1788167024.8537767,
+    "ast_hash": "97d9462af9734411504e4a780d3b61ca",
+    "semantic_hash": "97d9462af9734411504e4a780d3b61ca"
   }
 }
