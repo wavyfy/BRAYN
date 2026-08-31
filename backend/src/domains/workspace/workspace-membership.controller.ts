@@ -1,5 +1,8 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ZodValidationPipe } from '../../common/api/zod-validation.pipe';
+import { RequestContext } from '../../common/logging/request-context';
+import { UnauthenticatedError } from '../../common/errors/app-error';
+import { UserService } from './user.service';
 import { WorkspaceMembershipService } from './workspace-membership.service';
 import { WorkspaceMembershipGuard } from './workspace-membership.guard';
 import { RequireWorkspaceRole } from './require-workspace-role.decorator';
@@ -18,7 +21,10 @@ import { updateMemberRoleSchema, type UpdateMemberRoleInput } from './dto/update
 @Controller('workspaces/:workspaceId/members')
 @UseGuards(WorkspaceMembershipGuard)
 export class WorkspaceMembershipController {
-  constructor(private readonly membershipService: WorkspaceMembershipService) {}
+  constructor(
+    private readonly membershipService: WorkspaceMembershipService,
+    private readonly userService: UserService,
+  ) {}
 
   @Post()
   @RequireWorkspaceRole('owner', 'admin')
@@ -51,5 +57,18 @@ export class WorkspaceMembershipController {
   @RequireWorkspaceRole('owner', 'admin')
   async removeMember(@Param('workspaceId') workspaceId: string, @Param('userId') userId: string) {
     await this.membershipService.removeMember(workspaceId, userId);
+  }
+
+  /** Doc 28 "Permission Changes" — the only way to remove/demote the last owner. */
+  @Post(':userId/ownership-transfer')
+  @RequireWorkspaceRole('owner')
+  async transferOwnership(@Param('workspaceId') workspaceId: string, @Param('userId') userId: string) {
+    const clerkUserId = RequestContext.get()?.userId;
+    if (!clerkUserId) {
+      throw new UnauthenticatedError('A bearer token is required.');
+    }
+
+    const caller = await this.userService.findOrCreateByClerkId(clerkUserId);
+    return this.membershipService.transferOwnership(workspaceId, caller.id, userId);
   }
 }

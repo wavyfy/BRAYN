@@ -3,7 +3,7 @@ import { and, count, eq } from 'drizzle-orm';
 import { DatabaseService } from '../../database/database.service';
 import { workspaceMemberships } from '../../database/schema/workspace-memberships';
 import { workspaces } from '../../database/schema/workspaces';
-import { ConflictError, NotFoundError } from '../../common/errors/app-error';
+import { ConflictError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 import type { WorkspaceRole } from './dto/add-member.schema';
 
 @Injectable()
@@ -82,6 +82,41 @@ export class WorkspaceMembershipService {
       .returning();
 
     return updated;
+  }
+
+  /**
+   * Doc 28 "Permission Changes": the final owner can't be removed/demoted
+   * unless ownership is transferred first — this is that transfer. Runs in
+   * a transaction so the workspace is never briefly ownerless.
+   */
+  async transferOwnership(workspaceId: string, fromUserId: string, toUserId: string) {
+    if (fromUserId === toUserId) {
+      throw new ValidationError('You already own this workspace.');
+    }
+
+    return this.database.transaction(async (tx) => {
+      const [target] = await tx
+        .select()
+        .from(workspaceMemberships)
+        .where(and(eq(workspaceMemberships.workspaceId, workspaceId), eq(workspaceMemberships.userId, toUserId)))
+        .limit(1);
+      if (!target) {
+        throw new NotFoundError('This user is not a member of the workspace.');
+      }
+
+      await tx
+        .update(workspaceMemberships)
+        .set({ role: 'admin' })
+        .where(and(eq(workspaceMemberships.workspaceId, workspaceId), eq(workspaceMemberships.userId, fromUserId)));
+
+      const [updated] = await tx
+        .update(workspaceMemberships)
+        .set({ role: 'owner' })
+        .where(and(eq(workspaceMemberships.workspaceId, workspaceId), eq(workspaceMemberships.userId, toUserId)))
+        .returning();
+
+      return updated;
+    });
   }
 
   /** A workspace must always keep at least one owner able to manage it. */

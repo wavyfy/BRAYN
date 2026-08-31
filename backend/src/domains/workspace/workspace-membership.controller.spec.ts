@@ -44,6 +44,12 @@ describe('WorkspaceMembershipController (e2e)', () => {
       role,
     })),
     removeMember: vi.fn(async () => undefined),
+    transferOwnership: vi.fn(async (workspaceId: string, fromUserId: string, toUserId: string) => ({
+      id: 'mem_2',
+      workspaceId,
+      userId: toUserId,
+      role: 'owner',
+    })),
     // Caller ('user_1') is an owner member of 'ws_1' by default — happy-path tests build on this.
     findMembership: vi.fn(async (workspaceId: string, userId: string) =>
       workspaceId === 'ws_1' && userId === 'user_1' ? { id: 'mem_1', workspaceId, userId, role: 'owner' } : null,
@@ -81,6 +87,7 @@ describe('WorkspaceMembershipController (e2e)', () => {
     membershipService.listByWorkspace.mockClear();
     membershipService.updateRole.mockClear();
     membershipService.removeMember.mockClear();
+    membershipService.transferOwnership.mockClear();
   });
 
   it('rejects an unauthenticated add-member request', async () => {
@@ -260,5 +267,35 @@ describe('WorkspaceMembershipController (e2e)', () => {
 
     expect(res.statusCode).toBe(204);
     expect(membershipService.removeMember).toHaveBeenCalledWith('ws_1', 'user_2');
+  });
+
+  it('rejects ownership transfer from an admin (owner-only action)', async () => {
+    membershipService.findMembership.mockResolvedValueOnce({
+      id: 'mem_1',
+      workspaceId: 'ws_1',
+      userId: 'user_1',
+      role: 'admin',
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/members/user_2/ownership-transfer',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(membershipService.transferOwnership).not.toHaveBeenCalled();
+  });
+
+  it('transfers ownership for the current owner', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/members/user_2/ownership-transfer',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).toEqual({ id: 'mem_2', workspaceId: 'ws_1', userId: 'user_2', role: 'owner' });
+    expect(membershipService.transferOwnership).toHaveBeenCalledWith('ws_1', 'user_1', 'user_2');
   });
 });

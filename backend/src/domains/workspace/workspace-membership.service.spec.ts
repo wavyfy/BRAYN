@@ -176,4 +176,43 @@ describe('WorkspaceMembershipService', () => {
 
     expect(result).toEqual(updated);
   });
+
+  it('transferOwnership() throws ValidationError when transferring to self', async () => {
+    const client = {};
+    const service = new WorkspaceMembershipService({ client } as unknown as DatabaseService);
+
+    await expect(service.transferOwnership('ws_1', 'user_1', 'user_1')).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+    });
+  });
+
+  it('transferOwnership() throws NotFoundError when the target is not a member', async () => {
+    const tx = { select: makeSelectQueue([[]]) };
+    const database = { transaction: vi.fn((fn: (tx: unknown) => unknown) => fn(tx)) };
+    const service = new WorkspaceMembershipService(database as unknown as DatabaseService);
+
+    await expect(service.transferOwnership('ws_1', 'user_1', 'user_2')).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('transferOwnership() demotes the caller and promotes the target', async () => {
+    const target = { id: 'mem_2', workspaceId: 'ws_1', userId: 'user_2', role: 'support' };
+    const promoted = { ...target, role: 'owner' };
+    const demoteChain = makeChain(undefined);
+    const promoteChain = makeChain([promoted]);
+    let updateCalls = 0;
+    const tx = {
+      select: makeSelectQueue([[target]]),
+      update: vi.fn(() => (updateCalls++ === 0 ? demoteChain : promoteChain)),
+    };
+    const database = { transaction: vi.fn((fn: (tx: unknown) => unknown) => fn(tx)) };
+    const service = new WorkspaceMembershipService(database as unknown as DatabaseService);
+
+    const result = await service.transferOwnership('ws_1', 'user_1', 'user_2');
+
+    expect(result).toEqual(promoted);
+    expect(demoteChain.set).toHaveBeenCalledWith({ role: 'admin' });
+    expect(promoteChain.set).toHaveBeenCalledWith({ role: 'owner' });
+  });
 });
