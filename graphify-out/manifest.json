@@ -20,7 +20,7 @@
     "semantic_hash": "c5c04a81967e96b544d450fd0b953d76"
   },
   "D:\\PROJECTS\\BRAYN\\package.json": {
-    "mtime": 1787854724.1896932,
+    "mtime": 1788094252.389395,
     "ast_hash": "cccc43d53ddb96a13ec7c942384a9613",
     "semantic_hash": "cccc43d53ddb96a13ec7c942384a9613"
   },
@@ -45,9 +45,9 @@
     "semantic_hash": "d8c6f68d3426d9227d45a26b3ff04c9f"
   },
   "D:\\PROJECTS\\BRAYN\\pnpm-workspace.yaml": {
-    "mtime": 1787854795.7636364,
-    "ast_hash": "9dfe45be60beaf29105701576e552a41",
-    "semantic_hash": "9dfe45be60beaf29105701576e552a41"
+    "mtime": 1788099202.29626,
+    "ast_hash": "85ab3766ddbd772c0944b0d07fb88c99",
+    "semantic_hash": "85ab3766ddbd772c0944b0d07fb88c99"
   },
   "D:\\PROJECTS\\BRAYN\\.agents\\skills\\agent-browser\\SKILL.md": {
     "mtime": 1787843035.801717,
@@ -58,5 +58,420 @@
     "mtime": 1787843035.801717,
     "ast_hash": "ed92243681e40e1c279a284e1c7e9735",
     "semantic_hash": "ed92243681e40e1c279a284e1c7e9735"
+  },
+  "D:\\PROJECTS\\BRAYN\\.graphify_incremental.json": {
+    "mtime": 1788165771.6102746,
+    "ast_hash": "bbf88984eb881c49453daa7551ed34f1",
+    "semantic_hash": "bbf88984eb881c49453daa7551ed34f1"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\drizzle.config.ts": {
+    "mtime": 1788099319.4833722,
+    "ast_hash": "2f7fa86e6ec05992ad7d933e79201c52",
+    "semantic_hash": "2f7fa86e6ec05992ad7d933e79201c52"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\nest-cli.json": {
+    "mtime": 1788095000.2799764,
+    "ast_hash": "a80566a019b0165061ab7b72e861c92d",
+    "semantic_hash": "a80566a019b0165061ab7b72e861c92d"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\package.json": {
+    "mtime": 1788101367.636018,
+    "ast_hash": "704efa55a16e02405f2c4d68039afae8",
+    "semantic_hash": "704efa55a16e02405f2c4d68039afae8"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\tsconfig.build.json": {
+    "mtime": 1788094998.6415098,
+    "ast_hash": "01da0e95920decfe5a8fa42fcc6ff44b",
+    "semantic_hash": "01da0e95920decfe5a8fa42fcc6ff44b"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\tsconfig.json": {
+    "mtime": 1788099915.36363,
+    "ast_hash": "46214a083e59bf7829ae617167a7ba11",
+    "semantic_hash": "46214a083e59bf7829ae617167a7ba11"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\app.controller.spec.ts": {
+    "mtime": 1788099319.0791574,
+    "ast_hash": "f242c36a80f1ba573ef7f87bcb378d31",
+    "semantic_hash": "f242c36a80f1ba573ef7f87bcb378d31"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\app.controller.ts": {
+    "mtime": 1788100599.7104936,
+    "ast_hash": "abbe5e88594f2b338290b8b3945566c4",
+    "semantic_hash": "abbe5e88594f2b338290b8b3945566c4"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\app.module.ts": {
+    "mtime": 1788101361.3469062,
+    "ast_hash": "cd41d2ba83b20f7840a5ddd6fa4376b6",
+    "semantic_hash": "cd41d2ba83b20f7840a5ddd6fa4376b6"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\main.ts": {
+    "mtime": 1788100607.257455,
+    "ast_hash": "3e24c1c5828b7455e0b705ec66f39b26",
+    "semantic_hash": "3e24c1c5828b7455e0b705ec66f39b26"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\api\\async-operation.ts": {
+    "mtime": 1788100730.174248,
+    "ast_hash": "a1463eae4d5043bcb14cdb84cb0840bc",
+    "semantic_hash": "a1463eae4d5043bcb14cdb84cb0840bc"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\api\\pagination.ts": {
+    "mtime": 1788100534.4403534,
+    "ast_hash": "175ac5a597fdf53ac342b884a5c58813",
+    "semantic_hash": "175ac5a597fdf53ac342b884a5c58813"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\api\\zod-validation.pipe.spec.ts": {
+    "mtime": 1788100730.2051036,
+    "ast_hash": "b1737dd0bb7627cf971cb628a74128c5",
+    "semantic_hash": "b1737dd0bb7627cf971cb628a74128c5"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\api\\zod-validation.pipe.ts": {
+    "mtime": 1788100730.2188447,
+    "ast_hash": "12901848d01a02469f9b9c4060503801",
+    "semantic_hash": "12901848d01a02469f9b9c4060503801"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\async\\retry.spec.ts": {
+    "mtime": 1788101512.7460852,
+    "ast_hash": "a2e8fc494053c3b51bef65c64c8b60e3",
+    "semantic_hash": "a2e8fc494053c3b51bef65c64c8b60e3"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\async\\retry.ts": {
+    "mtime": 1788101512.7656357,
+    "ast_hash": "2e77c9a7613ae1ab1b8698ac21e8354a",
+    "semantic_hash": "2e77c9a7613ae1ab1b8698ac21e8354a"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\auth\\auth.guard.spec.ts": {
+    "mtime": 1788100702.573961,
+    "ast_hash": "fc51f9e8fc2b1c07c13c17597874ed33",
+    "semantic_hash": "fc51f9e8fc2b1c07c13c17597874ed33"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\auth\\auth.guard.ts": {
+    "mtime": 1788100730.2721648,
+    "ast_hash": "21437cfea40d644f0d4354190afa8064",
+    "semantic_hash": "21437cfea40d644f0d4354190afa8064"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\auth\\public.decorator.ts": {
+    "mtime": 1788100730.2787118,
+    "ast_hash": "54fa6ca79d176e38b6a663d984f4c3a8",
+    "semantic_hash": "54fa6ca79d176e38b6a663d984f4c3a8"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\config\\startup-checks.spec.ts": {
+    "mtime": 1788097830.6761458,
+    "ast_hash": "b048cd95a0b84130e6f8370786198ae1",
+    "semantic_hash": "b048cd95a0b84130e6f8370786198ae1"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\config\\startup-checks.ts": {
+    "mtime": 1788097830.6851332,
+    "ast_hash": "0718e77d30cea89cef273e4cb2353160",
+    "semantic_hash": "0718e77d30cea89cef273e4cb2353160"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\errors\\all-exceptions.filter.spec.ts": {
+    "mtime": 1788095591.8929813,
+    "ast_hash": "007231b1c846a0e93b8ec2991351c47e",
+    "semantic_hash": "007231b1c846a0e93b8ec2991351c47e"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\errors\\all-exceptions.filter.ts": {
+    "mtime": 1788095898.629491,
+    "ast_hash": "f160e1966d7aaee08f532548e954900a",
+    "semantic_hash": "f160e1966d7aaee08f532548e954900a"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\errors\\app-error.ts": {
+    "mtime": 1788094953.96124,
+    "ast_hash": "46a8451518e49546987fcda51f1b606b",
+    "semantic_hash": "46a8451518e49546987fcda51f1b606b"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\errors\\error-codes.ts": {
+    "mtime": 1788094953.970761,
+    "ast_hash": "776c8fc012869e1bbd575dc1a85d88ac",
+    "semantic_hash": "776c8fc012869e1bbd575dc1a85d88ac"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\events\\domain-event.ts": {
+    "mtime": 1788101512.88844,
+    "ast_hash": "0a91d354d2fe844693dac2d71ec56431",
+    "semantic_hash": "0a91d354d2fe844693dac2d71ec56431"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\events\\event-bus.service.spec.ts": {
+    "mtime": 1788101512.8988957,
+    "ast_hash": "182956ecfb97ab6cf460ea5854a5547b",
+    "semantic_hash": "182956ecfb97ab6cf460ea5854a5547b"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\events\\event-bus.service.ts": {
+    "mtime": 1788101512.9075985,
+    "ast_hash": "5346323a699c9331c9e81883fc026cba",
+    "semantic_hash": "5346323a699c9331c9e81883fc026cba"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\events\\events.module.ts": {
+    "mtime": 1788101512.9132314,
+    "ast_hash": "bf69dd3c7ccff282140c80fb262e8cd5",
+    "semantic_hash": "bf69dd3c7ccff282140c80fb262e8cd5"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\idempotency\\idempotency.module.ts": {
+    "mtime": 1788101512.9158576,
+    "ast_hash": "961eb804cf4bb297fd8300e03cbd4134",
+    "semantic_hash": "961eb804cf4bb297fd8300e03cbd4134"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\idempotency\\idempotency.service.spec.ts": {
+    "mtime": 1788101512.931744,
+    "ast_hash": "b2a5a5826a95876eace8be602cf56d99",
+    "semantic_hash": "b2a5a5826a95876eace8be602cf56d99"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\idempotency\\idempotency.service.ts": {
+    "mtime": 1788101512.9408066,
+    "ast_hash": "fd844fbd985cbb772f011af8a7d41e1a",
+    "semantic_hash": "fd844fbd985cbb772f011af8a7d41e1a"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\logging\\http-logging.hook.spec.ts": {
+    "mtime": 1788095898.669687,
+    "ast_hash": "bad226c0270eac13da9d8f19b1fe7d97",
+    "semantic_hash": "bad226c0270eac13da9d8f19b1fe7d97"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\logging\\http-logging.hook.ts": {
+    "mtime": 1788095898.6816554,
+    "ast_hash": "61e472fd4500c7ba2ffe242d9f621d89",
+    "semantic_hash": "61e472fd4500c7ba2ffe242d9f621d89"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\logging\\logging.module.ts": {
+    "mtime": 1788095898.693679,
+    "ast_hash": "011d5f26f8f7bde3b748de3c322e2101",
+    "semantic_hash": "011d5f26f8f7bde3b748de3c322e2101"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\logging\\request-context.spec.ts": {
+    "mtime": 1788095898.7028723,
+    "ast_hash": "546addc162a3d415923d59cc2f700744",
+    "semantic_hash": "546addc162a3d415923d59cc2f700744"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\logging\\request-context.ts": {
+    "mtime": 1788097830.8010795,
+    "ast_hash": "26f97d7a2cba9cb4c259fd775459ba30",
+    "semantic_hash": "26f97d7a2cba9cb4c259fd775459ba30"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\logging\\structured-logger.service.spec.ts": {
+    "mtime": 1788095898.7269108,
+    "ast_hash": "315ec2ef5f9287cd199a567c8bfd9908",
+    "semantic_hash": "315ec2ef5f9287cd199a567c8bfd9908"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\logging\\structured-logger.service.ts": {
+    "mtime": 1788097645.3624513,
+    "ast_hash": "348df9b5a9e2200dc252fd5df0759f2c",
+    "semantic_hash": "348df9b5a9e2200dc252fd5df0759f2c"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\common\\observability\\sentry.ts": {
+    "mtime": 1788095898.762454,
+    "ast_hash": "4540ac020aa7d3a48822144aa67f69cf",
+    "semantic_hash": "4540ac020aa7d3a48822144aa67f69cf"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\config\\configuration.spec.ts": {
+    "mtime": 1788094469.6339374,
+    "ast_hash": "78319fb86d8706e7d56dfaad400971f7",
+    "semantic_hash": "78319fb86d8706e7d56dfaad400971f7"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\config\\configuration.ts": {
+    "mtime": 1788094469.6499884,
+    "ast_hash": "56bc7ad3818af9d8c03a28a943a9feae",
+    "semantic_hash": "56bc7ad3818af9d8c03a28a943a9feae"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\config\\env.schema.ts": {
+    "mtime": 1788094469.668115,
+    "ast_hash": "b4e8fa455418632a1423c01ed401d1c8",
+    "semantic_hash": "b4e8fa455418632a1423c01ed401d1c8"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\database\\database.module.ts": {
+    "mtime": 1788099319.3775856,
+    "ast_hash": "64dd7a7ca222c814a4a50d341acc46a4",
+    "semantic_hash": "64dd7a7ca222c814a4a50d341acc46a4"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\database\\database.service.spec.ts": {
+    "mtime": 1788100687.4025226,
+    "ast_hash": "d120ab19aa7fc15e88603cee6827b4f8",
+    "semantic_hash": "d120ab19aa7fc15e88603cee6827b4f8"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\database\\database.service.ts": {
+    "mtime": 1788099319.400503,
+    "ast_hash": "1e9e5860c8fec0952ef84e0a743894f3",
+    "semantic_hash": "1e9e5860c8fec0952ef84e0a743894f3"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\database\\migrations\\0000_enable_pgvector.sql": {
+    "mtime": 1788099304.575654,
+    "ast_hash": "5d95396f39ab85e45be1f1792289004d",
+    "semantic_hash": "5d95396f39ab85e45be1f1792289004d"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\database\\migrations\\0001_sloppy_zombie.sql": {
+    "mtime": 1788101400.232027,
+    "ast_hash": "3c3c15bd6913b804e80b0a6f8fb59ae6",
+    "semantic_hash": "3c3c15bd6913b804e80b0a6f8fb59ae6"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\database\\migrations\\0002_dashing_warbird.sql": {
+    "mtime": 1788102279.3010657,
+    "ast_hash": "612b89d10e3b4bf61ef6326a25dbdd2a",
+    "semantic_hash": "612b89d10e3b4bf61ef6326a25dbdd2a"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\database\\migrations\\meta\\0000_snapshot.json": {
+    "mtime": 1788099298.4918993,
+    "ast_hash": "df16709f11453929769badcda776ce63",
+    "semantic_hash": "df16709f11453929769badcda776ce63"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\database\\migrations\\meta\\0001_snapshot.json": {
+    "mtime": 1788101400.230008,
+    "ast_hash": "20e6fd1aba1e80dce27b11b084a232ac",
+    "semantic_hash": "20e6fd1aba1e80dce27b11b084a232ac"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\database\\migrations\\meta\\0002_snapshot.json": {
+    "mtime": 1788102279.295004,
+    "ast_hash": "932db1ed2a4bae51906e3b8a96dc1359",
+    "semantic_hash": "932db1ed2a4bae51906e3b8a96dc1359"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\database\\migrations\\meta\\_journal.json": {
+    "mtime": 1788102279.295004,
+    "ast_hash": "4d9aaa3c13a7be69fcc155a472ceae3f",
+    "semantic_hash": "4d9aaa3c13a7be69fcc155a472ceae3f"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\database\\schema\\columns.ts": {
+    "mtime": 1788099319.4079192,
+    "ast_hash": "de4e4dbeac7a3c9df1de152c3b807524",
+    "semantic_hash": "de4e4dbeac7a3c9df1de152c3b807524"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\database\\schema\\idempotency-keys.ts": {
+    "mtime": 1788101513.0678885,
+    "ast_hash": "2787f309a8aff4bde8d4da511ed9a655",
+    "semantic_hash": "2787f309a8aff4bde8d4da511ed9a655"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\database\\schema\\workspaces.ts": {
+    "mtime": 1788102330.2186544,
+    "ast_hash": "8dc3d0b770d5e81a23123a95f4d246d8",
+    "semantic_hash": "8dc3d0b770d5e81a23123a95f4d246d8"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\ai\\ai.module.ts": {
+    "mtime": 1788094469.679125,
+    "ast_hash": "f45a11e87732d175c7e70ca7e80bed95",
+    "semantic_hash": "f45a11e87732d175c7e70ca7e80bed95"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\automation\\automation.module.ts": {
+    "mtime": 1788094469.6881616,
+    "ast_hash": "4ce73560e30b5d51897c1ce17d2072b6",
+    "semantic_hash": "4ce73560e30b5d51897c1ce17d2072b6"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\conversation\\conversation.module.ts": {
+    "mtime": 1788094469.696172,
+    "ast_hash": "818c33008a1a18eca0ba974486698ef7",
+    "semantic_hash": "818c33008a1a18eca0ba974486698ef7"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\customer-intelligence\\customer-intelligence.module.ts": {
+    "mtime": 1788094469.706364,
+    "ast_hash": "4905a1b381281689e1840c9869b9a1a5",
+    "semantic_hash": "4905a1b381281689e1840c9869b9a1a5"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\identity-resolution\\identity-resolution.module.ts": {
+    "mtime": 1788094469.71337,
+    "ast_hash": "006a45f69a59d9b09562e343f91c9d67",
+    "semantic_hash": "006a45f69a59d9b09562e343f91c9d67"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\integration\\integration.module.ts": {
+    "mtime": 1788094469.722486,
+    "ast_hash": "cef4d6eb739e9905a22806958baf7cf5",
+    "semantic_hash": "cef4d6eb739e9905a22806958baf7cf5"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\intelligence-engines\\intelligence-engines.module.ts": {
+    "mtime": 1788094469.7309983,
+    "ast_hash": "693cf7d8f5d1db9b201ec795444ebcdb",
+    "semantic_hash": "693cf7d8f5d1db9b201ec795444ebcdb"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\merchant-knowledge\\merchant-knowledge.module.ts": {
+    "mtime": 1788094469.7386458,
+    "ast_hash": "40443705fc374ad87773766845b1ad47",
+    "semantic_hash": "40443705fc374ad87773766845b1ad47"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\workspace.controller.spec.ts": {
+    "mtime": 1788102330.2970865,
+    "ast_hash": "e7e7c07263a74179185b88359268e014",
+    "semantic_hash": "e7e7c07263a74179185b88359268e014"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\workspace.controller.ts": {
+    "mtime": 1788102330.3114812,
+    "ast_hash": "ee7576e1fe19e9c76d827850014edfba",
+    "semantic_hash": "ee7576e1fe19e9c76d827850014edfba"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\workspace.module.ts": {
+    "mtime": 1788102330.3131845,
+    "ast_hash": "1618b1bb6d64b1b360a8c1632bf0bf62",
+    "semantic_hash": "1618b1bb6d64b1b360a8c1632bf0bf62"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\workspace.service.spec.ts": {
+    "mtime": 1788102330.3131845,
+    "ast_hash": "adb5e18da6cea74aac0b310319a9db7c",
+    "semantic_hash": "adb5e18da6cea74aac0b310319a9db7c"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\workspace.service.ts": {
+    "mtime": 1788102330.3322608,
+    "ast_hash": "8808f52768d6583841d7f3de012acab1",
+    "semantic_hash": "8808f52768d6583841d7f3de012acab1"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\dto\\create-workspace.schema.ts": {
+    "mtime": 1788102330.2812881,
+    "ast_hash": "af49772834373848915e843de9d753aa",
+    "semantic_hash": "af49772834373848915e843de9d753aa"
+  },
+  "D:\\PROJECTS\\BRAYN\\frontend\\components.json": {
+    "mtime": 1788094176.8749268,
+    "ast_hash": "efa781d72b6ea25711ffac018877c3e6",
+    "semantic_hash": "efa781d72b6ea25711ffac018877c3e6"
+  },
+  "D:\\PROJECTS\\BRAYN\\frontend\\next-env.d.ts": {
+    "mtime": 1788094358.4913795,
+    "ast_hash": "187b4b5b507c358a018aeeadd81abe57",
+    "semantic_hash": "187b4b5b507c358a018aeeadd81abe57"
+  },
+  "D:\\PROJECTS\\BRAYN\\frontend\\next.config.mjs": {
+    "mtime": 1788094162.6114867,
+    "ast_hash": "9430769833db8646880c5198dc80c450",
+    "semantic_hash": "9430769833db8646880c5198dc80c450"
+  },
+  "D:\\PROJECTS\\BRAYN\\frontend\\package.json": {
+    "mtime": 1788094447.1159742,
+    "ast_hash": "2ff8c447b7966ba528f28da783a3376d",
+    "semantic_hash": "2ff8c447b7966ba528f28da783a3376d"
+  },
+  "D:\\PROJECTS\\BRAYN\\frontend\\postcss.config.js": {
+    "mtime": 1788094165.2915864,
+    "ast_hash": "c735540bb63936a123bc867d950c9f69",
+    "semantic_hash": "c735540bb63936a123bc867d950c9f69"
+  },
+  "D:\\PROJECTS\\BRAYN\\frontend\\tailwind.config.ts": {
+    "mtime": 1788094469.8318236,
+    "ast_hash": "dc80a98887037bacb385024d9f577ef5",
+    "semantic_hash": "dc80a98887037bacb385024d9f577ef5"
+  },
+  "D:\\PROJECTS\\BRAYN\\frontend\\tsconfig.json": {
+    "mtime": 1788095077.4070542,
+    "ast_hash": "568f5543b19d4f1752bc13c76ae75236",
+    "semantic_hash": "568f5543b19d4f1752bc13c76ae75236"
+  },
+  "D:\\PROJECTS\\BRAYN\\frontend\\app\\error.tsx": {
+    "mtime": 1788094954.1056175,
+    "ast_hash": "1ae765ad731af81368111a5b775969b2",
+    "semantic_hash": "1ae765ad731af81368111a5b775969b2"
+  },
+  "D:\\PROJECTS\\BRAYN\\frontend\\app\\global-error.tsx": {
+    "mtime": 1788094954.1111393,
+    "ast_hash": "372806e6551c659a5ad19ecf06cac5b8",
+    "semantic_hash": "372806e6551c659a5ad19ecf06cac5b8"
+  },
+  "D:\\PROJECTS\\BRAYN\\frontend\\app\\layout.tsx": {
+    "mtime": 1788094469.8000772,
+    "ast_hash": "a350078f81e8d8cca421febee6cef502",
+    "semantic_hash": "a350078f81e8d8cca421febee6cef502"
+  },
+  "D:\\PROJECTS\\BRAYN\\frontend\\app\\page.tsx": {
+    "mtime": 1788094171.5716476,
+    "ast_hash": "9eae6452207a9cfc763748dbe0a93fe4",
+    "semantic_hash": "9eae6452207a9cfc763748dbe0a93fe4"
+  },
+  "D:\\PROJECTS\\BRAYN\\frontend\\lib\\env.ts": {
+    "mtime": 1788094469.8181033,
+    "ast_hash": "77330cd84ccf75e7d652dc4561769fd5",
+    "semantic_hash": "77330cd84ccf75e7d652dc4561769fd5"
+  },
+  "D:\\PROJECTS\\BRAYN\\frontend\\lib\\utils.ts": {
+    "mtime": 1788094469.8232653,
+    "ast_hash": "a40ab276f43a0e0a273926a9fa5055cc",
+    "semantic_hash": "a40ab276f43a0e0a273926a9fa5055cc"
   }
 }

@@ -8,6 +8,20 @@
       "when": 1788099298491,
       "tag": "0000_enable_pgvector",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788101400230,
+      "tag": "0001_sloppy_zombie",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788102279295,
+      "tag": "0002_dashing_warbird",
+      "breakpoints": true
     }
   ]
 }
