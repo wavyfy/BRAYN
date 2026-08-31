@@ -5,6 +5,7 @@ import type { DatabaseService } from '../../database/database.service';
 function makeChain(finalResult: unknown) {
   const chain: Record<string, unknown> = {
     values: vi.fn(() => chain),
+    set: vi.fn(() => chain),
     onConflictDoNothing: vi.fn(() => chain),
     returning: vi.fn(async () => finalResult),
     from: vi.fn(() => chain),
@@ -72,5 +73,107 @@ describe('WorkspaceMembershipService', () => {
     const result = await service.findMembership('ws_1', 'user_1');
 
     expect(result).toBeNull();
+  });
+
+  function makeSelectQueue(results: unknown[]) {
+    let i = 0;
+    return vi.fn(() => makeChain(results[i++]));
+  }
+
+  it('removeMember() deletes a non-owner membership', async () => {
+    const membership = { id: 'mem_1', workspaceId: 'ws_1', userId: 'user_2', role: 'support' };
+    const deleteChain = makeChain(undefined);
+    const client = {
+      select: makeSelectQueue([[membership]]),
+      delete: vi.fn(() => deleteChain),
+    };
+    const service = new WorkspaceMembershipService({ client } as unknown as DatabaseService);
+
+    await service.removeMember('ws_1', 'user_2');
+
+    expect(client.delete).toHaveBeenCalled();
+  });
+
+  it('removeMember() throws NotFoundError when the membership does not exist', async () => {
+    const client = { select: makeSelectQueue([[]]) };
+    const service = new WorkspaceMembershipService({ client } as unknown as DatabaseService);
+
+    await expect(service.removeMember('ws_1', 'user_2')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('removeMember() throws ConflictError when removing the last owner', async () => {
+    const membership = { id: 'mem_1', workspaceId: 'ws_1', userId: 'user_1', role: 'owner' };
+    const client = {
+      select: makeSelectQueue([[membership], [{ owners: 1 }]]),
+      delete: vi.fn(),
+    };
+    const service = new WorkspaceMembershipService({ client } as unknown as DatabaseService);
+
+    await expect(service.removeMember('ws_1', 'user_1')).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(client.delete).not.toHaveBeenCalled();
+  });
+
+  it('removeMember() allows removing an owner when other owners remain', async () => {
+    const membership = { id: 'mem_1', workspaceId: 'ws_1', userId: 'user_1', role: 'owner' };
+    const deleteChain = makeChain(undefined);
+    const client = {
+      select: makeSelectQueue([[membership], [{ owners: 2 }]]),
+      delete: vi.fn(() => deleteChain),
+    };
+    const service = new WorkspaceMembershipService({ client } as unknown as DatabaseService);
+
+    await service.removeMember('ws_1', 'user_1');
+
+    expect(client.delete).toHaveBeenCalled();
+  });
+
+  it('updateRole() updates the role for a non-owner membership', async () => {
+    const membership = { id: 'mem_1', workspaceId: 'ws_1', userId: 'user_2', role: 'support' };
+    const updated = { ...membership, role: 'admin' };
+    const updateChain = makeChain([updated]);
+    const client = {
+      select: makeSelectQueue([[membership]]),
+      update: vi.fn(() => updateChain),
+    };
+    const service = new WorkspaceMembershipService({ client } as unknown as DatabaseService);
+
+    const result = await service.updateRole('ws_1', 'user_2', 'admin');
+
+    expect(result).toEqual(updated);
+    expect(updateChain.set).toHaveBeenCalledWith({ role: 'admin' });
+  });
+
+  it('updateRole() throws NotFoundError when the membership does not exist', async () => {
+    const client = { select: makeSelectQueue([[]]) };
+    const service = new WorkspaceMembershipService({ client } as unknown as DatabaseService);
+
+    await expect(service.updateRole('ws_1', 'user_2', 'admin')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('updateRole() throws ConflictError when demoting the last owner', async () => {
+    const membership = { id: 'mem_1', workspaceId: 'ws_1', userId: 'user_1', role: 'owner' };
+    const client = {
+      select: makeSelectQueue([[membership], [{ owners: 1 }]]),
+      update: vi.fn(),
+    };
+    const service = new WorkspaceMembershipService({ client } as unknown as DatabaseService);
+
+    await expect(service.updateRole('ws_1', 'user_1', 'admin')).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(client.update).not.toHaveBeenCalled();
+  });
+
+  it('updateRole() allows an owner keeping the owner role without a last-owner check', async () => {
+    const membership = { id: 'mem_1', workspaceId: 'ws_1', userId: 'user_1', role: 'owner' };
+    const updated = { ...membership };
+    const updateChain = makeChain([updated]);
+    const client = {
+      select: makeSelectQueue([[membership]]),
+      update: vi.fn(() => updateChain),
+    };
+    const service = new WorkspaceMembershipService({ client } as unknown as DatabaseService);
+
+    const result = await service.updateRole('ws_1', 'user_1', 'owner');
+
+    expect(result).toEqual(updated);
   });
 });

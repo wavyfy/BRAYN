@@ -37,6 +37,13 @@ describe('WorkspaceMembershipController (e2e)', () => {
     listByWorkspace: vi.fn(async (workspaceId: string) => [
       { id: 'mem_1', workspaceId, userId: 'user_1', role: 'owner' },
     ]),
+    updateRole: vi.fn(async (workspaceId: string, userId: string, role: string) => ({
+      id: 'mem_2',
+      workspaceId,
+      userId,
+      role,
+    })),
+    removeMember: vi.fn(async () => undefined),
     // Caller ('user_1') is an owner member of 'ws_1' by default — happy-path tests build on this.
     findMembership: vi.fn(async (workspaceId: string, userId: string) =>
       workspaceId === 'ws_1' && userId === 'user_1' ? { id: 'mem_1', workspaceId, userId, role: 'owner' } : null,
@@ -72,6 +79,8 @@ describe('WorkspaceMembershipController (e2e)', () => {
   beforeEach(() => {
     membershipService.addMember.mockClear();
     membershipService.listByWorkspace.mockClear();
+    membershipService.updateRole.mockClear();
+    membershipService.removeMember.mockClear();
   });
 
   it('rejects an unauthenticated add-member request', async () => {
@@ -178,5 +187,78 @@ describe('WorkspaceMembershipController (e2e)', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual([{ id: 'mem_1', workspaceId: 'ws_1', userId: 'user_1', role: 'owner' }]);
+  });
+
+  it('rejects update-role from a member without owner/admin role', async () => {
+    membershipService.findMembership.mockResolvedValueOnce({
+      id: 'mem_1',
+      workspaceId: 'ws_1',
+      userId: 'user_1',
+      role: 'support',
+    });
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/workspaces/ws_1/members/user_2',
+      headers: { authorization: 'Bearer valid-token' },
+      payload: { role: 'admin' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(membershipService.updateRole).not.toHaveBeenCalled();
+  });
+
+  it('updates a member role for an owner/admin caller', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/workspaces/ws_1/members/user_2',
+      headers: { authorization: 'Bearer valid-token' },
+      payload: { role: 'admin' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ id: 'mem_2', workspaceId: 'ws_1', userId: 'user_2', role: 'admin' });
+    expect(membershipService.updateRole).toHaveBeenCalledWith('ws_1', 'user_2', 'admin');
+  });
+
+  it('rejects an invalid role on update-role with the canonical validation error', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/workspaces/ws_1/members/user_2',
+      headers: { authorization: 'Bearer valid-token' },
+      payload: { role: 'ceo' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects remove-member from a member without owner/admin role', async () => {
+    membershipService.findMembership.mockResolvedValueOnce({
+      id: 'mem_1',
+      workspaceId: 'ws_1',
+      userId: 'user_1',
+      role: 'support',
+    });
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: '/workspaces/ws_1/members/user_2',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(membershipService.removeMember).not.toHaveBeenCalled();
+  });
+
+  it('removes a member for an owner/admin caller', async () => {
+    const res = await app.inject({
+      method: 'DELETE',
+      url: '/workspaces/ws_1/members/user_2',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(204);
+    expect(membershipService.removeMember).toHaveBeenCalledWith('ws_1', 'user_2');
   });
 });

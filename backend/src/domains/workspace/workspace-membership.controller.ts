@@ -1,9 +1,10 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ZodValidationPipe } from '../../common/api/zod-validation.pipe';
 import { WorkspaceMembershipService } from './workspace-membership.service';
 import { WorkspaceMembershipGuard } from './workspace-membership.guard';
 import { RequireWorkspaceRole } from './require-workspace-role.decorator';
 import { addMemberSchema, type AddMemberInput } from './dto/add-member.schema';
+import { updateMemberRoleSchema, type UpdateMemberRoleInput } from './dto/update-member-role.schema';
 
 /**
  * Protected by the global AuthGuard by default (Step 6) — no @Public().
@@ -32,5 +33,23 @@ export class WorkspaceMembershipController {
   @Get()
   async list(@Param('workspaceId') workspaceId: string) {
     return this.membershipService.listByWorkspace(workspaceId);
+  }
+
+  @Patch(':userId')
+  @RequireWorkspaceRole('owner', 'admin')
+  async updateRole(
+    @Param('workspaceId') workspaceId: string,
+    @Param('userId') userId: string,
+    @Body(new ZodValidationPipe(updateMemberRoleSchema))
+    body: UpdateMemberRoleInput,
+  ) {
+    return this.membershipService.updateRole(workspaceId, userId, body.role);
+  }
+
+  @Delete(':userId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequireWorkspaceRole('owner', 'admin')
+  async removeMember(@Param('workspaceId') workspaceId: string, @Param('userId') userId: string) {
+    await this.membershipService.removeMember(workspaceId, userId);
   }
 }

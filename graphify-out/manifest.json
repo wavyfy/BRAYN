@@ -525,24 +525,24 @@
     "semantic_hash": "7ec19c31d082e1f6683e8ed69588775e"
   },
   "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\workspace-membership.controller.spec.ts": {
-    "mtime": 1788168674.9434314,
-    "ast_hash": "29a010ef4d5ce6f5550e3c7f873f4069",
-    "semantic_hash": "29a010ef4d5ce6f5550e3c7f873f4069"
+    "mtime": 1788186569.6343243,
+    "ast_hash": "3ea71fa3c5c916b237260ded5fc8038f",
+    "semantic_hash": "3ea71fa3c5c916b237260ded5fc8038f"
   },
   "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\workspace-membership.controller.ts": {
-    "mtime": 1788168627.3871894,
-    "ast_hash": "9f8a2c543d1a6b8fe62451e1107a5b66",
-    "semantic_hash": "9f8a2c543d1a6b8fe62451e1107a5b66"
+    "mtime": 1788186512.7943769,
+    "ast_hash": "542a7357c872c3b87a3df4f31d3e36c3",
+    "semantic_hash": "542a7357c872c3b87a3df4f31d3e36c3"
   },
   "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\workspace-membership.service.spec.ts": {
-    "mtime": 1788169191.6799288,
-    "ast_hash": "ec1ad34119d950f6c291db2c3e4e6f58",
-    "semantic_hash": "ec1ad34119d950f6c291db2c3e4e6f58"
+    "mtime": 1788186548.6557195,
+    "ast_hash": "8a522af8eddc038e2f88b385a93bc31d",
+    "semantic_hash": "8a522af8eddc038e2f88b385a93bc31d"
   },
   "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\workspace-membership.service.ts": {
-    "mtime": 1788169167.4766583,
-    "ast_hash": "e52f9d43e9c393e288e4ec7640f31140",
-    "semantic_hash": "e52f9d43e9c393e288e4ec7640f31140"
+    "mtime": 1788186501.2645073,
+    "ast_hash": "bb6488e5527790d15e4c104c7e98afc2",
+    "semantic_hash": "bb6488e5527790d15e4c104c7e98afc2"
   },
   "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\dto\\add-member.schema.ts": {
     "mtime": 1788167024.8537767,
@@ -568,5 +568,10 @@
     "mtime": 1788169686.2780893,
     "ast_hash": "54e446c0b8eb951cef8a36f5da45155d",
     "semantic_hash": "54e446c0b8eb951cef8a36f5da45155d"
+  },
+  "D:\\PROJECTS\\BRAYN\\backend\\src\\domains\\workspace\\dto\\update-member-role.schema.ts": {
+    "mtime": 1788186487.4234357,
+    "ast_hash": "0817044ea2f2b5c1c6f7630fab91c866",
+    "semantic_hash": "0817044ea2f2b5c1c6f7630fab91c866"
   }
 }
