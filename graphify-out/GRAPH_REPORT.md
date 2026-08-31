@@ -1,10 +1,10 @@
 # Graph Report - .  (2026-08-31)
 
 ## Corpus Check
-- Corpus is ~15,961 words - fits in a single context window. You may not need a graph.
+- Corpus is ~16,739 words - fits in a single context window. You may not need a graph.
 
 ## Summary
-- 925 nodes · 1156 edges · 62 communities (51 shown, 11 thin omitted)
+- 938 nodes · 1185 edges · 58 communities (49 shown, 9 thin omitted)
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 16 edges (avg confidence: 0.84)
 - Token cost: 0 input · 0 output
 
@@ -54,15 +54,11 @@
 - [[_COMMUNITY_Community 42|Community 42]]
 - [[_COMMUNITY_Community 43|Community 43]]
 - [[_COMMUNITY_Community 44|Community 44]]
-- [[_COMMUNITY_Community 45|Community 45]]
 - [[_COMMUNITY_Community 46|Community 46]]
 - [[_COMMUNITY_Community 47|Community 47]]
-- [[_COMMUNITY_Community 48|Community 48]]
-- [[_COMMUNITY_Community 50|Community 50]]
 - [[_COMMUNITY_Community 51|Community 51]]
-- [[_COMMUNITY_Community 54|Community 54]]
-- [[_COMMUNITY_Community 55|Community 55]]
-- [[_COMMUNITY_Community 61|Community 61]]
+- [[_COMMUNITY_Community 52|Community 52]]
+- [[_COMMUNITY_Community 57|Community 57]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `StructuredLoggerService` - 24 edges
@@ -71,9 +67,9 @@
 4. `compilerOptions` - 14 edges
 5. `BRAYN README` - 14 edges
 6. `WorkspaceMembershipService` - 13 edges
-7. `compilerOptions` - 12 edges
-8. `compilerOptions` - 11 edges
-9. `public.idempotency_keys` - 11 edges
+7. `WorkspaceController` - 12 edges
+8. `compilerOptions` - 12 edges
+9. `compilerOptions` - 11 edges
 10. `public.idempotency_keys` - 11 edges
 
 ## Surprising Connections (you probably didn't know these)
@@ -92,67 +88,67 @@
 - **Shared Customer Intelligence Foundation** — brayn_unified_customer_intelligence_record, brayn_customer_intelligence_view, brayn_customer_activity_history, brayn_customer_risk_engagement_state, brayn_revenue_opportunity_detector, brayn_merchant_knowledge_policy_store, brayn_merchant_business_analyst, brayn_ai_action_control, brayn_business_action_automation [EXTRACTED 1.00]
 - **AI Action Governance Flow** — brayn_ai_action_control, brayn_business_action_automation, brayn_principle_permission_aware_actions [EXTRACTED 1.00]
 
-## Communities (62 total, 11 thin omitted)
+## Communities (58 total, 9 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.05
-Nodes (32): AddMemberInput, addMemberSchema, WorkspaceRole, workspaceRoles, CreateWorkspaceInput, createWorkspaceSchema, id(), timestamps() (+24 more)
+Nodes (23): createWidgetSchema, WidgetController, ZodValidationPipe, AuthGuard, ProtectedController, Public(), CreateWorkspaceInput, createWorkspaceSchema (+15 more)
 
 ### Community 1 - "Community 1"
 Cohesion: 0.07
-Nodes (25): createEvent(), CreateEventInput, DomainEvent, EventBus, app, bus, event, listener (+17 more)
+Nodes (25): AddMemberInput, addMemberSchema, WorkspaceRole, workspaceRoles, RequireWorkspaceRole(), membershipService, userService, workspaceService (+17 more)
 
 ### Community 2 - "Community 2"
+Cohesion: 0.06
+Nodes (19): DatabaseService, IdempotencyService, chain, client, service, id(), timestamps(), workspaceId() (+11 more)
+
+### Community 3 - "Community 3"
+Cohesion: 0.07
+Nodes (22): loadConfiguration(), config, originalEnv, Env, envSchema, REQUIRED_IN_PRODUCTION, logger, warnOnMissingProductionSecrets() (+14 more)
+
+### Community 4 - "Community 4"
 Cohesion: 0.04
 Nodes (48): completed_at, created_at, key, status, name, notNull, primaryKey, type (+40 more)
 
-### Community 3 - "Community 3"
+### Community 5 - "Community 5"
 Cohesion: 0.05
 Nodes (46): name, notNull, primaryKey, type, clerk_user_id, created_at, id, name (+38 more)
 
-### Community 4 - "Community 4"
+### Community 6 - "Community 6"
+Cohesion: 0.07
+Nodes (24): AiModule, AutomationModule, ConversationModule, CustomerIntelligenceModule, DatabaseModule, createEvent(), CreateEventInput, DomainEvent (+16 more)
+
+### Community 7 - "Community 7"
 Cohesion: 0.05
 Nodes (41): workspace_memberships_workspace_user_unique, checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies (+33 more)
 
-### Community 5 - "Community 5"
+### Community 8 - "Community 8"
+Cohesion: 0.05
+Nodes (40): name, notNull, primaryKey, type, clerk_user_id, created_at, id, name (+32 more)
+
+### Community 9 - "Community 9"
+Cohesion: 0.05
+Nodes (39): dialect, enums, id, _meta, columns, schemas, tables, policies (+31 more)
+
+### Community 10 - "Community 10"
 Cohesion: 0.05
 Nodes (36): dependencies, @clerk/backend, drizzle-orm, fastify, @nestjs/common, @nestjs/config, @nestjs/core, @nestjs/event-emitter (+28 more)
 
-### Community 6 - "Community 6"
-Cohesion: 0.08
-Nodes (16): createWidgetSchema, WidgetController, ZodValidationPipe, AllExceptionsFilter, ErrorResponseBody, body, ThrowingController, STATUS_TO_CODE (+8 more)
-
-### Community 7 - "Community 7"
-Cohesion: 0.07
-Nodes (28): id, name, updated_at, default, name, notNull, primaryKey, type (+20 more)
-
-### Community 8 - "Community 8"
+### Community 11 - "Community 11"
 Cohesion: 0.07
 Nodes (26): dependencies, clsx, next, react, react-dom, tailwind-merge, zod, devDependencies (+18 more)
 
-### Community 9 - "Community 9"
+### Community 12 - "Community 12"
 Cohesion: 0.07
 Nodes (27): completed_at, key, status, name, notNull, primaryKey, type, name (+19 more)
 
-### Community 10 - "Community 10"
-Cohesion: 0.07
-Nodes (27): completed_at, key, status, name, notNull, primaryKey, type, name (+19 more)
-
-### Community 11 - "Community 11"
+### Community 13 - "Community 13"
 Cohesion: 0.08
 Nodes (25): dependencies, zod, devDependencies, eslint, eslint-config-prettier, prettier, turbo, @types/node (+17 more)
 
-### Community 12 - "Community 12"
-Cohesion: 0.08
-Nodes (25): dialect, enums, id, _meta, columns, schemas, tables, policies (+17 more)
-
-### Community 13 - "Community 13"
+### Community 14 - "Community 14"
 Cohesion: 0.13
 Nodes (25): Agent Browser, Architecture Discipline (Rule 8), Authority (Rule 1), Before Coding (Rule 4), BRAYN, Caveman, Claude-Mem, Claude Responsibility (Rule 2) (+17 more)
-
-### Community 14 - "Community 14"
-Cohesion: 0.09
-Nodes (23): completed_at, created_at, key, status, name, notNull, primaryKey, type (+15 more)
 
 ### Community 15 - "Community 15"
 Cohesion: 0.11
@@ -160,131 +156,123 @@ Nodes (13): users, userService, UserController, client, created, existing, initi
 
 ### Community 16 - "Community 16"
 Cohesion: 0.16
-Nodes (11): loadConfiguration(), config, originalEnv, Env, envSchema, REQUIRED_IN_PRODUCTION, logger, warnOnMissingProductionSecrets() (+3 more)
-
-### Community 17 - "Community 17"
-Cohesion: 0.16
 Nodes (19): agent-browser Observability Dashboard, agent-browser SKILL (.agents), agent-browser SKILL (.claude), AI Action Control, Business Action Automation, Customer Activity History, Customer Intelligence View, Customer Risk & Engagement State (+11 more)
 
-### Community 18 - "Community 18"
-Cohesion: 0.16
-Nodes (9): AiModule, AutomationModule, ConversationModule, CustomerIntelligenceModule, DatabaseModule, IdentityResolutionModule, IntegrationModule, IntelligenceEnginesModule (+1 more)
-
-### Community 19 - "Community 19"
+### Community 17 - "Community 17"
 Cohesion: 0.12
 Nodes (16): compilerOptions, allowJs, declaration, incremental, jsx, lib, module, moduleResolution (+8 more)
 
-### Community 20 - "Community 20"
+### Community 18 - "Community 18"
+Cohesion: 0.12
+Nodes (17): completed_at, key, status, name, notNull, primaryKey, type, name (+9 more)
+
+### Community 19 - "Community 19"
 Cohesion: 0.12
 Nodes (17): workspace_memberships_user_id_users_id_fk, workspace_memberships_workspace_id_workspaces_id_fk, foreignKeys, columnsFrom, columnsTo, name, onDelete, onUpdate (+9 more)
+
+### Community 20 - "Community 20"
+Cohesion: 0.12
+Nodes (15): compilerOptions, declaration, esModuleInterop, forceConsistentCasingInFileNames, isolatedModules, lib, module, moduleResolution (+7 more)
 
 ### Community 21 - "Community 21"
 Cohesion: 0.12
 Nodes (15): dialect, enums, id, _meta, columns, schemas, tables, policies (+7 more)
 
 ### Community 22 - "Community 22"
-Cohesion: 0.12
-Nodes (15): compilerOptions, declaration, esModuleInterop, forceConsistentCasingInFileNames, isolatedModules, lib, module, moduleResolution (+7 more)
+Cohesion: 0.13
+Nodes (14): dialect, enums, id, _meta, columns, schemas, tables, policies (+6 more)
 
 ### Community 23 - "Community 23"
-Cohesion: 0.17
-Nodes (5): AuthGuard, ProtectedController, Public(), ProviderError, DependencyStatus
-
-### Community 24 - "Community 24"
 Cohesion: 0.13
 Nodes (14): compilerOptions, declaration, emitDecoratorMetadata, experimentalDecorators, lib, module, moduleResolution, noUncheckedIndexedAccess (+6 more)
 
+### Community 24 - "Community 24"
+Cohesion: 0.13
+Nodes (14): dialect, enums, id, _meta, columns, schemas, tables, policies (+6 more)
+
 ### Community 25 - "Community 25"
-Cohesion: 0.13
-Nodes (14): dialect, enums, id, _meta, columns, schemas, tables, policies (+6 more)
-
-### Community 26 - "Community 26"
-Cohesion: 0.13
-Nodes (14): dialect, enums, id, _meta, columns, schemas, tables, policies (+6 more)
-
-### Community 27 - "Community 27"
 Cohesion: 0.14
 Nodes (13): aliases, components, utils, rsc, $schema, style, tailwind, baseColor (+5 more)
 
-### Community 28 - "Community 28"
-Cohesion: 0.18
-Nodes (6): IdempotencyModule, IdempotencyService, chain, client, service, idempotencyKeys
-
-### Community 29 - "Community 29"
+### Community 26 - "Community 26"
 Cohesion: 0.17
 Nodes (11): dependsOn, outputs, cache, persistent, $schema, tasks, build, dev (+3 more)
 
-### Community 30 - "Community 30"
+### Community 27 - "Community 27"
+Cohesion: 0.18
+Nodes (11): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies, schema (+3 more)
+
+### Community 28 - "Community 28"
 Cohesion: 0.20
 Nodes (10): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies, schema (+2 more)
 
-### Community 31 - "Community 31"
-Cohesion: 0.20
-Nodes (10): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies, schema (+2 more)
-
-### Community 33 - "Community 33"
+### Community 29 - "Community 29"
 Cohesion: 0.25
 Nodes (7): computedHash, skillPath, source, sourceType, skills, agent-browser, version
 
-### Community 34 - "Community 34"
-Cohesion: 0.29
-Nodes (6): collection, compilerOptions, deleteOutDir, tsConfigPath, $schema, sourceRoot
-
-### Community 35 - "Community 35"
+### Community 30 - "Community 30"
 Cohesion: 0.43
 Nodes (5): RetryOptions, sleep(), fn, promise, withRetry()
 
-### Community 37 - "Community 37"
-Cohesion: 0.33
-Nodes (6): name, notNull, primaryKey, type, clerk_user_id, columns
+### Community 31 - "Community 31"
+Cohesion: 0.29
+Nodes (6): collection, compilerOptions, deleteOutDir, tsConfigPath, $schema, sourceRoot
 
-### Community 38 - "Community 38"
+### Community 32 - "Community 32"
+Cohesion: 0.33
+Nodes (6): completed_at, name, notNull, primaryKey, type, columns
+
+### Community 33 - "Community 33"
 Cohesion: 0.33
 Nodes (6): created_at, default, name, notNull, primaryKey, type
 
-### Community 39 - "Community 39"
+### Community 34 - "Community 34"
 Cohesion: 0.33
 Nodes (6): id, default, name, notNull, primaryKey, type
 
-### Community 40 - "Community 40"
+### Community 35 - "Community 35"
 Cohesion: 0.33
-Nodes (6): name, name, notNull, primaryKey, type, columns
+Nodes (6): status, default, name, notNull, primaryKey, type
 
-### Community 41 - "Community 41"
+### Community 36 - "Community 36"
 Cohesion: 0.33
 Nodes (6): updated_at, default, name, notNull, primaryKey, type
 
-### Community 42 - "Community 42"
+### Community 37 - "Community 37"
+Cohesion: 0.33
+Nodes (6): name, name, notNull, primaryKey, type, columns
+
+### Community 38 - "Community 38"
 Cohesion: 0.60
 Nodes (3): dialect, entries, version
 
-### Community 43 - "Community 43"
+### Community 39 - "Community 39"
 Cohesion: 0.40
-Nodes (5): uniqueConstraints, users_clerk_user_id_unique, columns, name, nullsNotDistinct
+Nodes (5): key, name, notNull, primaryKey, type
 
-### Community 44 - "Community 44"
+### Community 40 - "Community 40"
 Cohesion: 0.40
 Nodes (4): printWidth, semi, singleQuote, trailingComma
 
 ## Knowledge Gaps
-- **532 isolated node(s):** `Obsidian`, `Ponytail`, `Agent Browser`, `pr-review-toolkit`, `BRAYN (README)` (+527 more)
+- **536 isolated node(s):** `Obsidian`, `Ponytail`, `Agent Browser`, `pr-review-toolkit`, `BRAYN (README)` (+531 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **11 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **9 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `WorkspaceModule` connect `Community 0` to `Community 18`?**
-  _High betweenness centrality (0.012) - this node is a cross-community bridge._
-- **Why does `StructuredLoggerService` connect `Community 1` to `Community 16`, `Community 0`, `Community 6`, `Community 23`?**
+- **Why does `WorkspaceController` connect `Community 1` to `Community 0`, `Community 2`?**
+  _High betweenness centrality (0.018) - this node is a cross-community bridge._
+- **Why does `WorkspaceModule` connect `Community 1` to `Community 6`?**
+  _High betweenness centrality (0.014) - this node is a cross-community bridge._
+- **Why does `StructuredLoggerService` connect `Community 3` to `Community 0`, `Community 6`?**
   _High betweenness centrality (0.011) - this node is a cross-community bridge._
 - **What connects `Obsidian`, `Claude Responsibility (Rule 2)`, `Ponytail` to the rest of the system?**
-  _536 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _540 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
-  _Cohesion score 0.0505175983436853 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.0544464609800363 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**
-  _Cohesion score 0.07142857142857142 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06734006734006734 - nodes in this community are weakly interconnected._
 - **Should `Community 2` be split into smaller, more focused modules?**
-  _Cohesion score 0.04081632653061224 - nodes in this community are weakly interconnected._
-- **Should `Community 3` be split into smaller, more focused modules?**
-  _Cohesion score 0.04734299516908213 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.058823529411764705 - nodes in this community are weakly interconnected._

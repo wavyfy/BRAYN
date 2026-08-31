@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { WorkspaceMembershipController } from './workspace-membership.controller';
 import { WorkspaceMembershipService } from './workspace-membership.service';
 import { UserService } from './user.service';
+import { WorkspaceMembershipGuard } from './workspace-membership.guard';
 import { AuthGuard } from '../../common/auth/auth.guard';
 import { AllExceptionsFilter } from '../../common/errors/all-exceptions.filter';
 import { registerHttpLogging } from '../../common/logging/http-logging.hook';
@@ -51,6 +52,7 @@ describe('WorkspaceMembershipController (e2e)', () => {
       providers: [
         { provide: WorkspaceMembershipService, useValue: membershipService },
         { provide: UserService, useValue: userService },
+        WorkspaceMembershipGuard,
         { provide: APP_GUARD, useClass: AuthGuard },
       ],
     }).compile();

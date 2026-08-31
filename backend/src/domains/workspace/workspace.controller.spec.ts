@@ -7,6 +7,7 @@ import { WorkspaceController } from './workspace.controller';
 import { WorkspaceService } from './workspace.service';
 import { UserService } from './user.service';
 import { WorkspaceMembershipService } from './workspace-membership.service';
+import { WorkspaceMembershipGuard } from './workspace-membership.guard';
 import { AuthGuard } from '../../common/auth/auth.guard';
 import { AllExceptionsFilter } from '../../common/errors/all-exceptions.filter';
 import { registerHttpLogging } from '../../common/logging/http-logging.hook';
@@ -56,6 +57,7 @@ describe('WorkspaceController (e2e)', () => {
         { provide: WorkspaceService, useValue: workspaceService },
         { provide: UserService, useValue: userService },
         { provide: WorkspaceMembershipService, useValue: membershipService },
+        WorkspaceMembershipGuard,
         { provide: APP_GUARD, useClass: AuthGuard },
       ],
     }).compile();
