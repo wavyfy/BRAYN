@@ -7,6 +7,7 @@ function makeEnv(overrides: Partial<Env>): Env {
   return {
     NODE_ENV: 'development',
     PORT: 3001,
+    FRONTEND_URL: 'http://localhost:3000',
     ...overrides,
   };
 }

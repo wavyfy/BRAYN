@@ -25,6 +25,9 @@ async function bootstrap() {
 
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, adapter);
 
+  const configService = app.get(ConfigService<Env, true>);
+  app.enableCors({ origin: configService.get('FRONTEND_URL', { infer: true }), credentials: true });
+
   // doc 29 §6 — REST API is versioned under /api/v1. health stays
   // unversioned: it's an infrastructure liveness check, not a business API.
   app.setGlobalPrefix('api/v1', { exclude: ['health'] });
@@ -33,7 +36,6 @@ async function bootstrap() {
   app.useLogger(logger);
   registerHttpLogging(app.getHttpAdapter().getInstance(), logger);
 
-  const configService = app.get(ConfigService<Env, true>);
   initSentry(configService.get('SENTRY_DSN', { infer: true }));
   warnOnMissingProductionSecrets(loadConfiguration(), logger);
 

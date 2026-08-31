@@ -37,6 +37,9 @@ export const envSchema = z.object({
 
   // Observability — Sentry (doc 29 §21)
   SENTRY_DSN: z.string().url().optional(),
+
+  // Frontend origin allowed to call this API (CORS) — doc 29 §7 Next.js frontend
+  FRONTEND_URL: z.string().url().default('http://localhost:3000'),
 });
 
 export type Env = z.infer<typeof envSchema>;
