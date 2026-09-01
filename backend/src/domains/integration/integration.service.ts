@@ -23,6 +23,8 @@ const integrationPublicColumns = {
   workspaceId: integrations.workspaceId,
   provider: integrations.provider,
   status: integrations.status,
+  lastSyncedAt: integrations.lastSyncedAt,
+  lastSyncError: integrations.lastSyncError,
   createdAt: integrations.createdAt,
   updatedAt: integrations.updatedAt,
 };
@@ -55,14 +57,14 @@ export class IntegrationService {
   async connect(workspaceId: string, provider: IntegrationProvider) {
     const existing = await this.findByProvider(workspaceId, provider);
 
-    if (existing?.status === 'connected') {
+    if (existing && existing.status !== 'disconnected') {
       throw new ConflictError('This provider is already connected.');
     }
 
     if (existing) {
       const [reconnected] = await this.database.client
         .update(integrations)
-        .set({ status: 'connected' })
+        .set({ status: 'connected', lastSyncError: null })
         .where(eq(integrations.id, existing.id))
         .returning(integrationPublicColumns);
 
@@ -85,7 +87,72 @@ export class IntegrationService {
 
     const [updated] = await this.database.client
       .update(integrations)
-      .set({ status: 'disconnected' })
+      .set({ status: 'disconnected', lastSyncError: null })
+      .where(eq(integrations.id, existing.id))
+      .returning(integrationPublicColumns);
+
+    return updated;
+  }
+
+  /**
+   * Marks a sync run as started. Requires an existing connection that
+   * isn't already mid-sync (doc 07 — idempotency: don't let two syncs run
+   * concurrently for the same integration); allowed from `connected` or a
+   * prior `error` (retry).
+   */
+  async startSync(workspaceId: string, provider: IntegrationProvider) {
+    const existing = await this.findByProvider(workspaceId, provider);
+    if (!existing) {
+      throw new NotFoundError('This workspace has no connection for that provider.');
+    }
+    if (existing.status === 'disconnected') {
+      throw new ConflictError('Cannot sync a disconnected integration.');
+    }
+    if (existing.status === 'syncing') {
+      throw new ConflictError('A sync is already in progress for this provider.');
+    }
+
+    const [updated] = await this.database.client
+      .update(integrations)
+      .set({ status: 'syncing', lastSyncError: null })
+      .where(eq(integrations.id, existing.id))
+      .returning(integrationPublicColumns);
+
+    return updated;
+  }
+
+  /** Marks an in-progress sync as succeeded. Requires startSync() to have been called first. */
+  async completeSync(workspaceId: string, provider: IntegrationProvider) {
+    const existing = await this.findByProvider(workspaceId, provider);
+    if (!existing) {
+      throw new NotFoundError('This workspace has no connection for that provider.');
+    }
+    if (existing.status !== 'syncing') {
+      throw new ConflictError('No sync is in progress for this provider.');
+    }
+
+    const [updated] = await this.database.client
+      .update(integrations)
+      .set({ status: 'connected', lastSyncedAt: new Date(), lastSyncError: null })
+      .where(eq(integrations.id, existing.id))
+      .returning(integrationPublicColumns);
+
+    return updated;
+  }
+
+  /** Marks an in-progress sync as failed. Requires startSync() to have been called first. */
+  async failSync(workspaceId: string, provider: IntegrationProvider, error: string) {
+    const existing = await this.findByProvider(workspaceId, provider);
+    if (!existing) {
+      throw new NotFoundError('This workspace has no connection for that provider.');
+    }
+    if (existing.status !== 'syncing') {
+      throw new ConflictError('No sync is in progress for this provider.');
+    }
+
+    const [updated] = await this.database.client
+      .update(integrations)
+      .set({ status: 'error', lastSyncError: error })
       .where(eq(integrations.id, existing.id))
       .returning(integrationPublicColumns);
 

@@ -76,7 +76,23 @@ describe('IntegrationService', () => {
     const result = await service.connect('ws_1', 'shopify');
 
     expect(result).toEqual(reconnected);
-    expect(updateChain.set).toHaveBeenCalledWith({ status: 'connected' });
+    expect(updateChain.set).toHaveBeenCalledWith({ status: 'connected', lastSyncError: null });
+  });
+
+  it('connect() throws ConflictError when the provider is mid-sync', async () => {
+    const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'syncing' };
+    const client = { select: makeSelectQueue([[existing]]) };
+    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig());
+
+    await expect(service.connect('ws_1', 'shopify')).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
+  it('connect() throws ConflictError when the provider is in an error state', async () => {
+    const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'error' };
+    const client = { select: makeSelectQueue([[existing]]) };
+    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig());
+
+    await expect(service.connect('ws_1', 'shopify')).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 
   it('disconnect() marks a connected integration as disconnected', async () => {
@@ -92,7 +108,7 @@ describe('IntegrationService', () => {
     const result = await service.disconnect('ws_1', 'shopify');
 
     expect(result).toEqual(disconnected);
-    expect(updateChain.set).toHaveBeenCalledWith({ status: 'disconnected' });
+    expect(updateChain.set).toHaveBeenCalledWith({ status: 'disconnected', lastSyncError: null });
   });
 
   it('disconnect() throws NotFoundError when the workspace has no connection for that provider', async () => {
@@ -100,6 +116,97 @@ describe('IntegrationService', () => {
     const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig());
 
     await expect(service.disconnect('ws_1', 'shopify')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  describe('startSync() / completeSync() / failSync()', () => {
+    it('startSync() moves a connected integration to syncing', async () => {
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected' };
+      const syncing = { ...existing, status: 'syncing' };
+      const updateChain = makeChain([syncing]);
+      const client = { select: makeSelectQueue([[existing]]), update: vi.fn(() => updateChain) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig());
+
+      const result = await service.startSync('ws_1', 'shopify');
+
+      expect(result).toEqual(syncing);
+      expect(updateChain.set).toHaveBeenCalledWith({ status: 'syncing', lastSyncError: null });
+    });
+
+    it('startSync() allows retrying from an error state', async () => {
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'error' };
+      const updateChain = makeChain([{ ...existing, status: 'syncing' }]);
+      const client = { select: makeSelectQueue([[existing]]), update: vi.fn(() => updateChain) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig());
+
+      await expect(service.startSync('ws_1', 'shopify')).resolves.toMatchObject({ status: 'syncing' });
+    });
+
+    it('startSync() throws ConflictError when the integration is disconnected', async () => {
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'disconnected' };
+      const client = { select: makeSelectQueue([[existing]]) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig());
+
+      await expect(service.startSync('ws_1', 'shopify')).rejects.toMatchObject({ code: 'CONFLICT' });
+    });
+
+    it('startSync() throws ConflictError when a sync is already in progress', async () => {
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'syncing' };
+      const client = { select: makeSelectQueue([[existing]]) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig());
+
+      await expect(service.startSync('ws_1', 'shopify')).rejects.toMatchObject({ code: 'CONFLICT' });
+    });
+
+    it('startSync() throws NotFoundError when the workspace has no connection for that provider', async () => {
+      const client = { select: makeSelectQueue([[]]) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig());
+
+      await expect(service.startSync('ws_1', 'shopify')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    });
+
+    it('completeSync() moves a syncing integration back to connected and stamps lastSyncedAt', async () => {
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'syncing' };
+      const completed = { ...existing, status: 'connected', lastSyncedAt: new Date('2026-09-01T00:00:00Z') };
+      const updateChain = makeChain([completed]);
+      const client = { select: makeSelectQueue([[existing]]), update: vi.fn(() => updateChain) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig());
+
+      const result = await service.completeSync('ws_1', 'shopify');
+
+      expect(result).toEqual(completed);
+      const setArg = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      expect(setArg).toMatchObject({ status: 'connected', lastSyncError: null });
+      expect(setArg.lastSyncedAt).toBeInstanceOf(Date);
+    });
+
+    it('completeSync() throws ConflictError when no sync is in progress', async () => {
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected' };
+      const client = { select: makeSelectQueue([[existing]]) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig());
+
+      await expect(service.completeSync('ws_1', 'shopify')).rejects.toMatchObject({ code: 'CONFLICT' });
+    });
+
+    it('failSync() moves a syncing integration to error with the failure message', async () => {
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'syncing' };
+      const failed = { ...existing, status: 'error', lastSyncError: 'Provider timed out' };
+      const updateChain = makeChain([failed]);
+      const client = { select: makeSelectQueue([[existing]]), update: vi.fn(() => updateChain) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig());
+
+      const result = await service.failSync('ws_1', 'shopify', 'Provider timed out');
+
+      expect(result).toEqual(failed);
+      expect(updateChain.set).toHaveBeenCalledWith({ status: 'error', lastSyncError: 'Provider timed out' });
+    });
+
+    it('failSync() throws ConflictError when no sync is in progress', async () => {
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected' };
+      const client = { select: makeSelectQueue([[existing]]) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig());
+
+      await expect(service.failSync('ws_1', 'shopify', 'boom')).rejects.toMatchObject({ code: 'CONFLICT' });
+    });
   });
 
   describe('setCredentials() / getCredentials()', () => {
