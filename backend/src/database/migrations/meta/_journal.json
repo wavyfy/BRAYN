@@ -36,6 +36,13 @@
       "when": 1788167174830,
       "tag": "0004_square_doctor_octopus",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788246295473,
+      "tag": "0005_dry_king_cobra",
+      "breakpoints": true
     }
   ]
 }

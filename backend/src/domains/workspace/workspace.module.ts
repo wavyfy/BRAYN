@@ -24,6 +24,6 @@ import { WorkspaceMembershipGuard } from './workspace-membership.guard';
 @Module({
   controllers: [WorkspaceController, UserController, WorkspaceMembershipController],
   providers: [WorkspaceService, UserService, WorkspaceMembershipService, WorkspaceMembershipGuard],
-  exports: [WorkspaceService, UserService, WorkspaceMembershipService],
+  exports: [WorkspaceService, UserService, WorkspaceMembershipService, WorkspaceMembershipGuard],
 })
 export class WorkspaceModule {}
