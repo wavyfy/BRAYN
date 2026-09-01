@@ -10,7 +10,11 @@ import type { StructuredLoggerService } from '../logging/structured-logger.servi
  *
  * See "18. BRAYN Security, Observability & Reliability" (Secrets).
  */
-const REQUIRED_IN_PRODUCTION: ReadonlyArray<keyof Env> = ['DATABASE_URL', 'CLERK_SECRET_KEY'];
+const REQUIRED_IN_PRODUCTION: ReadonlyArray<keyof Env> = [
+  'DATABASE_URL',
+  'CLERK_SECRET_KEY',
+  'BRAYN_CREDENTIAL_ENCRYPTION_KEY',
+];
 
 export function warnOnMissingProductionSecrets(env: Env, logger: StructuredLoggerService): void {
   if (env.NODE_ENV !== 'production') {

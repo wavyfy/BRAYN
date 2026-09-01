@@ -32,6 +32,14 @@ export const integrations = pgTable(
     status: text('status', { enum: ['connected', 'disconnected'] })
       .notNull()
       .default('connected'),
+    /**
+     * Encrypted credential payload (AES-256-GCM, app-level — see
+     * common/crypto/credential-cipher.ts). Ciphertext only; the plaintext
+     * never touches the database. Null until a provider connect flow
+     * (Phase 4) calls IntegrationService.setCredentials(). Never selected
+     * by list/connect/disconnect — see integrationPublicColumns.
+     */
+    credentials: text('credentials'),
     ...timestamps(),
   },
   (table) => [uniqueIndex('integrations_workspace_provider_unique').on(table.workspaceId, table.provider)],

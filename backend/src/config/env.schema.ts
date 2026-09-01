@@ -38,6 +38,10 @@ export const envSchema = z.object({
   // Observability — Sentry (doc 29 §21)
   SENTRY_DSN: z.string().url().optional(),
 
+  // Provider credential encryption — app-level AES-256-GCM (doc 18 Secrets).
+  // 64-character hex string (32 raw bytes), e.g. `openssl rand -hex 32`.
+  BRAYN_CREDENTIAL_ENCRYPTION_KEY: z.string().optional(),
+
   // Frontend origin allowed to call this API (CORS) — doc 29 §7 Next.js frontend
   FRONTEND_URL: z.string().url().default('http://localhost:3000'),
 });

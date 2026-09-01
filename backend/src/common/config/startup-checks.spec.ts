@@ -35,7 +35,7 @@ describe('warnOnMissingProductionSecrets', () => {
       expect.stringContaining('DATABASE_URL'),
       'StartupChecks',
       expect.objectContaining({
-        missing: expect.arrayContaining(['DATABASE_URL', 'CLERK_SECRET_KEY']),
+        missing: expect.arrayContaining(['DATABASE_URL', 'CLERK_SECRET_KEY', 'BRAYN_CREDENTIAL_ENCRYPTION_KEY']),
       }),
     );
   });
@@ -48,6 +48,7 @@ describe('warnOnMissingProductionSecrets', () => {
         NODE_ENV: 'production',
         DATABASE_URL: 'postgres://user:pass@host/db',
         CLERK_SECRET_KEY: 'sk_live_xxx',
+        BRAYN_CREDENTIAL_ENCRYPTION_KEY: 'a'.repeat(64),
       }),
       logger,
     );
