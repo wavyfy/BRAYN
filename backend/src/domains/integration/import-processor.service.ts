@@ -2,10 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import type { DomainEvent } from '../../common/events/domain-event';
 import { CustomerService } from '../commerce/customer.service';
+import { ProductService } from '../commerce/product.service';
 import { ImportRunService } from './import-run.service';
 import { IntegrationService } from './integration.service';
 import { ProviderRegistry } from './provider-registry.service';
 import type { IntegrationProvider } from './dto/connect-integration.schema';
+import type { ProviderAdapter } from './provider-adapter.interface';
 
 export interface ImportRequestedPayload {
   provider: IntegrationProvider;
@@ -19,6 +21,18 @@ export interface ImportRequestedPayload {
  * triggered it (doc 07 — event/job, not direct call, since this is
  * long-running and talks to an external system).
  *
+ * One run covers every resource type the adapter supports (customers,
+ * products, …), imported sequentially — ImportRunService models "one row
+ * per initial-import attempt for an integration", not per entity type, and
+ * doc 19's Visible Result is one merchant-facing import/sync progress, not
+ * several.
+ *
+ * ponytail: `cursor` tracks only the resource currently being paginated —
+ * a run that fails mid-products still restarts customers from page 1 on
+ * retry (upserts are idempotent, so this is wasted work, not wrong data).
+ * True per-resource resumability is deferred to the "Retry/error handling"
+ * part (doc 19), once retry itself exists.
+ *
  * ponytail: a page whose upsert throws counts every record on that page as
  * failed rather than isolating which record broke — per-record partial
  * failure needs re-fetching/re-validating individually, add when a real
@@ -31,6 +45,7 @@ export class ImportProcessorService {
     private readonly importRunService: ImportRunService,
     private readonly integrationService: IntegrationService,
     private readonly customerService: CustomerService,
+    private readonly productService: ProductService,
   ) {}
 
   @OnEvent('integration.import.requested')
@@ -50,25 +65,77 @@ export class ImportProcessorService {
     }
 
     const adapter = this.providerRegistry.get(provider);
-    let cursor: string | undefined;
     let imported = 0;
     let failed = 0;
 
     try {
-      do {
-        const page = await adapter.fetchCustomers!(credentials, cursor);
-        try {
-          imported += await this.customerService.upsertMany(workspaceId, integrationId, provider, page.customers);
-        } catch {
-          failed += page.customers.length;
-        }
-        cursor = page.nextCursor ?? undefined;
-        await this.importRunService.recordProgress(runId, { recordsImported: imported, recordsFailed: failed, cursor });
-      } while (cursor);
+      if (adapter.fetchCustomers) {
+        ({ imported, failed } = await this.importCustomers(adapter, credentials, workspaceId, integrationId, provider, runId, imported, failed));
+      }
+      if (adapter.fetchProducts) {
+        ({ imported, failed } = await this.importProducts(adapter, credentials, workspaceId, integrationId, provider, runId, imported, failed));
+      }
 
       await this.importRunService.completeImportRun(runId);
     } catch (error) {
       await this.importRunService.failImportRun(runId, error instanceof Error ? error.message : 'Unknown import error.');
     }
+  }
+
+  private async importCustomers(
+    adapter: ProviderAdapter,
+    credentials: Record<string, string>,
+    workspaceId: string,
+    integrationId: string,
+    provider: IntegrationProvider,
+    runId: string,
+    startImported: number,
+    startFailed: number,
+  ): Promise<{ imported: number; failed: number }> {
+    let cursor: string | undefined;
+    let imported = startImported;
+    let failed = startFailed;
+
+    do {
+      const page = await adapter.fetchCustomers!(credentials, cursor);
+      try {
+        imported += await this.customerService.upsertMany(workspaceId, integrationId, provider, page.customers);
+      } catch {
+        failed += page.customers.length;
+      }
+      cursor = page.nextCursor ?? undefined;
+      await this.importRunService.recordProgress(runId, { recordsImported: imported, recordsFailed: failed, cursor });
+    } while (cursor);
+
+    return { imported, failed };
+  }
+
+  private async importProducts(
+    adapter: ProviderAdapter,
+    credentials: Record<string, string>,
+    workspaceId: string,
+    integrationId: string,
+    provider: IntegrationProvider,
+    runId: string,
+    startImported: number,
+    startFailed: number,
+  ): Promise<{ imported: number; failed: number }> {
+    let cursor: string | undefined;
+    let imported = startImported;
+    let failed = startFailed;
+
+    do {
+      const page = await adapter.fetchProducts!(credentials, cursor);
+      try {
+        const result = await this.productService.upsertMany(workspaceId, integrationId, provider, page.products);
+        imported += result.productsWritten;
+      } catch {
+        failed += page.products.length;
+      }
+      cursor = page.nextCursor ?? undefined;
+      await this.importRunService.recordProgress(runId, { recordsImported: imported, recordsFailed: failed, cursor });
+    } while (cursor);
+
+    return { imported, failed };
   }
 }

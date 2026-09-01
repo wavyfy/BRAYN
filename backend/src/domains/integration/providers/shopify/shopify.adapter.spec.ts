@@ -213,4 +213,80 @@ describe('ShopifyAdapter', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });
+
+  describe('fetchProducts()', () => {
+    it('requests the first page and normalizes products with their variants', async () => {
+      const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () =>
+        jsonResponse(200, {
+          products: [
+            {
+              id: 55,
+              title: 'Classic Tee',
+              updated_at: '2026-01-01T00:00:00Z',
+              variants: [
+                { id: 901, sku: 'TEE-S', price: '19.99', inventory_quantity: 10, updated_at: '2026-01-02T00:00:00Z' },
+              ],
+            },
+          ],
+        }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      const page = await adapter.fetchProducts({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
+
+      expect(page).toEqual({
+        products: [
+          {
+            externalId: '55',
+            title: 'Classic Tee',
+            sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
+            variants: [
+              {
+                externalId: '901',
+                sku: 'TEE-S',
+                price: '19.99',
+                inventoryQuantity: 10,
+                sourceUpdatedAt: new Date('2026-01-02T00:00:00Z'),
+              },
+            ],
+          },
+        ],
+        nextCursor: null,
+      });
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe('https://acme.myshopify.com/admin/api/2024-10/products.json?limit=250');
+      expect((init?.headers as Record<string, string>)['X-Shopify-Access-Token']).toBe('shpat_123');
+    });
+
+    it('extracts the next-page URL from the Link header', async () => {
+      const nextUrl = 'https://acme.myshopify.com/admin/api/2024-10/products.json?page_info=abc123';
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { products: [] }, { link: `<${nextUrl}>; rel="next"` })));
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      const page = await adapter.fetchProducts({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
+
+      expect(page.nextCursor).toBe(nextUrl);
+    });
+
+    it('throws ProviderError on a non-2xx response', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401)));
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      await expect(
+        adapter.fetchProducts({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }),
+      ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+    });
+
+    it('throws ProviderError and never calls fetch for a stored shopDomain outside myshopify.com — SSRF guard', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      await expect(
+        adapter.fetchProducts({ shopDomain: 'evil.com', accessToken: 'shpat_123' }),
+      ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
 });

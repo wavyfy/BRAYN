@@ -1,10 +1,11 @@
 import { Injectable, type OnModuleInit } from '@nestjs/common';
 import { ProviderError } from '../../../../common/errors/app-error';
 import { ProviderRegistry } from '../../provider-registry.service';
-import type { CustomerPage, ProviderAdapter } from '../../provider-adapter.interface';
+import type { CustomerPage, ProductPage, ProviderAdapter } from '../../provider-adapter.interface';
 
 const SHOPIFY_API_VERSION = '2024-10';
 const CUSTOMERS_PAGE_SIZE = 250;
+const PRODUCTS_PAGE_SIZE = 250;
 /** Merchant-supplied at connect time — must be pinned to Shopify's own domain before it drives any fetch() (SSRF). */
 const SHOPIFY_DOMAIN_PATTERN = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i;
 
@@ -15,6 +16,21 @@ interface ShopifyCustomer {
   last_name: string | null;
   phone: string | null;
   updated_at: string;
+}
+
+interface ShopifyVariant {
+  id: number;
+  sku: string | null;
+  price: string | null;
+  inventory_quantity: number | null;
+  updated_at: string;
+}
+
+interface ShopifyProduct {
+  id: number;
+  title: string;
+  updated_at: string;
+  variants: ShopifyVariant[];
 }
 
 /**
@@ -86,6 +102,61 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
    * specific" cursor contract.
    */
   async fetchCustomers(credentials: Record<string, string>, cursor?: string): Promise<CustomerPage> {
+    const { body, nextCursor } = await this.fetchPage(
+      credentials,
+      cursor,
+      `customers.json?limit=${CUSTOMERS_PAGE_SIZE}`,
+    );
+    const { customers } = body as { customers: ShopifyCustomer[] };
+
+    return {
+      customers: customers.map((customer) => ({
+        externalId: String(customer.id),
+        email: customer.email,
+        firstName: customer.first_name,
+        lastName: customer.last_name,
+        phone: customer.phone,
+        sourceUpdatedAt: new Date(customer.updated_at),
+      })),
+      nextCursor,
+    };
+  }
+
+  /** Same contract/pagination as fetchCustomers, for products and their variants (doc 20 Shopify Phase 1 Data). */
+  async fetchProducts(credentials: Record<string, string>, cursor?: string): Promise<ProductPage> {
+    const { body, nextCursor } = await this.fetchPage(credentials, cursor, `products.json?limit=${PRODUCTS_PAGE_SIZE}`);
+    const { products } = body as { products: ShopifyProduct[] };
+
+    return {
+      products: products.map((product) => ({
+        externalId: String(product.id),
+        title: product.title,
+        sourceUpdatedAt: new Date(product.updated_at),
+        variants: product.variants.map((variant) => ({
+          externalId: String(variant.id),
+          sku: variant.sku,
+          price: variant.price,
+          inventoryQuantity: variant.inventory_quantity,
+          sourceUpdatedAt: new Date(variant.updated_at),
+        })),
+      })),
+      nextCursor,
+    };
+  }
+
+  /**
+   * Shared fetch+pagination for every resource page (doc 20 — Initial
+   * Import: pagination). `cursor`, when present, is the exact next-page
+   * URL Shopify returned in its previous response's `Link` header —
+   * simpler and less error-prone than re-deriving Shopify's `page_info`
+   * query param ourselves, and matches ImportRunService's "opaque
+   * provider-specific" cursor contract.
+   */
+  private async fetchPage(
+    credentials: Record<string, string>,
+    cursor: string | undefined,
+    defaultRelativeUrl: string,
+  ): Promise<{ body: unknown; nextCursor: string | null }> {
     const { shopDomain, accessToken } = credentials;
     // verifyConnection() already validated this domain at connect time — a
     // failure here means stored credentials were tampered with or corrupted,
@@ -95,7 +166,7 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
     }
     const url = cursor
       ? assertCursorMatchesShop(cursor, shopDomain)
-      : `https://${shopDomain}/admin/api/${SHOPIFY_API_VERSION}/customers.json?limit=${CUSTOMERS_PAGE_SIZE}`;
+      : `https://${shopDomain}/admin/api/${SHOPIFY_API_VERSION}/${defaultRelativeUrl}`;
 
     let response: Response;
     try {
@@ -108,20 +179,10 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
     if (!response.ok) {
       // Credentials were already verified at connect time — a failure here is
       // an infrastructure/auth problem, not an ordinary rejection to swallow.
-      throw new ProviderError(`Shopify customer fetch failed with status ${response.status}.`);
+      throw new ProviderError(`Shopify fetch failed with status ${response.status}.`);
     }
 
-    const body = (await response.json()) as { customers: ShopifyCustomer[] };
-    const customers = body.customers.map((customer) => ({
-      externalId: String(customer.id),
-      email: customer.email,
-      firstName: customer.first_name,
-      lastName: customer.last_name,
-      phone: customer.phone,
-      sourceUpdatedAt: new Date(customer.updated_at),
-    }));
-
-    return { customers, nextCursor: parseNextCursor(response.headers.get('link')) };
+    return { body: await response.json(), nextCursor: parseNextCursor(response.headers.get('link')) };
   }
 }
 

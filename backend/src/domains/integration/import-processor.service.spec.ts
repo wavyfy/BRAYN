@@ -2,10 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { ImportProcessorService } from './import-processor.service';
 import type { DomainEvent } from '../../common/events/domain-event';
 import type { CustomerService } from '../commerce/customer.service';
+import type { ProductService } from '../commerce/product.service';
 import type { ImportRunService } from './import-run.service';
 import type { IntegrationService } from './integration.service';
 import type { ProviderRegistry } from './provider-registry.service';
-import type { CustomerPage, ProviderAdapter } from './provider-adapter.interface';
+import type { CustomerPage, ProductPage, ProviderAdapter } from './provider-adapter.interface';
+
+function makeProductService(): ProductService {
+  return { upsertMany: vi.fn(async (_ws, _int, _p, products) => ({ productsWritten: products.length, variantsWritten: 0 })) } as unknown as ProductService;
+}
 
 function makeEvent(overrides: Partial<DomainEvent<{ provider: 'shopify'; runId: string }>> = {}) {
   return {
@@ -45,7 +50,13 @@ describe('ImportProcessorService', () => {
     } as unknown as ImportRunService;
     const integrationService = { getCredentials: vi.fn(async () => credentials) } as unknown as IntegrationService;
     const customerService = { upsertMany: vi.fn(async (_ws, _int, _p, customers) => customers.length) } as unknown as CustomerService;
-    const processor = new ImportProcessorService(registry, importRunService, integrationService, customerService);
+    const processor = new ImportProcessorService(
+      registry,
+      importRunService,
+      integrationService,
+      customerService,
+      makeProductService(),
+    );
 
     await processor.handleImportRequested(makeEvent());
 
@@ -73,7 +84,13 @@ describe('ImportProcessorService', () => {
     const importRunService = { failImportRun: vi.fn(async () => undefined) } as unknown as ImportRunService;
     const integrationService = { getCredentials: vi.fn(async () => null) } as unknown as IntegrationService;
     const customerService = { upsertMany: vi.fn() } as unknown as CustomerService;
-    const processor = new ImportProcessorService(registry, importRunService, integrationService, customerService);
+    const processor = new ImportProcessorService(
+      registry,
+      importRunService,
+      integrationService,
+      customerService,
+      makeProductService(),
+    );
 
     await processor.handleImportRequested(makeEvent());
 
@@ -93,7 +110,13 @@ describe('ImportProcessorService', () => {
     } as unknown as ImportRunService;
     const integrationService = { getCredentials: vi.fn(async () => credentials) } as unknown as IntegrationService;
     const customerService = { upsertMany: vi.fn() } as unknown as CustomerService;
-    const processor = new ImportProcessorService(registry, importRunService, integrationService, customerService);
+    const processor = new ImportProcessorService(
+      registry,
+      importRunService,
+      integrationService,
+      customerService,
+      makeProductService(),
+    );
 
     await processor.handleImportRequested(makeEvent());
 
@@ -122,7 +145,13 @@ describe('ImportProcessorService', () => {
         throw new Error('constraint violation');
       }),
     } as unknown as CustomerService;
-    const processor = new ImportProcessorService(registry, importRunService, integrationService, customerService);
+    const processor = new ImportProcessorService(
+      registry,
+      importRunService,
+      integrationService,
+      customerService,
+      makeProductService(),
+    );
 
     await processor.handleImportRequested(makeEvent());
 
@@ -131,6 +160,64 @@ describe('ImportProcessorService', () => {
       recordsFailed: 1,
       cursor: undefined,
     });
+    expect(importRunService.completeImportRun).toHaveBeenCalledWith('run_1');
+  });
+
+  it('imports customers then products in the same run, with cumulative progress', async () => {
+    const customerPage: CustomerPage = {
+      customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+      nextCursor: null,
+    };
+    const productPage: ProductPage = {
+      products: [{ externalId: '55', title: 'Tee', sourceUpdatedAt: null, variants: [] }],
+      nextCursor: null,
+    };
+    const fetchCustomers = vi.fn(async () => customerPage);
+    const fetchProducts = vi.fn(async () => productPage);
+    const registry = {
+      get: vi.fn(() => ({ fetchCustomers, fetchProducts }) as unknown as ProviderAdapter),
+    } as unknown as ProviderRegistry;
+    const importRunService = {
+      recordProgress: vi.fn(async () => undefined),
+      completeImportRun: vi.fn(async () => undefined),
+      failImportRun: vi.fn(async () => undefined),
+    } as unknown as ImportRunService;
+    const integrationService = { getCredentials: vi.fn(async () => credentials) } as unknown as IntegrationService;
+    const customerService = { upsertMany: vi.fn(async () => 1) } as unknown as CustomerService;
+    const productService = makeProductService();
+    const processor = new ImportProcessorService(registry, importRunService, integrationService, customerService, productService);
+
+    await processor.handleImportRequested(makeEvent());
+
+    expect(fetchCustomers).toHaveBeenCalledTimes(1);
+    expect(fetchProducts).toHaveBeenCalledTimes(1);
+    expect(productService.upsertMany).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', productPage.products);
+    // Second (product) page's progress carries the customer count forward cumulatively.
+    expect(importRunService.recordProgress).toHaveBeenNthCalledWith(2, 'run_1', {
+      recordsImported: 2,
+      recordsFailed: 0,
+      cursor: undefined,
+    });
+    expect(importRunService.completeImportRun).toHaveBeenCalledWith('run_1');
+  });
+
+  it('skips product import entirely when the adapter does not support it', async () => {
+    const customerPage: CustomerPage = { customers: [], nextCursor: null };
+    const fetchCustomers = vi.fn(async () => customerPage);
+    const registry = { get: vi.fn(() => ({ fetchCustomers }) as unknown as ProviderAdapter) } as unknown as ProviderRegistry;
+    const importRunService = {
+      recordProgress: vi.fn(async () => undefined),
+      completeImportRun: vi.fn(async () => undefined),
+      failImportRun: vi.fn(async () => undefined),
+    } as unknown as ImportRunService;
+    const integrationService = { getCredentials: vi.fn(async () => credentials) } as unknown as IntegrationService;
+    const customerService = { upsertMany: vi.fn(async () => 0) } as unknown as CustomerService;
+    const productService = makeProductService();
+    const processor = new ImportProcessorService(registry, importRunService, integrationService, customerService, productService);
+
+    await processor.handleImportRequested(makeEvent());
+
+    expect(productService.upsertMany).not.toHaveBeenCalled();
     expect(importRunService.completeImportRun).toHaveBeenCalledWith('run_1');
   });
 });

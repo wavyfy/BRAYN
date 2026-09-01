@@ -1,5 +1,6 @@
 import type { IntegrationProvider } from './dto/connect-integration.schema';
 import type { NormalizedCustomer } from '../commerce/customer.service';
+import type { NormalizedProduct } from '../commerce/product.service';
 
 /** A webhook payload the adapter recognized and normalized (doc 21 — External → Internal Conversion). */
 export interface ParsedWebhookEvent {
@@ -12,6 +13,13 @@ export interface ParsedWebhookEvent {
 /** One page of a paginated initial-import fetch (doc 20 — Initial Import: pagination). */
 export interface CustomerPage {
   customers: NormalizedCustomer[];
+  /** Opaque provider cursor for the next page, or null when this was the last page. */
+  nextCursor: string | null;
+}
+
+/** One page of a paginated product-import fetch (doc 20 — Initial Import: pagination). */
+export interface ProductPage {
+  products: NormalizedProduct[];
   /** Opaque provider cursor for the next page, or null when this was the last page. */
   nextCursor: string | null;
 }
@@ -55,4 +63,7 @@ export interface ProviderAdapter {
    * failures, same convention as `verifyConnection`.
    */
   fetchCustomers?(credentials: Record<string, string>, cursor?: string): Promise<CustomerPage>;
+
+  /** Same contract as `fetchCustomers`, for product/variant data. */
+  fetchProducts?(credentials: Record<string, string>, cursor?: string): Promise<ProductPage>;
 }
