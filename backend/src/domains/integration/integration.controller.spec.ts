@@ -8,6 +8,7 @@ import { IntegrationService } from './integration.service';
 import { IntegrationHealthService } from './integration-health.service';
 import { ImportRunService } from './import-run.service';
 import { WebhookIngestService } from './webhook-ingest.service';
+import { ReconciliationRunService } from './reconciliation-run.service';
 import { UserService } from '../workspace/user.service';
 import { WorkspaceMembershipService } from '../workspace/workspace-membership.service';
 import { WorkspaceMembershipGuard } from '../workspace/workspace-membership.guard';
@@ -47,6 +48,13 @@ describe('IntegrationController (e2e)', () => {
       provider,
       status: 'running',
     })),
+    startReconciliation: vi.fn(async (workspaceId: string, provider: string) => ({
+      id: 'recon_1',
+      workspaceId,
+      integrationId: 'int_1',
+      provider,
+      status: 'running',
+    })),
   };
   const integrationHealthService = {
     getHealth: vi.fn(async (workspaceId: string, provider: string) => ({
@@ -63,6 +71,9 @@ describe('IntegrationController (e2e)', () => {
   };
   const webhookIngestService = {
     replay: vi.fn(async () => ({ status: 'accepted' as const })),
+  };
+  const reconciliationRunService = {
+    getLatestReconciliationRun: vi.fn(async () => ({ id: 'recon_1', status: 'running' })),
   };
   const userService = {
     findOrCreateByClerkId: vi.fn(async (clerkUserId: string) => ({ id: 'user_1', clerkUserId })),
@@ -86,6 +97,7 @@ describe('IntegrationController (e2e)', () => {
         { provide: IntegrationHealthService, useValue: integrationHealthService },
         { provide: ImportRunService, useValue: importRunService },
         { provide: WebhookIngestService, useValue: webhookIngestService },
+        { provide: ReconciliationRunService, useValue: reconciliationRunService },
         { provide: UserService, useValue: userService },
         { provide: WorkspaceMembershipService, useValue: membershipService },
         WorkspaceMembershipGuard,
@@ -111,9 +123,11 @@ describe('IntegrationController (e2e)', () => {
     integrationService.disconnect.mockClear();
     integrationService.connectCredentials.mockClear();
     integrationService.startInitialImport.mockClear();
+    integrationService.startReconciliation.mockClear();
     integrationHealthService.getHealth.mockClear();
     importRunService.getLatestImportRun.mockClear();
     webhookIngestService.replay.mockClear();
+    reconciliationRunService.getLatestReconciliationRun.mockClear();
   });
 
   it('rejects an unauthenticated list request', async () => {
@@ -238,6 +252,48 @@ describe('IntegrationController (e2e)', () => {
 
     expect(res.statusCode).toBe(204);
     expect(integrationService.disconnect).toHaveBeenCalledWith('ws_1', 'shopify');
+  });
+
+  it('rejects starting a reconciliation from a member without owner/admin role', async () => {
+    membershipService.findMembership.mockResolvedValueOnce({
+      id: 'mem_1',
+      workspaceId: 'ws_1',
+      userId: 'user_1',
+      role: 'support',
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/integrations/shopify/reconcile',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(integrationService.startReconciliation).not.toHaveBeenCalled();
+  });
+
+  it('starts a reconciliation for an owner/admin caller', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/integrations/shopify/reconcile',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toEqual({ id: 'recon_1', workspaceId: 'ws_1', integrationId: 'int_1', provider: 'shopify', status: 'running' });
+    expect(integrationService.startReconciliation).toHaveBeenCalledWith('ws_1', 'shopify');
+  });
+
+  it('gets the latest reconciliation run for a member', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/workspaces/ws_1/integrations/shopify/reconcile',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ id: 'recon_1', status: 'running' });
+    expect(reconciliationRunService.getLatestReconciliationRun).toHaveBeenCalledWith('ws_1', 'shopify');
   });
 
   it('rejects replaying a webhook from a member without owner/admin role', async () => {

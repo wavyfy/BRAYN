@@ -11,6 +11,7 @@ import { WebhookIngestService } from './webhook-ingest.service';
 import { WebhookEventProcessorService } from './webhook-event-processor.service';
 import { IntegrationHealthService } from './integration-health.service';
 import { ReconciliationRunService } from './reconciliation-run.service';
+import { ReconciliationProcessorService } from './reconciliation-processor.service';
 import { ShopifyAdapter } from './providers/shopify/shopify.adapter';
 
 /**
@@ -43,6 +44,7 @@ import { ShopifyAdapter } from './providers/shopify/shopify.adapter';
     WebhookEventProcessorService,
     IntegrationHealthService,
     ReconciliationRunService,
+    ReconciliationProcessorService,
     ShopifyAdapter,
   ],
   exports: [

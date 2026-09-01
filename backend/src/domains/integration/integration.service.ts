@@ -13,8 +13,10 @@ import {
 import { createEvent } from '../../common/events/domain-event';
 import { EventBus } from '../../common/events/event-bus.service';
 import { ImportRunService } from './import-run.service';
+import { ReconciliationRunService } from './reconciliation-run.service';
 import { ProviderRegistry } from './provider-registry.service';
 import type { ImportRequestedPayload } from './import-processor.service';
+import type { ReconciliationRequestedPayload } from './reconciliation-processor.service';
 import type { IntegrationProvider } from './dto/connect-integration.schema';
 import type { Env } from '../../config/env.schema';
 
@@ -41,6 +43,7 @@ export class IntegrationService {
     private readonly config: ConfigService<Env, true>,
     private readonly providerRegistry: ProviderRegistry,
     private readonly importRunService: ImportRunService,
+    private readonly reconciliationRunService: ReconciliationRunService,
     private readonly eventBus: EventBus,
   ) {}
 
@@ -207,6 +210,34 @@ export class IntegrationService {
     this.eventBus.emit(
       createEvent<ImportRequestedPayload>({
         type: 'integration.import.requested',
+        workspaceId,
+        entityId: run.integrationId,
+        payload: { provider, runId: run.id },
+      }),
+    );
+
+    return run;
+  }
+
+  /**
+   * Starts a manual reconciliation pass (doc 06/19/20 — Reconciliation:
+   * detect/repair drift against provider state), same async-job shape as
+   * startInitialImport. `manual` is the only trigger a caller can invoke
+   * this way — the other triggers doc 06 lists (scheduled, sync_completion,
+   * detected_inconsistency) need a scheduler/hook that doesn't exist yet
+   * (doc 29 §32 defers queue/worker technology).
+   */
+  async startReconciliation(workspaceId: string, provider: IntegrationProvider) {
+    const adapter = this.providerRegistry.get(provider);
+    if (!adapter.fetchCustomers) {
+      throw new ProviderError(`Provider "${provider}" does not support reconciliation.`);
+    }
+
+    const run = await this.reconciliationRunService.startReconciliationRun(workspaceId, provider, 'manual');
+
+    this.eventBus.emit(
+      createEvent<ReconciliationRequestedPayload>({
+        type: 'integration.reconciliation.requested',
         workspaceId,
         entityId: run.integrationId,
         payload: { provider, runId: run.id },

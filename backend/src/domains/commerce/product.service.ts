@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { commerceProducts } from '../../database/schema/commerce-products';
 import { commerceProductVariants } from '../../database/schema/commerce-product-variants';
 import { DatabaseService } from '../../database/database.service';
@@ -106,5 +106,29 @@ export class ProductService {
     }
 
     return { productsWritten: products.length, variantsWritten: variantValues.length };
+  }
+
+  /** This workspace/provider's current `sourceUpdatedAt` for each existing product externalId (doc 06/20 — Reconciliation: detect missing/changed records before repairing; variant-level drift isn't tracked separately). Absent from the map means no such row exists yet. */
+  async findExistingUpdatedAt(
+    workspaceId: string,
+    provider: IntegrationProvider,
+    externalIds: string[],
+  ): Promise<Map<string, Date | null>> {
+    if (externalIds.length === 0) {
+      return new Map();
+    }
+
+    const rows = await this.database.client
+      .select({ externalId: commerceProducts.externalId, sourceUpdatedAt: commerceProducts.sourceUpdatedAt })
+      .from(commerceProducts)
+      .where(
+        and(
+          eq(commerceProducts.workspaceId, workspaceId),
+          eq(commerceProducts.provider, provider),
+          inArray(commerceProducts.externalId, externalIds),
+        ),
+      );
+
+    return new Map(rows.map((row) => [row.externalId, row.sourceUpdatedAt]));
   }
 }

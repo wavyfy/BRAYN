@@ -19,6 +19,15 @@ function makeVariantInsertChain() {
   return chain;
 }
 
+function makeSelectChain(result: unknown) {
+  const chain: Record<string, unknown> = {
+    from: vi.fn(() => chain),
+    where: vi.fn(() => chain),
+    then: (resolve: (value: unknown) => void) => resolve(result),
+  };
+  return chain;
+}
+
 const product: NormalizedProduct = {
   externalId: '55',
   title: 'Classic Tee',
@@ -84,6 +93,27 @@ describe('ProductService', () => {
 
       expect(result).toEqual({ productsWritten: 1, variantsWritten: 0 });
       expect(insert).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('findExistingUpdatedAt()', () => {
+    it('returns an empty map without querying for an empty batch', async () => {
+      const client = { select: vi.fn() };
+      const service = new ProductService({ client } as unknown as DatabaseService);
+
+      const result = await service.findExistingUpdatedAt('ws_1', 'shopify', []);
+
+      expect(result).toEqual(new Map());
+      expect(client.select).not.toHaveBeenCalled();
+    });
+
+    it('maps each existing externalId to its stored sourceUpdatedAt', async () => {
+      const client = { select: vi.fn(() => makeSelectChain([{ externalId: '55', sourceUpdatedAt: product.sourceUpdatedAt }])) };
+      const service = new ProductService({ client } as unknown as DatabaseService);
+
+      const result = await service.findExistingUpdatedAt('ws_1', 'shopify', ['55', 'missing']);
+
+      expect(result).toEqual(new Map([['55', product.sourceUpdatedAt]]));
     });
   });
 });

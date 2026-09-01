@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { DatabaseService } from '../../database/database.service';
 import type { IntegrationProvider } from '../integration/dto/connect-integration.schema';
@@ -61,5 +61,29 @@ export class CustomerService {
       });
 
     return customers.length;
+  }
+
+  /** This workspace/provider's current `sourceUpdatedAt` for each existing externalId (doc 06/20 — Reconciliation: detect missing/changed records before repairing). Absent from the map means no such row exists yet. */
+  async findExistingUpdatedAt(
+    workspaceId: string,
+    provider: IntegrationProvider,
+    externalIds: string[],
+  ): Promise<Map<string, Date | null>> {
+    if (externalIds.length === 0) {
+      return new Map();
+    }
+
+    const rows = await this.database.client
+      .select({ externalId: commerceCustomers.externalId, sourceUpdatedAt: commerceCustomers.sourceUpdatedAt })
+      .from(commerceCustomers)
+      .where(
+        and(
+          eq(commerceCustomers.workspaceId, workspaceId),
+          eq(commerceCustomers.provider, provider),
+          inArray(commerceCustomers.externalId, externalIds),
+        ),
+      );
+
+    return new Map(rows.map((row) => [row.externalId, row.sourceUpdatedAt]));
   }
 }

@@ -6,6 +6,7 @@ import type { Env } from '../../config/env.schema';
 import type { ProviderRegistry } from './provider-registry.service';
 import type { ProviderAdapter } from './provider-adapter.interface';
 import type { ImportRunService } from './import-run.service';
+import type { ReconciliationRunService } from './reconciliation-run.service';
 import type { EventBus } from '../../common/events/event-bus.service';
 
 const VALID_KEY = 'a'.repeat(64);
@@ -27,6 +28,11 @@ function makeImportRunService(): ImportRunService {
 
 function makeEventBus(): EventBus {
   return { emit: vi.fn() } as unknown as EventBus;
+}
+
+/** Only startReconciliation() touches this — other tests never call it, so a stub is fine. */
+function makeReconciliationRunService(): ReconciliationRunService {
+  return { startReconciliationRun: vi.fn() } as unknown as ReconciliationRunService;
 }
 
 function makeChain(finalResult: unknown) {
@@ -52,7 +58,7 @@ describe('IntegrationService', () => {
     const rows = [{ id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected' }];
     const chain = makeChain(rows);
     const client = { select: vi.fn(() => chain) };
-    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
     const result = await service.listByWorkspace('ws_1');
 
@@ -65,7 +71,7 @@ describe('IntegrationService', () => {
       select: makeSelectQueue([[]]),
       insert: vi.fn(() => makeChain([created])),
     };
-    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
     const result = await service.connect('ws_1', 'shopify');
 
@@ -76,7 +82,7 @@ describe('IntegrationService', () => {
   it('connect() throws ConflictError when the provider is already connected', async () => {
     const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected' };
     const client = { select: makeSelectQueue([[existing]]) };
-    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
     await expect(service.connect('ws_1', 'shopify')).rejects.toMatchObject({ code: 'CONFLICT' });
   });
@@ -89,7 +95,7 @@ describe('IntegrationService', () => {
       select: makeSelectQueue([[existing]]),
       update: vi.fn(() => updateChain),
     };
-    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
     const result = await service.connect('ws_1', 'shopify');
 
@@ -100,7 +106,7 @@ describe('IntegrationService', () => {
   it('connect() throws ConflictError when the provider is mid-sync', async () => {
     const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'syncing' };
     const client = { select: makeSelectQueue([[existing]]) };
-    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
     await expect(service.connect('ws_1', 'shopify')).rejects.toMatchObject({ code: 'CONFLICT' });
   });
@@ -108,7 +114,7 @@ describe('IntegrationService', () => {
   it('connect() throws ConflictError when the provider is in an error state', async () => {
     const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'error' };
     const client = { select: makeSelectQueue([[existing]]) };
-    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
     await expect(service.connect('ws_1', 'shopify')).rejects.toMatchObject({ code: 'CONFLICT' });
   });
@@ -121,7 +127,7 @@ describe('IntegrationService', () => {
       select: makeSelectQueue([[existing]]),
       update: vi.fn(() => updateChain),
     };
-    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
     const result = await service.disconnect('ws_1', 'shopify');
 
@@ -131,7 +137,7 @@ describe('IntegrationService', () => {
 
   it('disconnect() throws NotFoundError when the workspace has no connection for that provider', async () => {
     const client = { select: makeSelectQueue([[]]) };
-    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
     await expect(service.disconnect('ws_1', 'shopify')).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
@@ -147,6 +153,7 @@ describe('IntegrationService', () => {
         makeConfig(),
         makeRegistry({ verifyConnection }),
         makeImportRunService(),
+        makeReconciliationRunService(),
         makeEventBus(),
       );
 
@@ -165,6 +172,7 @@ describe('IntegrationService', () => {
         makeConfig(),
         makeRegistry({ verifyConnection }),
         makeImportRunService(),
+        makeReconciliationRunService(),
         makeEventBus(),
       );
 
@@ -189,6 +197,7 @@ describe('IntegrationService', () => {
         makeConfig(),
         registry,
         makeImportRunService(),
+        makeReconciliationRunService(),
         makeEventBus(),
       );
 
@@ -208,6 +217,7 @@ describe('IntegrationService', () => {
         makeConfig(),
         makeRegistry({ fetchCustomers: vi.fn() }),
         importRunService,
+        makeReconciliationRunService(),
         eventBus,
       );
 
@@ -233,6 +243,7 @@ describe('IntegrationService', () => {
         makeConfig(),
         makeRegistry({}),
         importRunService,
+        makeReconciliationRunService(),
         eventBus,
       );
 
@@ -248,7 +259,7 @@ describe('IntegrationService', () => {
       const syncing = { ...existing, status: 'syncing' };
       const updateChain = makeChain([syncing]);
       const client = { select: makeSelectQueue([[existing]]), update: vi.fn(() => updateChain) };
-      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
       const result = await service.startSync('ws_1', 'shopify');
 
@@ -260,7 +271,7 @@ describe('IntegrationService', () => {
       const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'error' };
       const updateChain = makeChain([{ ...existing, status: 'syncing' }]);
       const client = { select: makeSelectQueue([[existing]]), update: vi.fn(() => updateChain) };
-      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
       await expect(service.startSync('ws_1', 'shopify')).resolves.toMatchObject({ status: 'syncing' });
     });
@@ -268,7 +279,7 @@ describe('IntegrationService', () => {
     it('startSync() throws ConflictError when the integration is disconnected', async () => {
       const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'disconnected' };
       const client = { select: makeSelectQueue([[existing]]) };
-      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
       await expect(service.startSync('ws_1', 'shopify')).rejects.toMatchObject({ code: 'CONFLICT' });
     });
@@ -276,14 +287,14 @@ describe('IntegrationService', () => {
     it('startSync() throws ConflictError when a sync is already in progress', async () => {
       const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'syncing' };
       const client = { select: makeSelectQueue([[existing]]) };
-      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
       await expect(service.startSync('ws_1', 'shopify')).rejects.toMatchObject({ code: 'CONFLICT' });
     });
 
     it('startSync() throws NotFoundError when the workspace has no connection for that provider', async () => {
       const client = { select: makeSelectQueue([[]]) };
-      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
       await expect(service.startSync('ws_1', 'shopify')).rejects.toMatchObject({ code: 'NOT_FOUND' });
     });
@@ -293,7 +304,7 @@ describe('IntegrationService', () => {
       const completed = { ...existing, status: 'connected', lastSyncedAt: new Date('2026-09-01T00:00:00Z') };
       const updateChain = makeChain([completed]);
       const client = { select: makeSelectQueue([[existing]]), update: vi.fn(() => updateChain) };
-      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
       const result = await service.completeSync('ws_1', 'shopify');
 
@@ -306,7 +317,7 @@ describe('IntegrationService', () => {
     it('completeSync() throws ConflictError when no sync is in progress', async () => {
       const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected' };
       const client = { select: makeSelectQueue([[existing]]) };
-      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
       await expect(service.completeSync('ws_1', 'shopify')).rejects.toMatchObject({ code: 'CONFLICT' });
     });
@@ -316,7 +327,7 @@ describe('IntegrationService', () => {
       const failed = { ...existing, status: 'error', lastSyncError: 'Provider timed out' };
       const updateChain = makeChain([failed]);
       const client = { select: makeSelectQueue([[existing]]), update: vi.fn(() => updateChain) };
-      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
       const result = await service.failSync('ws_1', 'shopify', 'Provider timed out');
 
@@ -327,7 +338,7 @@ describe('IntegrationService', () => {
     it('failSync() throws ConflictError when no sync is in progress', async () => {
       const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected' };
       const client = { select: makeSelectQueue([[existing]]) };
-      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
       await expect(service.failSync('ws_1', 'shopify', 'boom')).rejects.toMatchObject({ code: 'CONFLICT' });
     });
@@ -341,7 +352,7 @@ describe('IntegrationService', () => {
         select: makeSelectQueue([[existing]]),
         update: vi.fn(() => updateChain),
       };
-      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
       await service.setCredentials('ws_1', 'shopify', { accessToken: 'shpat_secret' });
 
@@ -349,14 +360,14 @@ describe('IntegrationService', () => {
       expect(stored).not.toContain('shpat_secret');
 
       const client2 = { select: makeSelectQueue([[{ ...existing, credentials: stored }]]) };
-      const service2 = new IntegrationService({ client: client2 } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+      const service2 = new IntegrationService({ client: client2 } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
       await expect(service2.getCredentials('ws_1', 'shopify')).resolves.toEqual({ accessToken: 'shpat_secret' });
     });
 
     it('setCredentials() throws NotFoundError when the workspace has no connection for that provider', async () => {
       const client = { select: makeSelectQueue([[]]) };
-      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
       await expect(service.setCredentials('ws_1', 'shopify', { accessToken: 'x' })).rejects.toMatchObject({
         code: 'NOT_FOUND',
@@ -366,7 +377,7 @@ describe('IntegrationService', () => {
     it('getCredentials() returns null when no credentials have been stored yet', async () => {
       const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected', credentials: null };
       const client = { select: makeSelectQueue([[existing]]) };
-      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
       await expect(service.getCredentials('ws_1', 'shopify')).resolves.toBeNull();
     });
@@ -379,6 +390,7 @@ describe('IntegrationService', () => {
         makeConfig({ BRAYN_CREDENTIAL_ENCRYPTION_KEY: undefined }),
         makeRegistry(),
         makeImportRunService(),
+        makeReconciliationRunService(),
         makeEventBus(),
       );
 
@@ -395,6 +407,7 @@ describe('IntegrationService', () => {
         makeConfig({ BRAYN_CREDENTIAL_ENCRYPTION_KEY: 'not-hex-and-wrong-length' }),
         makeRegistry(),
         makeImportRunService(),
+        makeReconciliationRunService(),
         makeEventBus(),
       );
 
@@ -409,7 +422,7 @@ describe('IntegrationService', () => {
       const chain = makeChain([]);
       const selectMock = vi.fn(() => chain);
       const client = { select: selectMock };
-      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
       await service.listByWorkspace('ws_1');
 
@@ -424,7 +437,7 @@ describe('IntegrationService', () => {
         select: makeSelectQueue([[]]),
         insert: vi.fn(() => insertChain),
       };
-      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeEventBus());
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
       await service.connect('ws_1', 'shopify');
 

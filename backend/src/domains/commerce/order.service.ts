@@ -128,6 +128,30 @@ export class OrderService {
     return { ordersWritten: orders.length, lineItemsWritten: lineItemValues.length };
   }
 
+  /** This workspace/provider's current `sourceUpdatedAt` for each existing order externalId (doc 06/20 — Reconciliation: detect missing/changed records before repairing; line-item-level drift isn't tracked separately). Absent from the map means no such row exists yet. */
+  async findExistingUpdatedAt(
+    workspaceId: string,
+    provider: IntegrationProvider,
+    externalIds: string[],
+  ): Promise<Map<string, Date | null>> {
+    if (externalIds.length === 0) {
+      return new Map();
+    }
+
+    const rows = await this.database.client
+      .select({ externalId: commerceOrders.externalId, sourceUpdatedAt: commerceOrders.sourceUpdatedAt })
+      .from(commerceOrders)
+      .where(
+        and(
+          eq(commerceOrders.workspaceId, workspaceId),
+          eq(commerceOrders.provider, provider),
+          inArray(commerceOrders.externalId, externalIds),
+        ),
+      );
+
+    return new Map(rows.map((row) => [row.externalId, row.sourceUpdatedAt]));
+  }
+
   /** Resolves a batch of external ids to this workspace/provider's existing row ids for `table`. */
   private async lookupIds(
     table: typeof commerceCustomers | typeof commerceProductVariants,

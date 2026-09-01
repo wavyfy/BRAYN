@@ -10,6 +10,15 @@ function makeInsertChain() {
   return chain;
 }
 
+function makeSelectChain(result: unknown) {
+  const chain: Record<string, unknown> = {
+    from: vi.fn(() => chain),
+    where: vi.fn(() => chain),
+    then: (resolve: (value: unknown) => void) => resolve(result),
+  };
+  return chain;
+}
+
 const customer: NormalizedCustomer = {
   externalId: '123',
   email: 'a@example.com',
@@ -50,6 +59,27 @@ describe('CustomerService', () => {
       expect(Object.keys(conflictArg.set)).toEqual(
         expect.arrayContaining(['email', 'firstName', 'lastName', 'phone', 'sourceUpdatedAt', 'updatedAt']),
       );
+    });
+  });
+
+  describe('findExistingUpdatedAt()', () => {
+    it('returns an empty map without querying for an empty batch', async () => {
+      const client = { select: vi.fn() };
+      const service = new CustomerService({ client } as unknown as DatabaseService);
+
+      const result = await service.findExistingUpdatedAt('ws_1', 'shopify', []);
+
+      expect(result).toEqual(new Map());
+      expect(client.select).not.toHaveBeenCalled();
+    });
+
+    it('maps each existing externalId to its stored sourceUpdatedAt', async () => {
+      const client = { select: vi.fn(() => makeSelectChain([{ externalId: '123', sourceUpdatedAt: customer.sourceUpdatedAt }])) };
+      const service = new CustomerService({ client } as unknown as DatabaseService);
+
+      const result = await service.findExistingUpdatedAt('ws_1', 'shopify', ['123', 'missing']);
+
+      expect(result).toEqual(new Map([['123', customer.sourceUpdatedAt]]));
     });
   });
 });

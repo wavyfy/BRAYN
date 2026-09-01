@@ -133,4 +133,27 @@ describe('OrderService', () => {
       expect(insert).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('findExistingUpdatedAt()', () => {
+    it('returns an empty map without querying for an empty batch', async () => {
+      const client = { select: vi.fn() };
+      const service = new OrderService({ client } as unknown as DatabaseService);
+
+      const result = await service.findExistingUpdatedAt('ws_1', 'shopify', []);
+
+      expect(result).toEqual(new Map());
+      expect(client.select).not.toHaveBeenCalled();
+    });
+
+    it('maps each existing externalId to its stored sourceUpdatedAt', async () => {
+      const updatedAt = new Date('2026-01-01T00:00:00Z');
+      const select = makeSelectQueue([[{ externalId: '900', sourceUpdatedAt: updatedAt }]]);
+      const client = { select };
+      const service = new OrderService({ client } as unknown as DatabaseService);
+
+      const result = await service.findExistingUpdatedAt('ws_1', 'shopify', ['900', '901']);
+
+      expect(result).toEqual(new Map([['900', updatedAt]]));
+    });
+  });
 });

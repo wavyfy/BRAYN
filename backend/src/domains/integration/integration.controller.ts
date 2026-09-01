@@ -4,6 +4,7 @@ import { IntegrationService } from './integration.service';
 import { IntegrationHealthService } from './integration-health.service';
 import { ImportRunService } from './import-run.service';
 import { WebhookIngestService } from './webhook-ingest.service';
+import { ReconciliationRunService } from './reconciliation-run.service';
 import { WorkspaceMembershipGuard } from '../workspace/workspace-membership.guard';
 import { RequireWorkspaceRole } from '../workspace/require-workspace-role.decorator';
 import { connectIntegrationSchema, type ConnectIntegrationInput } from './dto/connect-integration.schema';
@@ -24,6 +25,7 @@ export class IntegrationController {
     private readonly integrationHealthService: IntegrationHealthService,
     private readonly importRunService: ImportRunService,
     private readonly webhookIngestService: WebhookIngestService,
+    private readonly reconciliationRunService: ReconciliationRunService,
   ) {}
 
   @Get()
@@ -85,6 +87,26 @@ export class IntegrationController {
     @Param('provider') provider: ConnectIntegrationInput['provider'],
   ) {
     return this.importRunService.getLatestImportRun(workspaceId, provider);
+  }
+
+  /** Starts a manual reconciliation pass (doc 06/19 — Reconciliation); returns the run so the caller can poll it (doc 23 — Async Operations). */
+  @Post(':provider/reconcile')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @RequireWorkspaceRole('owner', 'admin')
+  async startReconciliation(
+    @Param('workspaceId') workspaceId: string,
+    @Param('provider') provider: ConnectIntegrationInput['provider'],
+  ) {
+    return this.integrationService.startReconciliation(workspaceId, provider);
+  }
+
+  /** Most recent reconciliation run for a provider, if any — drift-repair progress/completion visibility. */
+  @Get(':provider/reconcile')
+  async getLatestReconciliation(
+    @Param('workspaceId') workspaceId: string,
+    @Param('provider') provider: ConnectIntegrationInput['provider'],
+  ) {
+    return this.reconciliationRunService.getLatestReconciliationRun(workspaceId, provider);
   }
 
   /** Manually re-processes a dead-lettered webhook delivery (doc 21 — "Manual recovery where required"). */
