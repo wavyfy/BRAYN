@@ -11,6 +11,22 @@ export interface ParsedWebhookEvent {
   payload: unknown;
 }
 
+/**
+ * The normalized shape a `parseWebhookEvent` implementation puts in
+ * `ParsedWebhookEvent.payload` when the delivery is a commerce record
+ * change — the same BRAYN domain model `fetchCustomers`/`fetchProducts`/
+ * `fetchOrders` produce, so a single record from a webhook and a page from
+ * an import both flow through the same commerce-service upsert.
+ */
+export type WebhookResourceEvent =
+  | { resource: 'customer'; data: NormalizedCustomer }
+  | { resource: 'product'; data: NormalizedProduct }
+  | { resource: 'order'; data: NormalizedOrder };
+
+export function isWebhookResourceEvent(value: unknown): value is WebhookResourceEvent {
+  return typeof value === 'object' && value !== null && 'resource' in value && 'data' in value;
+}
+
 /** One page of a paginated initial-import fetch (doc 20 — Initial Import: pagination). */
 export interface CustomerPage {
   customers: NormalizedCustomer[];
@@ -60,8 +76,13 @@ export interface ProviderAdapter {
   /** Verifies the delivery's authenticity (e.g. an HMAC signature header) using this integration's stored secret. */
   verifyWebhookSignature?(rawBody: string, headers: Record<string, string>, secret: string): boolean;
 
-  /** Parses and normalizes a verified payload. Returns null for a delivery type BRAYN doesn't act on (doc 21 — "process only relevant events"). */
-  parseWebhookEvent?(rawBody: string): ParsedWebhookEvent | null;
+  /**
+   * Parses and normalizes a verified payload. `headers` carries whatever
+   * the provider only puts in headers, not the body (e.g. Shopify's event
+   * topic and delivery id). Returns null for a delivery type BRAYN
+   * doesn't act on (doc 21 — "process only relevant events").
+   */
+  parseWebhookEvent?(rawBody: string, headers: Record<string, string>): ParsedWebhookEvent | null;
 
   /**
    * Initial-import support (doc 20 — Initial Import). Optional: a provider

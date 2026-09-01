@@ -1,7 +1,18 @@
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { Injectable, type OnModuleInit } from '@nestjs/common';
 import { ProviderError } from '../../../../common/errors/app-error';
 import { ProviderRegistry } from '../../provider-registry.service';
-import type { CustomerPage, OrderPage, ProductPage, ProviderAdapter } from '../../provider-adapter.interface';
+import type {
+  CustomerPage,
+  OrderPage,
+  ParsedWebhookEvent,
+  ProductPage,
+  ProviderAdapter,
+  WebhookResourceEvent,
+} from '../../provider-adapter.interface';
+import type { NormalizedCustomer } from '../../../commerce/customer.service';
+import type { NormalizedOrder } from '../../../commerce/order.service';
+import type { NormalizedProduct } from '../../../commerce/product.service';
 
 const SHOPIFY_API_VERSION = '2024-10';
 const CUSTOMERS_PAGE_SIZE = 250;
@@ -125,17 +136,7 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
     );
     const { customers } = body as { customers: ShopifyCustomer[] };
 
-    return {
-      customers: customers.map((customer) => ({
-        externalId: String(customer.id),
-        email: customer.email,
-        firstName: customer.first_name,
-        lastName: customer.last_name,
-        phone: customer.phone,
-        sourceUpdatedAt: new Date(customer.updated_at),
-      })),
-      nextCursor,
-    };
+    return { customers: customers.map(normalizeCustomer), nextCursor };
   }
 
   /** Same contract/pagination as fetchCustomers, for products and their variants (doc 20 Shopify Phase 1 Data). */
@@ -143,21 +144,7 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
     const { body, nextCursor } = await this.fetchPage(credentials, cursor, `products.json?limit=${PRODUCTS_PAGE_SIZE}`);
     const { products } = body as { products: ShopifyProduct[] };
 
-    return {
-      products: products.map((product) => ({
-        externalId: String(product.id),
-        title: product.title,
-        sourceUpdatedAt: new Date(product.updated_at),
-        variants: product.variants.map((variant) => ({
-          externalId: String(variant.id),
-          sku: variant.sku,
-          price: variant.price,
-          inventoryQuantity: variant.inventory_quantity,
-          sourceUpdatedAt: new Date(variant.updated_at),
-        })),
-      })),
-      nextCursor,
-    };
+    return { products: products.map(normalizeProduct), nextCursor };
   }
 
   /**
@@ -170,21 +157,67 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
     const { body, nextCursor } = await this.fetchPage(credentials, cursor, `orders.json?limit=${ORDERS_PAGE_SIZE}&status=any`);
     const { orders } = body as { orders: ShopifyOrder[] };
 
-    return {
-      orders: orders.map((order) => ({
-        externalId: String(order.id),
-        customerExternalId: order.customer ? String(order.customer.id) : null,
-        totalPrice: order.total_price,
-        sourceUpdatedAt: new Date(order.updated_at),
-        lineItems: order.line_items.map((item) => ({
-          externalId: String(item.id),
-          variantExternalId: item.variant_id !== null ? String(item.variant_id) : null,
-          quantity: item.quantity,
-          price: item.price,
-        })),
-      })),
-      nextCursor,
-    };
+    return { orders: orders.map(normalizeOrder), nextCursor };
+  }
+
+  /**
+   * Verifies Shopify's `X-Shopify-Hmac-Sha256` header: base64(HMAC-SHA256(
+   * rawBody, secret)) — the exact check Shopify's own webhook docs specify.
+   * `secret` is whatever the merchant pasted as `credentials.webhookSecret`
+   * (their custom app's API secret key, or the signing secret shown when
+   * they create the webhook subscription — either way, a value only
+   * Shopify and BRAYN should know, not something BRAYN issues or derives).
+   */
+  verifyWebhookSignature(rawBody: string, headers: Record<string, string>, secret: string): boolean {
+    const signature = headers['x-shopify-hmac-sha256'];
+    if (!signature) {
+      return false;
+    }
+
+    const computed = createHmac('sha256', secret).update(rawBody, 'utf8').digest('base64');
+    const computedBuffer = Buffer.from(computed);
+    const signatureBuffer = Buffer.from(signature);
+    // timingSafeEqual throws on a length mismatch rather than returning false.
+    if (computedBuffer.length !== signatureBuffer.length) {
+      return false;
+    }
+
+    return timingSafeEqual(computedBuffer, signatureBuffer);
+  }
+
+  /**
+   * Shopify puts the event topic and delivery id in headers, not the
+   * body — unlike the REST list endpoints, a webhook payload is just the
+   * bare resource. Only the create/update topics for customers, products,
+   * and orders are recognized (doc 21 — "process only relevant events");
+   * everything else, including deletes, is out of this part's scope.
+   */
+  parseWebhookEvent(rawBody: string, headers: Record<string, string>): ParsedWebhookEvent | null {
+    const topic = headers['x-shopify-topic'];
+    const resource = topic ? SHOPIFY_WEBHOOK_TOPICS[topic] : undefined;
+    if (!resource) {
+      return null;
+    }
+
+    let raw: unknown;
+    try {
+      raw = JSON.parse(rawBody);
+    } catch {
+      return null;
+    }
+
+    const payload: WebhookResourceEvent =
+      resource === 'customer'
+        ? { resource, data: normalizeCustomer(raw as ShopifyCustomer) }
+        : resource === 'product'
+          ? { resource, data: normalizeProduct(raw as ShopifyProduct) }
+          : { resource, data: normalizeOrder(raw as ShopifyOrder) };
+
+    // Present on every delivery since 2022, but derive a stable fallback
+    // rather than reject an otherwise-valid, signature-verified delivery.
+    const externalEventId = headers['x-shopify-webhook-id'] ?? `${topic}:${createHash('sha256').update(rawBody).digest('hex')}`;
+
+    return { externalEventId, eventType: topic!, payload };
   }
 
   /**
@@ -227,6 +260,60 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
 
     return { body: await response.json(), nextCursor: parseNextCursor(response.headers.get('link')) };
   }
+}
+
+/** Recognized webhook topics → the commerce resource they normalize to (doc 21 — "process only relevant events"). */
+const SHOPIFY_WEBHOOK_TOPICS: Record<string, 'customer' | 'product' | 'order'> = {
+  'customers/create': 'customer',
+  'customers/update': 'customer',
+  'products/create': 'product',
+  'products/update': 'product',
+  'orders/create': 'order',
+  'orders/updated': 'order',
+};
+
+/** Shared with fetchCustomers (list) and the customers/* webhooks (single record) — same Shopify payload shape either way. */
+function normalizeCustomer(customer: ShopifyCustomer): NormalizedCustomer {
+  return {
+    externalId: String(customer.id),
+    email: customer.email,
+    firstName: customer.first_name,
+    lastName: customer.last_name,
+    phone: customer.phone,
+    sourceUpdatedAt: new Date(customer.updated_at),
+  };
+}
+
+/** Shared with fetchProducts (list) and the products/* webhooks (single record) — same Shopify payload shape either way. */
+function normalizeProduct(product: ShopifyProduct): NormalizedProduct {
+  return {
+    externalId: String(product.id),
+    title: product.title,
+    sourceUpdatedAt: new Date(product.updated_at),
+    variants: product.variants.map((variant) => ({
+      externalId: String(variant.id),
+      sku: variant.sku,
+      price: variant.price,
+      inventoryQuantity: variant.inventory_quantity,
+      sourceUpdatedAt: new Date(variant.updated_at),
+    })),
+  };
+}
+
+/** Shared with fetchOrders (list) and the orders/* webhooks (single record) — same Shopify payload shape either way. */
+function normalizeOrder(order: ShopifyOrder): NormalizedOrder {
+  return {
+    externalId: String(order.id),
+    customerExternalId: order.customer ? String(order.customer.id) : null,
+    totalPrice: order.total_price,
+    sourceUpdatedAt: new Date(order.updated_at),
+    lineItems: order.line_items.map((item) => ({
+      externalId: String(item.id),
+      variantExternalId: item.variant_id !== null ? String(item.variant_id) : null,
+      quantity: item.quantity,
+      price: item.price,
+    })),
+  };
 }
 
 /**

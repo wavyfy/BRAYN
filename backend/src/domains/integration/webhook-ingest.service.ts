@@ -24,9 +24,10 @@ export type WebhookIngestResult =
  * behind ProviderAdapter (doc 06 — Provider Isolation); this service owns
  * everything else and never depends on a provider's payload shape.
  *
- * No HTTP endpoint calls this yet — no registered adapter exists until
- * Phase 4, and a webhook route with nothing behind it to actually verify
- * signatures would be a route that accepts unauthenticated input.
+ * Called from WebhookController — a `@Public()` route, since a provider's
+ * webhook delivery carries no Clerk session; the signature check here
+ * (via the adapter, using this integration's stored secret) is this
+ * request's actual authentication.
  */
 @Injectable()
 export class WebhookIngestService {
@@ -67,7 +68,7 @@ export class WebhookIngestService {
       throw new UnauthenticatedError('Webhook signature verification failed.');
     }
 
-    const parsed = adapter.parseWebhookEvent(rawBody);
+    const parsed = adapter.parseWebhookEvent(rawBody, headers);
     if (!parsed) {
       return { status: 'ignored' };
     }

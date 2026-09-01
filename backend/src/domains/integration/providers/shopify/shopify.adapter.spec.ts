@@ -1,6 +1,11 @@
+import { createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ShopifyAdapter } from './shopify.adapter';
 import type { ProviderRegistry } from '../../provider-registry.service';
+
+function sign(rawBody: string, secret: string) {
+  return createHmac('sha256', secret).update(rawBody, 'utf8').digest('base64');
+}
 
 function makeRegistry(): ProviderRegistry {
   return { register: vi.fn() } as unknown as ProviderRegistry;
@@ -379,6 +384,143 @@ describe('ShopifyAdapter', () => {
         adapter.fetchOrders({ shopDomain: 'evil.com', accessToken: 'shpat_123' }),
       ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('verifyWebhookSignature()', () => {
+    it('returns true for a correctly signed body', () => {
+      const adapter = new ShopifyAdapter(makeRegistry());
+      const rawBody = '{"id":1}';
+      const signature = sign(rawBody, 'shhh');
+
+      expect(adapter.verifyWebhookSignature(rawBody, { 'x-shopify-hmac-sha256': signature }, 'shhh')).toBe(true);
+    });
+
+    it('returns false when the signature does not match', () => {
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      expect(
+        adapter.verifyWebhookSignature('{"id":1}', { 'x-shopify-hmac-sha256': 'bogus==' }, 'shhh'),
+      ).toBe(false);
+    });
+
+    it('returns false when the body was tampered with after signing', () => {
+      const adapter = new ShopifyAdapter(makeRegistry());
+      const signature = sign('{"id":1}', 'shhh');
+
+      expect(
+        adapter.verifyWebhookSignature('{"id":2}', { 'x-shopify-hmac-sha256': signature }, 'shhh'),
+      ).toBe(false);
+    });
+
+    it('returns false when the signature header is missing', () => {
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      expect(adapter.verifyWebhookSignature('{"id":1}', {}, 'shhh')).toBe(false);
+    });
+  });
+
+  describe('parseWebhookEvent()', () => {
+    it('normalizes a customers/update delivery, using the X-Shopify-Webhook-Id header as the dedupe key', () => {
+      const adapter = new ShopifyAdapter(makeRegistry());
+      const rawBody = JSON.stringify({
+        id: 1,
+        email: 'a@x.com',
+        first_name: 'Ada',
+        last_name: 'Lovelace',
+        phone: null,
+        updated_at: '2026-01-01T00:00:00Z',
+      });
+
+      const result = adapter.parseWebhookEvent(rawBody, {
+        'x-shopify-topic': 'customers/update',
+        'x-shopify-webhook-id': 'wh_evt_1',
+      });
+
+      expect(result).toEqual({
+        externalEventId: 'wh_evt_1',
+        eventType: 'customers/update',
+        payload: {
+          resource: 'customer',
+          data: {
+            externalId: '1',
+            email: 'a@x.com',
+            firstName: 'Ada',
+            lastName: 'Lovelace',
+            phone: null,
+            sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
+          },
+        },
+      });
+    });
+
+    it('normalizes a products/create delivery with nested variants', () => {
+      const adapter = new ShopifyAdapter(makeRegistry());
+      const rawBody = JSON.stringify({
+        id: 55,
+        title: 'Classic Tee',
+        updated_at: '2026-01-01T00:00:00Z',
+        variants: [{ id: 901, sku: 'TEE-S', price: '19.99', inventory_quantity: 10, updated_at: '2026-01-02T00:00:00Z' }],
+      });
+
+      const result = adapter.parseWebhookEvent(rawBody, {
+        'x-shopify-topic': 'products/create',
+        'x-shopify-webhook-id': 'wh_evt_2',
+      });
+
+      expect(result?.payload).toMatchObject({
+        resource: 'product',
+        data: { externalId: '55', title: 'Classic Tee', variants: [{ externalId: '901', sku: 'TEE-S' }] },
+      });
+    });
+
+    it('normalizes an orders/updated delivery with a guest customer as null', () => {
+      const adapter = new ShopifyAdapter(makeRegistry());
+      const rawBody = JSON.stringify({
+        id: 900,
+        customer: null,
+        total_price: '19.99',
+        updated_at: '2026-01-01T00:00:00Z',
+        line_items: [],
+      });
+
+      const result = adapter.parseWebhookEvent(rawBody, {
+        'x-shopify-topic': 'orders/updated',
+        'x-shopify-webhook-id': 'wh_evt_3',
+      });
+
+      expect(result?.payload).toMatchObject({ resource: 'order', data: { externalId: '900', customerExternalId: null } });
+    });
+
+    it('returns null for an unrecognized topic (e.g. a delete event) — doc 21 "process only relevant events"', () => {
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      const result = adapter.parseWebhookEvent('{}', { 'x-shopify-topic': 'customers/delete' });
+
+      expect(result).toBeNull();
+    });
+
+    it('returns null when the topic header is missing entirely', () => {
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      expect(adapter.parseWebhookEvent('{}', {})).toBeNull();
+    });
+
+    it('returns null for unparseable JSON', () => {
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      expect(adapter.parseWebhookEvent('not json', { 'x-shopify-topic': 'customers/update' })).toBeNull();
+    });
+
+    it('derives a stable fallback event id when X-Shopify-Webhook-Id is absent', () => {
+      const adapter = new ShopifyAdapter(makeRegistry());
+      const rawBody = JSON.stringify({ id: 1, email: null, first_name: null, last_name: null, phone: null, updated_at: '2026-01-01T00:00:00Z' });
+
+      const first = adapter.parseWebhookEvent(rawBody, { 'x-shopify-topic': 'customers/update' });
+      const second = adapter.parseWebhookEvent(rawBody, { 'x-shopify-topic': 'customers/update' });
+
+      expect(first?.externalEventId).toBeTruthy();
+      expect(first?.externalEventId).toBe(second?.externalEventId);
     });
   });
 });

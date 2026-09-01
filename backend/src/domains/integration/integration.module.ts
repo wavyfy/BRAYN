@@ -2,11 +2,13 @@ import { Module } from '@nestjs/common';
 import { WorkspaceModule } from '../workspace/workspace.module';
 import { CommerceModule } from '../commerce/commerce.module';
 import { IntegrationController } from './integration.controller';
+import { WebhookController } from './webhook.controller';
 import { IntegrationService } from './integration.service';
 import { ProviderRegistry } from './provider-registry.service';
 import { ImportRunService } from './import-run.service';
 import { ImportProcessorService } from './import-processor.service';
 import { WebhookIngestService } from './webhook-ingest.service';
+import { WebhookEventProcessorService } from './webhook-event-processor.service';
 import { IntegrationHealthService } from './integration-health.service';
 import { ReconciliationRunService } from './reconciliation-run.service';
 import { ShopifyAdapter } from './providers/shopify/shopify.adapter';
@@ -31,13 +33,14 @@ import { ShopifyAdapter } from './providers/shopify/shopify.adapter';
  */
 @Module({
   imports: [WorkspaceModule, CommerceModule],
-  controllers: [IntegrationController],
+  controllers: [IntegrationController, WebhookController],
   providers: [
     IntegrationService,
     ProviderRegistry,
     ImportRunService,
     ImportProcessorService,
     WebhookIngestService,
+    WebhookEventProcessorService,
     IntegrationHealthService,
     ReconciliationRunService,
     ShopifyAdapter,

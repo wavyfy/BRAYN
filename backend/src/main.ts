@@ -23,7 +23,11 @@ async function bootstrap() {
     },
   });
 
-  const app = await NestFactory.create<NestFastifyApplication>(AppModule, adapter);
+  // rawBody: true — webhook signature verification needs the provider's
+  // exact request bytes (doc 21); a Buffer built from the parsed-then-
+  // re-stringified body wouldn't match a signature computed over the
+  // original bytes (key order/whitespace can differ).
+  const app = await NestFactory.create<NestFastifyApplication>(AppModule, adapter, { rawBody: true });
 
   const configService = app.get(ConfigService<Env, true>);
   app.enableCors({ origin: configService.get('FRONTEND_URL', { infer: true }), credentials: true });
