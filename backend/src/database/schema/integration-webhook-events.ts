@@ -1,4 +1,4 @@
-import { index, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { id, timestamps, workspaceId } from './columns';
 import { integrations } from './integrations';
 
@@ -9,6 +9,15 @@ import { integrations } from './integrations';
  * written here — see WebhookIngestService, which reserves an
  * IdempotencyService key first — so the unique index below is a
  * belt-and-braces DB-level backstop, not the primary dedup mechanism.
+ *
+ * `status` covers both the intake pipeline (received → processed by
+ * WebhookIngestService, the instant the domain event is dispatched) and
+ * the async consumer's own outcome (WebhookEventProcessorService moves it
+ * to `dead_letter` once retries are exhausted, back to `processed` on a
+ * successful replay) — see doc 21 "Processing Failure" and doc 07
+ * "Job Lifecycle". `payload` holds the normalized `WebhookResourceEvent`
+ * so a dead-lettered delivery can be replayed without re-fetching from
+ * the provider (doc 21/18 — "Replay where safe").
  */
 export const integrationWebhookEvents = pgTable(
   'integration_webhook_events',
@@ -20,9 +29,11 @@ export const integrationWebhookEvents = pgTable(
       .references(() => integrations.id),
     externalEventId: text('external_event_id').notNull(),
     eventType: text('event_type').notNull(),
-    status: text('status', { enum: ['received', 'processed', 'failed'] })
+    status: text('status', { enum: ['received', 'processed', 'failed', 'dead_letter'] })
       .notNull()
       .default('received'),
+    payload: jsonb('payload'),
+    retryCount: integer('retry_count').notNull().default(0),
     error: text('error'),
     receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
     processedAt: timestamp('processed_at', { withTimezone: true }),

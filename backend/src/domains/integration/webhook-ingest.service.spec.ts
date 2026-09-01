@@ -13,6 +13,7 @@ function makeChain(finalResult: unknown) {
     set: vi.fn(() => chain),
     returning: vi.fn(async () => finalResult),
     from: vi.fn(() => chain),
+    innerJoin: vi.fn(() => chain),
     where: vi.fn(() => chain),
     limit: vi.fn(async () => finalResult),
     then: (resolve: (value: unknown) => void) => resolve(finalResult),
@@ -100,7 +101,7 @@ describe('WebhookIngestService', () => {
         type: 'integration.webhook.received',
         workspaceId: 'ws_1',
         entityId: 'int_1',
-        payload: { provider: 'shopify', eventType: 'orders/create', payload: { id: 1 } },
+        payload: { provider: 'shopify', eventType: 'orders/create', payload: { id: 1 }, webhookEventId: 'wh_1' },
       }),
     );
     expect((updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({ status: 'processed' });
@@ -180,6 +181,50 @@ describe('WebhookIngestService', () => {
     expect((updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
       status: 'failed',
       error: 'listener exploded',
+    });
+  });
+
+  describe('replay()', () => {
+    const deadLetterRow = {
+      id: 'wh_1',
+      integrationId: 'int_1',
+      eventType: 'orders/create',
+      status: 'dead_letter',
+      payload: { resource: 'order', data: { externalId: '1' } },
+      provider: 'shopify',
+    };
+
+    it('re-emits the stored payload for a dead-lettered event', async () => {
+      const { service, eventBus } = makeDeps({ select: [[deadLetterRow]] });
+
+      const result = await service.replay('ws_1', 'wh_1');
+
+      expect(result).toEqual({ status: 'accepted' });
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'integration.webhook.received',
+          workspaceId: 'ws_1',
+          entityId: 'int_1',
+          payload: {
+            provider: 'shopify',
+            eventType: 'orders/create',
+            payload: deadLetterRow.payload,
+            webhookEventId: 'wh_1',
+          },
+        }),
+      );
+    });
+
+    it('throws NotFoundError when no such webhook event exists in this workspace', async () => {
+      const { service } = makeDeps({ select: [[]] });
+
+      await expect(service.replay('ws_1', 'wh_missing')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    });
+
+    it('throws ConflictError when the event is not dead-lettered', async () => {
+      const { service } = makeDeps({ select: [[{ ...deadLetterRow, status: 'processed' }]] });
+
+      await expect(service.replay('ws_1', 'wh_1')).rejects.toMatchObject({ code: 'CONFLICT' });
     });
   });
 });

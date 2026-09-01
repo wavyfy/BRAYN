@@ -7,6 +7,7 @@ import { IntegrationController } from './integration.controller';
 import { IntegrationService } from './integration.service';
 import { IntegrationHealthService } from './integration-health.service';
 import { ImportRunService } from './import-run.service';
+import { WebhookIngestService } from './webhook-ingest.service';
 import { UserService } from '../workspace/user.service';
 import { WorkspaceMembershipService } from '../workspace/workspace-membership.service';
 import { WorkspaceMembershipGuard } from '../workspace/workspace-membership.guard';
@@ -60,6 +61,9 @@ describe('IntegrationController (e2e)', () => {
   const importRunService = {
     getLatestImportRun: vi.fn(async () => ({ id: 'run_1', status: 'running' })),
   };
+  const webhookIngestService = {
+    replay: vi.fn(async () => ({ status: 'accepted' as const })),
+  };
   const userService = {
     findOrCreateByClerkId: vi.fn(async (clerkUserId: string) => ({ id: 'user_1', clerkUserId })),
   };
@@ -81,6 +85,7 @@ describe('IntegrationController (e2e)', () => {
         { provide: IntegrationService, useValue: integrationService },
         { provide: IntegrationHealthService, useValue: integrationHealthService },
         { provide: ImportRunService, useValue: importRunService },
+        { provide: WebhookIngestService, useValue: webhookIngestService },
         { provide: UserService, useValue: userService },
         { provide: WorkspaceMembershipService, useValue: membershipService },
         WorkspaceMembershipGuard,
@@ -108,6 +113,7 @@ describe('IntegrationController (e2e)', () => {
     integrationService.startInitialImport.mockClear();
     integrationHealthService.getHealth.mockClear();
     importRunService.getLatestImportRun.mockClear();
+    webhookIngestService.replay.mockClear();
   });
 
   it('rejects an unauthenticated list request', async () => {
@@ -232,6 +238,36 @@ describe('IntegrationController (e2e)', () => {
 
     expect(res.statusCode).toBe(204);
     expect(integrationService.disconnect).toHaveBeenCalledWith('ws_1', 'shopify');
+  });
+
+  it('rejects replaying a webhook from a member without owner/admin role', async () => {
+    membershipService.findMembership.mockResolvedValueOnce({
+      id: 'mem_1',
+      workspaceId: 'ws_1',
+      userId: 'user_1',
+      role: 'support',
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/integrations/shopify/webhooks/wh_1/replay',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(webhookIngestService.replay).not.toHaveBeenCalled();
+  });
+
+  it('replays a dead-lettered webhook for an owner/admin caller', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/integrations/shopify/webhooks/wh_1/replay',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toEqual({ status: 'accepted' });
+    expect(webhookIngestService.replay).toHaveBeenCalledWith('ws_1', 'wh_1');
   });
 
   it('rejects submitting credentials from a member without owner/admin role', async () => {

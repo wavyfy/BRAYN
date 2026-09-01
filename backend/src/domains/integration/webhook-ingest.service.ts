@@ -86,6 +86,7 @@ export class WebhookIngestService {
         integrationId: integration.id,
         externalEventId: parsed.externalEventId,
         eventType: parsed.eventType,
+        payload: parsed.payload,
       })
       .returning();
 
@@ -96,7 +97,7 @@ export class WebhookIngestService {
           workspaceId,
           entityId: integration.id,
           idempotencyKey,
-          payload: { provider, eventType: parsed.eventType, payload: parsed.payload },
+          payload: { provider, eventType: parsed.eventType, payload: parsed.payload, webhookEventId: row.id },
         }),
       );
 
@@ -114,6 +115,48 @@ export class WebhookIngestService {
         .where(eq(integrationWebhookEvents.id, row.id));
       throw error;
     }
+  }
+
+  /**
+   * Manual recovery for a dead-lettered delivery (doc 21/18 — "Manual
+   * recovery where required", "Replay where safe"). Re-dispatches the
+   * already-verified, already-deduplicated record straight from its
+   * stored `payload` — this does not re-verify the signature or reserve a
+   * fresh idempotency key, since it isn't a new delivery, it's a retry of
+   * one BRAYN already accepted.
+   */
+  async replay(workspaceId: string, webhookEventId: string): Promise<{ status: 'accepted' }> {
+    const [row] = await this.database.client
+      .select({
+        id: integrationWebhookEvents.id,
+        integrationId: integrationWebhookEvents.integrationId,
+        eventType: integrationWebhookEvents.eventType,
+        status: integrationWebhookEvents.status,
+        payload: integrationWebhookEvents.payload,
+        provider: integrations.provider,
+      })
+      .from(integrationWebhookEvents)
+      .innerJoin(integrations, eq(integrationWebhookEvents.integrationId, integrations.id))
+      .where(and(eq(integrationWebhookEvents.id, webhookEventId), eq(integrationWebhookEvents.workspaceId, workspaceId)))
+      .limit(1);
+
+    if (!row) {
+      throw new NotFoundError('No webhook event with that id exists in this workspace.');
+    }
+    if (row.status !== 'dead_letter') {
+      throw new ConflictError('Only a dead-lettered webhook event can be replayed.');
+    }
+
+    this.eventBus.emit(
+      createEvent({
+        type: 'integration.webhook.received',
+        workspaceId,
+        entityId: row.integrationId,
+        payload: { provider: row.provider as IntegrationProvider, eventType: row.eventType, payload: row.payload, webhookEventId: row.id },
+      }),
+    );
+
+    return { status: 'accepted' };
   }
 
   private async findIntegration(workspaceId: string, provider: IntegrationProvider) {

@@ -3,6 +3,7 @@ import { ZodValidationPipe } from '../../common/api/zod-validation.pipe';
 import { IntegrationService } from './integration.service';
 import { IntegrationHealthService } from './integration-health.service';
 import { ImportRunService } from './import-run.service';
+import { WebhookIngestService } from './webhook-ingest.service';
 import { WorkspaceMembershipGuard } from '../workspace/workspace-membership.guard';
 import { RequireWorkspaceRole } from '../workspace/require-workspace-role.decorator';
 import { connectIntegrationSchema, type ConnectIntegrationInput } from './dto/connect-integration.schema';
@@ -22,6 +23,7 @@ export class IntegrationController {
     private readonly integrationService: IntegrationService,
     private readonly integrationHealthService: IntegrationHealthService,
     private readonly importRunService: ImportRunService,
+    private readonly webhookIngestService: WebhookIngestService,
   ) {}
 
   @Get()
@@ -83,6 +85,14 @@ export class IntegrationController {
     @Param('provider') provider: ConnectIntegrationInput['provider'],
   ) {
     return this.importRunService.getLatestImportRun(workspaceId, provider);
+  }
+
+  /** Manually re-processes a dead-lettered webhook delivery (doc 21 — "Manual recovery where required"). */
+  @Post(':provider/webhooks/:webhookEventId/replay')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @RequireWorkspaceRole('owner', 'admin')
+  async replayWebhook(@Param('workspaceId') workspaceId: string, @Param('webhookEventId') webhookEventId: string) {
+    return this.webhookIngestService.replay(workspaceId, webhookEventId);
   }
 
   @Delete(':provider')
