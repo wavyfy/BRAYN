@@ -3,13 +3,18 @@ import { ConfigService } from '@nestjs/config';
 import { and, eq } from 'drizzle-orm';
 import { DatabaseService } from '../../database/database.service';
 import { integrations } from '../../database/schema/integrations';
-import { ConflictError, NotFoundError, ProviderError } from '../../common/errors/app-error';
+import { ConflictError, NotFoundError, ProviderError, UnauthenticatedError } from '../../common/errors/app-error';
 import {
   decryptCredential,
   encryptCredential,
   InvalidEncryptionKeyError,
   parseEncryptionKey,
 } from '../../common/crypto/credential-cipher';
+import { createEvent } from '../../common/events/domain-event';
+import { EventBus } from '../../common/events/event-bus.service';
+import { ImportRunService } from './import-run.service';
+import { ProviderRegistry } from './provider-registry.service';
+import type { ImportRequestedPayload } from './import-processor.service';
 import type { IntegrationProvider } from './dto/connect-integration.schema';
 import type { Env } from '../../config/env.schema';
 
@@ -34,6 +39,9 @@ export class IntegrationService {
   constructor(
     private readonly database: DatabaseService,
     private readonly config: ConfigService<Env, true>,
+    private readonly providerRegistry: ProviderRegistry,
+    private readonly importRunService: ImportRunService,
+    private readonly eventBus: EventBus,
   ) {}
 
   async listByWorkspace(workspaceId: string) {
@@ -157,6 +165,55 @@ export class IntegrationService {
       .returning(integrationPublicColumns);
 
     return updated;
+  }
+
+  /**
+   * Verifies `credentials` against the provider (via its registered
+   * ProviderAdapter) before storing them — never persist a credential the
+   * provider itself rejects. This is what the controller's credentials
+   * endpoint calls; setCredentials()/getCredentials() stay available for
+   * internal use (e.g. a future OAuth callback storing a token it already
+   * verified as part of the exchange itself).
+   */
+  async connectCredentials(
+    workspaceId: string,
+    provider: IntegrationProvider,
+    credentials: Record<string, string>,
+  ): Promise<void> {
+    const adapter = this.providerRegistry.get(provider);
+    const verified = await adapter.verifyConnection(credentials);
+    if (!verified) {
+      throw new UnauthenticatedError('Could not verify these credentials with the provider.');
+    }
+
+    await this.setCredentials(workspaceId, provider, credentials);
+  }
+
+  /**
+   * Starts a background initial import (doc 20 — Initial Import; doc 23
+   * Async Operations — "return an operation/job reference instead of
+   * blocking the request"). Creates the run row synchronously (so the
+   * caller gets an id to poll) then hands the actual paginated fetch to
+   * ImportProcessorService via an event, off the request.
+   */
+  async startInitialImport(workspaceId: string, provider: IntegrationProvider) {
+    const adapter = this.providerRegistry.get(provider);
+    if (!adapter.fetchCustomers) {
+      throw new ProviderError(`Provider "${provider}" does not support customer import.`);
+    }
+
+    const run = await this.importRunService.startImportRun(workspaceId, provider);
+
+    this.eventBus.emit(
+      createEvent<ImportRequestedPayload>({
+        type: 'integration.import.requested',
+        workspaceId,
+        entityId: run.integrationId,
+        payload: { provider, runId: run.id },
+      }),
+    );
+
+    return run;
   }
 
   /**

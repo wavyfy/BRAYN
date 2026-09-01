@@ -11,6 +11,7 @@ import { IdempotencyModule } from './common/idempotency/idempotency.module';
 import { DatabaseModule } from './database/database.module';
 import { WorkspaceModule } from './domains/workspace/workspace.module';
 import { IntegrationModule } from './domains/integration/integration.module';
+import { CommerceModule } from './domains/commerce/commerce.module';
 import { IdentityResolutionModule } from './domains/identity-resolution/identity-resolution.module';
 import { CustomerIntelligenceModule } from './domains/customer-intelligence/customer-intelligence.module';
 import { IntelligenceEnginesModule } from './domains/intelligence-engines/intelligence-engines.module';
@@ -31,6 +32,7 @@ import { AutomationModule } from './domains/automation/automation.module';
     IdempotencyModule,
     WorkspaceModule,
     IntegrationModule,
+    CommerceModule,
     IdentityResolutionModule,
     CustomerIntelligenceModule,
     IntelligenceEnginesModule,

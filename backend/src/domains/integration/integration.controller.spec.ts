@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { IntegrationController } from './integration.controller';
 import { IntegrationService } from './integration.service';
 import { IntegrationHealthService } from './integration-health.service';
+import { ImportRunService } from './import-run.service';
 import { UserService } from '../workspace/user.service';
 import { WorkspaceMembershipService } from '../workspace/workspace-membership.service';
 import { WorkspaceMembershipGuard } from '../workspace/workspace-membership.guard';
@@ -37,6 +38,14 @@ describe('IntegrationController (e2e)', () => {
       status: 'connected',
     })),
     disconnect: vi.fn(async () => undefined),
+    connectCredentials: vi.fn(async () => undefined),
+    startInitialImport: vi.fn(async (workspaceId: string, provider: string) => ({
+      id: 'run_1',
+      workspaceId,
+      integrationId: 'int_1',
+      provider,
+      status: 'running',
+    })),
   };
   const integrationHealthService = {
     getHealth: vi.fn(async (workspaceId: string, provider: string) => ({
@@ -47,6 +56,9 @@ describe('IntegrationController (e2e)', () => {
       lastSyncError: null,
       latestImport: null,
     })),
+  };
+  const importRunService = {
+    getLatestImportRun: vi.fn(async () => ({ id: 'run_1', status: 'running' })),
   };
   const userService = {
     findOrCreateByClerkId: vi.fn(async (clerkUserId: string) => ({ id: 'user_1', clerkUserId })),
@@ -68,6 +80,7 @@ describe('IntegrationController (e2e)', () => {
       providers: [
         { provide: IntegrationService, useValue: integrationService },
         { provide: IntegrationHealthService, useValue: integrationHealthService },
+        { provide: ImportRunService, useValue: importRunService },
         { provide: UserService, useValue: userService },
         { provide: WorkspaceMembershipService, useValue: membershipService },
         WorkspaceMembershipGuard,
@@ -91,7 +104,10 @@ describe('IntegrationController (e2e)', () => {
     integrationService.listByWorkspace.mockClear();
     integrationService.connect.mockClear();
     integrationService.disconnect.mockClear();
+    integrationService.connectCredentials.mockClear();
+    integrationService.startInitialImport.mockClear();
     integrationHealthService.getHealth.mockClear();
+    importRunService.getLatestImportRun.mockClear();
   });
 
   it('rejects an unauthenticated list request', async () => {
@@ -218,6 +234,66 @@ describe('IntegrationController (e2e)', () => {
     expect(integrationService.disconnect).toHaveBeenCalledWith('ws_1', 'shopify');
   });
 
+  it('rejects submitting credentials from a member without owner/admin role', async () => {
+    membershipService.findMembership.mockResolvedValueOnce({
+      id: 'mem_1',
+      workspaceId: 'ws_1',
+      userId: 'user_1',
+      role: 'support',
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/integrations/shopify/credentials',
+      headers: { authorization: 'Bearer valid-token' },
+      payload: { credentials: { shopDomain: 'acme.myshopify.com', accessToken: 'shpat_x' } },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(integrationService.connectCredentials).not.toHaveBeenCalled();
+  });
+
+  it('rejects submitting credentials for a caller who is not a member of the workspace', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_2/integrations/shopify/credentials',
+      headers: { authorization: 'Bearer valid-token' },
+      payload: { credentials: { shopDomain: 'acme.myshopify.com', accessToken: 'shpat_x' } },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(integrationService.connectCredentials).not.toHaveBeenCalled();
+  });
+
+  it('accepts credentials for an owner/admin caller and never echoes them back', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/integrations/shopify/credentials',
+      headers: { authorization: 'Bearer valid-token' },
+      payload: { credentials: { shopDomain: 'acme.myshopify.com', accessToken: 'shpat_x' } },
+    });
+
+    expect(res.statusCode).toBe(204);
+    expect(res.body).toBe('');
+    expect(integrationService.connectCredentials).toHaveBeenCalledWith('ws_1', 'shopify', {
+      shopDomain: 'acme.myshopify.com',
+      accessToken: 'shpat_x',
+    });
+  });
+
+  it('rejects a credential value that is not a non-empty string with the canonical validation error', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/integrations/shopify/credentials',
+      headers: { authorization: 'Bearer valid-token' },
+      payload: { credentials: { accessToken: '' } },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('VALIDATION_ERROR');
+    expect(integrationService.connectCredentials).not.toHaveBeenCalled();
+  });
+
   it('returns health for a member (view-only, no owner/admin role required)', async () => {
     membershipService.findMembership.mockResolvedValueOnce({
       id: 'mem_1',
@@ -246,5 +322,54 @@ describe('IntegrationController (e2e)', () => {
 
     expect(res.statusCode).toBe(403);
     expect(integrationHealthService.getHealth).not.toHaveBeenCalled();
+  });
+
+  it('starts an import for an owner/admin caller', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/integrations/shopify/import',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toMatchObject({ id: 'run_1', status: 'running' });
+    expect(integrationService.startInitialImport).toHaveBeenCalledWith('ws_1', 'shopify');
+  });
+
+  it('rejects starting an import from a member without owner/admin role', async () => {
+    membershipService.findMembership.mockResolvedValueOnce({
+      id: 'mem_1',
+      workspaceId: 'ws_1',
+      userId: 'user_1',
+      role: 'support',
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/integrations/shopify/import',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(integrationService.startInitialImport).not.toHaveBeenCalled();
+  });
+
+  it('returns the latest import run for a member (view-only, no owner/admin role required)', async () => {
+    membershipService.findMembership.mockResolvedValueOnce({
+      id: 'mem_1',
+      workspaceId: 'ws_1',
+      userId: 'user_1',
+      role: 'support',
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/workspaces/ws_1/integrations/shopify/import',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: 'run_1', status: 'running' });
+    expect(importRunService.getLatestImportRun).toHaveBeenCalledWith('ws_1', 'shopify');
   });
 });

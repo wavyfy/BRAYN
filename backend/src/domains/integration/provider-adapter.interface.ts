@@ -1,4 +1,5 @@
 import type { IntegrationProvider } from './dto/connect-integration.schema';
+import type { NormalizedCustomer } from '../commerce/customer.service';
 
 /** A webhook payload the adapter recognized and normalized (doc 21 — External → Internal Conversion). */
 export interface ParsedWebhookEvent {
@@ -6,6 +7,13 @@ export interface ParsedWebhookEvent {
   externalEventId: string;
   eventType: string;
   payload: unknown;
+}
+
+/** One page of a paginated initial-import fetch (doc 20 — Initial Import: pagination). */
+export interface CustomerPage {
+  customers: NormalizedCustomer[];
+  /** Opaque provider cursor for the next page, or null when this was the last page. */
+  nextCursor: string | null;
 }
 
 /**
@@ -38,4 +46,13 @@ export interface ProviderAdapter {
 
   /** Parses and normalizes a verified payload. Returns null for a delivery type BRAYN doesn't act on (doc 21 — "process only relevant events"). */
   parseWebhookEvent?(rawBody: string): ParsedWebhookEvent | null;
+
+  /**
+   * Initial-import support (doc 20 — Initial Import). Optional: a provider
+   * without commerce customer data (e.g. Website Tracking, WhatsApp)
+   * implements neither. Fetches one page starting at `cursor` (undefined
+   * for the first page); must throw `ProviderError` for infrastructure
+   * failures, same convention as `verifyConnection`.
+   */
+  fetchCustomers?(credentials: Record<string, string>, cursor?: string): Promise<CustomerPage>;
 }
