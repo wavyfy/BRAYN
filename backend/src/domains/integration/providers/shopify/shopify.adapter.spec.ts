@@ -289,4 +289,96 @@ describe('ShopifyAdapter', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });
+
+  describe('fetchOrders()', () => {
+    it('requests status=any and normalizes orders with their line items', async () => {
+      const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () =>
+        jsonResponse(200, {
+          orders: [
+            {
+              id: 900,
+              customer: { id: 1 },
+              total_price: '19.99',
+              updated_at: '2026-01-01T00:00:00Z',
+              line_items: [{ id: 9001, variant_id: 901, quantity: 2, price: '9.99' }],
+            },
+          ],
+        }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
+
+      expect(page).toEqual({
+        orders: [
+          {
+            externalId: '900',
+            customerExternalId: '1',
+            totalPrice: '19.99',
+            sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
+            lineItems: [{ externalId: '9001', variantExternalId: '901', quantity: 2, price: '9.99' }],
+          },
+        ],
+        nextCursor: null,
+      });
+      const [url] = fetchMock.mock.calls[0];
+      expect(url).toBe('https://acme.myshopify.com/admin/api/2024-10/orders.json?limit=250&status=any');
+    });
+
+    it('normalizes a null customer (guest checkout) and a null variant_id (custom line) to null', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          jsonResponse(200, {
+            orders: [
+              {
+                id: 901,
+                customer: null,
+                total_price: '5.00',
+                updated_at: '2026-01-01T00:00:00Z',
+                line_items: [{ id: 9002, variant_id: null, quantity: 1, price: '5.00' }],
+              },
+            ],
+          }),
+        ),
+      );
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
+
+      expect(page.orders[0].customerExternalId).toBeNull();
+      expect(page.orders[0].lineItems[0].variantExternalId).toBeNull();
+    });
+
+    it('extracts the next-page URL from the Link header', async () => {
+      const nextUrl = 'https://acme.myshopify.com/admin/api/2024-10/orders.json?page_info=abc123';
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { orders: [] }, { link: `<${nextUrl}>; rel="next"` })));
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
+
+      expect(page.nextCursor).toBe(nextUrl);
+    });
+
+    it('throws ProviderError on a non-2xx response', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401)));
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      await expect(
+        adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }),
+      ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+    });
+
+    it('throws ProviderError and never calls fetch for a stored shopDomain outside myshopify.com — SSRF guard', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      await expect(
+        adapter.fetchOrders({ shopDomain: 'evil.com', accessToken: 'shpat_123' }),
+      ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
 });

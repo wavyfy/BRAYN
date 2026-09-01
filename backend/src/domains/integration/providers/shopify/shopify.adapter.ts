@@ -1,11 +1,12 @@
 import { Injectable, type OnModuleInit } from '@nestjs/common';
 import { ProviderError } from '../../../../common/errors/app-error';
 import { ProviderRegistry } from '../../provider-registry.service';
-import type { CustomerPage, ProductPage, ProviderAdapter } from '../../provider-adapter.interface';
+import type { CustomerPage, OrderPage, ProductPage, ProviderAdapter } from '../../provider-adapter.interface';
 
 const SHOPIFY_API_VERSION = '2024-10';
 const CUSTOMERS_PAGE_SIZE = 250;
 const PRODUCTS_PAGE_SIZE = 250;
+const ORDERS_PAGE_SIZE = 250;
 /** Merchant-supplied at connect time — must be pinned to Shopify's own domain before it drives any fetch() (SSRF). */
 const SHOPIFY_DOMAIN_PATTERN = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i;
 
@@ -31,6 +32,21 @@ interface ShopifyProduct {
   title: string;
   updated_at: string;
   variants: ShopifyVariant[];
+}
+
+interface ShopifyLineItem {
+  id: number;
+  variant_id: number | null;
+  quantity: number;
+  price: string | null;
+}
+
+interface ShopifyOrder {
+  id: number;
+  customer: { id: number } | null;
+  total_price: string | null;
+  updated_at: string;
+  line_items: ShopifyLineItem[];
 }
 
 /**
@@ -138,6 +154,33 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
           price: variant.price,
           inventoryQuantity: variant.inventory_quantity,
           sourceUpdatedAt: new Date(variant.updated_at),
+        })),
+      })),
+      nextCursor,
+    };
+  }
+
+  /**
+   * Same contract/pagination as fetchCustomers, for orders and their line
+   * items (doc 20 Shopify Phase 1 Data). `status=any` because Shopify's
+   * default order listing excludes closed/cancelled orders — an initial
+   * import needs the merchant's full order history.
+   */
+  async fetchOrders(credentials: Record<string, string>, cursor?: string): Promise<OrderPage> {
+    const { body, nextCursor } = await this.fetchPage(credentials, cursor, `orders.json?limit=${ORDERS_PAGE_SIZE}&status=any`);
+    const { orders } = body as { orders: ShopifyOrder[] };
+
+    return {
+      orders: orders.map((order) => ({
+        externalId: String(order.id),
+        customerExternalId: order.customer ? String(order.customer.id) : null,
+        totalPrice: order.total_price,
+        sourceUpdatedAt: new Date(order.updated_at),
+        lineItems: order.line_items.map((item) => ({
+          externalId: String(item.id),
+          variantExternalId: item.variant_id !== null ? String(item.variant_id) : null,
+          quantity: item.quantity,
+          price: item.price,
         })),
       })),
       nextCursor,

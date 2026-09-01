@@ -3,13 +3,18 @@ import { ImportProcessorService } from './import-processor.service';
 import type { DomainEvent } from '../../common/events/domain-event';
 import type { CustomerService } from '../commerce/customer.service';
 import type { ProductService } from '../commerce/product.service';
+import type { OrderService } from '../commerce/order.service';
 import type { ImportRunService } from './import-run.service';
 import type { IntegrationService } from './integration.service';
 import type { ProviderRegistry } from './provider-registry.service';
-import type { CustomerPage, ProductPage, ProviderAdapter } from './provider-adapter.interface';
+import type { CustomerPage, OrderPage, ProductPage, ProviderAdapter } from './provider-adapter.interface';
 
 function makeProductService(): ProductService {
   return { upsertMany: vi.fn(async (_ws, _int, _p, products) => ({ productsWritten: products.length, variantsWritten: 0 })) } as unknown as ProductService;
+}
+
+function makeOrderService(): OrderService {
+  return { upsertMany: vi.fn(async (_ws, _int, _p, orders) => ({ ordersWritten: orders.length, lineItemsWritten: 0 })) } as unknown as OrderService;
 }
 
 function makeEvent(overrides: Partial<DomainEvent<{ provider: 'shopify'; runId: string }>> = {}) {
@@ -56,6 +61,7 @@ describe('ImportProcessorService', () => {
       integrationService,
       customerService,
       makeProductService(),
+      makeOrderService(),
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -90,6 +96,7 @@ describe('ImportProcessorService', () => {
       integrationService,
       customerService,
       makeProductService(),
+      makeOrderService(),
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -116,6 +123,7 @@ describe('ImportProcessorService', () => {
       integrationService,
       customerService,
       makeProductService(),
+      makeOrderService(),
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -151,6 +159,7 @@ describe('ImportProcessorService', () => {
       integrationService,
       customerService,
       makeProductService(),
+      makeOrderService(),
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -185,7 +194,14 @@ describe('ImportProcessorService', () => {
     const integrationService = { getCredentials: vi.fn(async () => credentials) } as unknown as IntegrationService;
     const customerService = { upsertMany: vi.fn(async () => 1) } as unknown as CustomerService;
     const productService = makeProductService();
-    const processor = new ImportProcessorService(registry, importRunService, integrationService, customerService, productService);
+    const processor = new ImportProcessorService(
+      registry,
+      importRunService,
+      integrationService,
+      customerService,
+      productService,
+      makeOrderService(),
+    );
 
     await processor.handleImportRequested(makeEvent());
 
@@ -213,11 +229,105 @@ describe('ImportProcessorService', () => {
     const integrationService = { getCredentials: vi.fn(async () => credentials) } as unknown as IntegrationService;
     const customerService = { upsertMany: vi.fn(async () => 0) } as unknown as CustomerService;
     const productService = makeProductService();
-    const processor = new ImportProcessorService(registry, importRunService, integrationService, customerService, productService);
+    const processor = new ImportProcessorService(
+      registry,
+      importRunService,
+      integrationService,
+      customerService,
+      productService,
+      makeOrderService(),
+    );
 
     await processor.handleImportRequested(makeEvent());
 
     expect(productService.upsertMany).not.toHaveBeenCalled();
+    expect(importRunService.completeImportRun).toHaveBeenCalledWith('run_1');
+  });
+
+  it('imports orders last, after customers and products, with cumulative progress', async () => {
+    const customerPage: CustomerPage = {
+      customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+      nextCursor: null,
+    };
+    const productPage: ProductPage = {
+      products: [{ externalId: '55', title: 'Tee', sourceUpdatedAt: null, variants: [] }],
+      nextCursor: null,
+    };
+    const orderPage: OrderPage = {
+      orders: [{ externalId: '900', customerExternalId: '1', totalPrice: '19.99', sourceUpdatedAt: null, lineItems: [] }],
+      nextCursor: null,
+    };
+    const callOrder: string[] = [];
+    const fetchCustomers = vi.fn(async () => {
+      callOrder.push('customers');
+      return customerPage;
+    });
+    const fetchProducts = vi.fn(async () => {
+      callOrder.push('products');
+      return productPage;
+    });
+    const fetchOrders = vi.fn(async () => {
+      callOrder.push('orders');
+      return orderPage;
+    });
+    const registry = {
+      get: vi.fn(() => ({ fetchCustomers, fetchProducts, fetchOrders }) as unknown as ProviderAdapter),
+    } as unknown as ProviderRegistry;
+    const importRunService = {
+      recordProgress: vi.fn(async () => undefined),
+      completeImportRun: vi.fn(async () => undefined),
+      failImportRun: vi.fn(async () => undefined),
+    } as unknown as ImportRunService;
+    const integrationService = { getCredentials: vi.fn(async () => credentials) } as unknown as IntegrationService;
+    const customerService = { upsertMany: vi.fn(async () => 1) } as unknown as CustomerService;
+    const productService = makeProductService();
+    const orderService = makeOrderService();
+    const processor = new ImportProcessorService(
+      registry,
+      importRunService,
+      integrationService,
+      customerService,
+      productService,
+      orderService,
+    );
+
+    await processor.handleImportRequested(makeEvent());
+
+    expect(callOrder).toEqual(['customers', 'products', 'orders']);
+    expect(orderService.upsertMany).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', orderPage.orders);
+    // Third (order) page's progress carries the customer+product count forward cumulatively.
+    expect(importRunService.recordProgress).toHaveBeenNthCalledWith(3, 'run_1', {
+      recordsImported: 3,
+      recordsFailed: 0,
+      cursor: undefined,
+    });
+    expect(importRunService.completeImportRun).toHaveBeenCalledWith('run_1');
+  });
+
+  it('skips order import entirely when the adapter does not support it', async () => {
+    const customerPage: CustomerPage = { customers: [], nextCursor: null };
+    const fetchCustomers = vi.fn(async () => customerPage);
+    const registry = { get: vi.fn(() => ({ fetchCustomers }) as unknown as ProviderAdapter) } as unknown as ProviderRegistry;
+    const importRunService = {
+      recordProgress: vi.fn(async () => undefined),
+      completeImportRun: vi.fn(async () => undefined),
+      failImportRun: vi.fn(async () => undefined),
+    } as unknown as ImportRunService;
+    const integrationService = { getCredentials: vi.fn(async () => credentials) } as unknown as IntegrationService;
+    const customerService = { upsertMany: vi.fn(async () => 0) } as unknown as CustomerService;
+    const orderService = makeOrderService();
+    const processor = new ImportProcessorService(
+      registry,
+      importRunService,
+      integrationService,
+      customerService,
+      makeProductService(),
+      orderService,
+    );
+
+    await processor.handleImportRequested(makeEvent());
+
+    expect(orderService.upsertMany).not.toHaveBeenCalled();
     expect(importRunService.completeImportRun).toHaveBeenCalledWith('run_1');
   });
 });

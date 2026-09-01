@@ -92,6 +92,13 @@
       "when": 1788268688986,
       "tag": "0012_concerned_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1788269220072,
+      "tag": "0013_acoustic_ghost_rider",
+      "breakpoints": true
     }
   ]
 }
