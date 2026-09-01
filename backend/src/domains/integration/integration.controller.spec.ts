@@ -5,6 +5,7 @@ import { Test } from '@nestjs/testing';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IntegrationController } from './integration.controller';
 import { IntegrationService } from './integration.service';
+import { IntegrationHealthService } from './integration-health.service';
 import { UserService } from '../workspace/user.service';
 import { WorkspaceMembershipService } from '../workspace/workspace-membership.service';
 import { WorkspaceMembershipGuard } from '../workspace/workspace-membership.guard';
@@ -37,6 +38,16 @@ describe('IntegrationController (e2e)', () => {
     })),
     disconnect: vi.fn(async () => undefined),
   };
+  const integrationHealthService = {
+    getHealth: vi.fn(async (workspaceId: string, provider: string) => ({
+      provider,
+      status: 'connected',
+      health: 'healthy',
+      lastSyncedAt: null,
+      lastSyncError: null,
+      latestImport: null,
+    })),
+  };
   const userService = {
     findOrCreateByClerkId: vi.fn(async (clerkUserId: string) => ({ id: 'user_1', clerkUserId })),
   };
@@ -56,6 +67,7 @@ describe('IntegrationController (e2e)', () => {
       controllers: [IntegrationController],
       providers: [
         { provide: IntegrationService, useValue: integrationService },
+        { provide: IntegrationHealthService, useValue: integrationHealthService },
         { provide: UserService, useValue: userService },
         { provide: WorkspaceMembershipService, useValue: membershipService },
         WorkspaceMembershipGuard,
@@ -79,6 +91,7 @@ describe('IntegrationController (e2e)', () => {
     integrationService.listByWorkspace.mockClear();
     integrationService.connect.mockClear();
     integrationService.disconnect.mockClear();
+    integrationHealthService.getHealth.mockClear();
   });
 
   it('rejects an unauthenticated list request', async () => {
@@ -203,5 +216,35 @@ describe('IntegrationController (e2e)', () => {
 
     expect(res.statusCode).toBe(204);
     expect(integrationService.disconnect).toHaveBeenCalledWith('ws_1', 'shopify');
+  });
+
+  it('returns health for a member (view-only, no owner/admin role required)', async () => {
+    membershipService.findMembership.mockResolvedValueOnce({
+      id: 'mem_1',
+      workspaceId: 'ws_1',
+      userId: 'user_1',
+      role: 'support',
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/workspaces/ws_1/integrations/shopify/health',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ provider: 'shopify', status: 'connected', health: 'healthy' });
+    expect(integrationHealthService.getHealth).toHaveBeenCalledWith('ws_1', 'shopify');
+  });
+
+  it('rejects health for a caller who is not a member of the workspace', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/workspaces/ws_2/integrations/shopify/health',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(integrationHealthService.getHealth).not.toHaveBeenCalled();
   });
 });

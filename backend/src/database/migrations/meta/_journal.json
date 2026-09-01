@@ -57,6 +57,20 @@
       "when": 1788247902504,
       "tag": "0007_green_garia",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788248246026,
+      "tag": "0008_parched_leech",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788248662936,
+      "tag": "0009_easy_lightspeed",
+      "breakpoints": true
     }
   ]
 }

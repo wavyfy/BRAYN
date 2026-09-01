@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
 import { ZodValidationPipe } from '../../common/api/zod-validation.pipe';
 import { IntegrationService } from './integration.service';
+import { IntegrationHealthService } from './integration-health.service';
 import { WorkspaceMembershipGuard } from '../workspace/workspace-membership.guard';
 import { RequireWorkspaceRole } from '../workspace/require-workspace-role.decorator';
 import { connectIntegrationSchema, type ConnectIntegrationInput } from './dto/connect-integration.schema';
@@ -15,11 +16,22 @@ import { connectIntegrationSchema, type ConnectIntegrationInput } from './dto/co
 @Controller('workspaces/:workspaceId/integrations')
 @UseGuards(WorkspaceMembershipGuard)
 export class IntegrationController {
-  constructor(private readonly integrationService: IntegrationService) {}
+  constructor(
+    private readonly integrationService: IntegrationService,
+    private readonly integrationHealthService: IntegrationHealthService,
+  ) {}
 
   @Get()
   async list(@Param('workspaceId') workspaceId: string) {
     return this.integrationService.listByWorkspace(workspaceId);
+  }
+
+  @Get(':provider/health')
+  async health(
+    @Param('workspaceId') workspaceId: string,
+    @Param('provider') provider: ConnectIntegrationInput['provider'],
+  ) {
+    return this.integrationHealthService.getHealth(workspaceId, provider);
   }
 
   @Post()
