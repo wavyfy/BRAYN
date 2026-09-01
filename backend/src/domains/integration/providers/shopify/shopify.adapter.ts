@@ -5,6 +5,8 @@ import type { CustomerPage, ProviderAdapter } from '../../provider-adapter.inter
 
 const SHOPIFY_API_VERSION = '2024-10';
 const CUSTOMERS_PAGE_SIZE = 250;
+/** Merchant-supplied at connect time — must be pinned to Shopify's own domain before it drives any fetch() (SSRF). */
+const SHOPIFY_DOMAIN_PATTERN = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i;
 
 interface ShopifyCustomer {
   id: number;
@@ -45,7 +47,9 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
    */
   async verifyConnection(credentials: Record<string, string>): Promise<boolean> {
     const { shopDomain, accessToken } = credentials;
-    if (!shopDomain || !accessToken) {
+    if (!shopDomain || !accessToken || !SHOPIFY_DOMAIN_PATTERN.test(shopDomain)) {
+      // A malformed domain is the merchant having entered something wrong —
+      // same "ordinary rejection" bucket as a bad token, not a thrown error.
       return false;
     }
 
@@ -83,7 +87,15 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
    */
   async fetchCustomers(credentials: Record<string, string>, cursor?: string): Promise<CustomerPage> {
     const { shopDomain, accessToken } = credentials;
-    const url = cursor ?? `https://${shopDomain}/admin/api/${SHOPIFY_API_VERSION}/customers.json?limit=${CUSTOMERS_PAGE_SIZE}`;
+    // verifyConnection() already validated this domain at connect time — a
+    // failure here means stored credentials were tampered with or corrupted,
+    // an infrastructure problem, not an ordinary rejection.
+    if (!SHOPIFY_DOMAIN_PATTERN.test(shopDomain)) {
+      throw new ProviderError('Stored Shopify shop domain is invalid.');
+    }
+    const url = cursor
+      ? assertCursorMatchesShop(cursor, shopDomain)
+      : `https://${shopDomain}/admin/api/${SHOPIFY_API_VERSION}/customers.json?limit=${CUSTOMERS_PAGE_SIZE}`;
 
     let response: Response;
     try {
@@ -111,6 +123,24 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
 
     return { customers, nextCursor: parseNextCursor(response.headers.get('link')) };
   }
+}
+
+/**
+ * A malicious or corrupted `Link` header could point off-domain, taking the
+ * shop's access token with it (SSRF / credential exfiltration) — pin every
+ * cursor URL's host back to the verified shop domain before it's fetched.
+ */
+function assertCursorMatchesShop(cursor: string, shopDomain: string): string {
+  let hostname: string;
+  try {
+    hostname = new URL(cursor).hostname;
+  } catch {
+    throw new ProviderError('Received an invalid pagination cursor from Shopify.');
+  }
+  if (hostname.toLowerCase() !== shopDomain.toLowerCase()) {
+    throw new ProviderError('Pagination cursor host does not match the connected shop.');
+  }
+  return cursor;
 }
 
 /** Extracts the `rel="next"` URL from Shopify's `Link` pagination header, or null on the last page. */

@@ -66,6 +66,23 @@ describe('ShopifyAdapter', () => {
       ).resolves.toBe(false);
     });
 
+    it('returns false (not a throw, and never calls fetch) for a shopDomain outside myshopify.com — SSRF guard', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      await expect(
+        adapter.verifyConnection({ shopDomain: 'internal.local', accessToken: 'shpat_123' }),
+      ).resolves.toBe(false);
+      await expect(
+        adapter.verifyConnection({ shopDomain: 'evil.com/acme.myshopify.com', accessToken: 'shpat_123' }),
+      ).resolves.toBe(false);
+      await expect(
+        adapter.verifyConnection({ shopDomain: 'acme.myshopify.com.evil.com', accessToken: 'shpat_123' }),
+      ).resolves.toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
     it('throws ProviderError on a 5xx response — unexpected, not a credentials problem', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(503)));
       const adapter = new ShopifyAdapter(makeRegistry());
@@ -169,6 +186,31 @@ describe('ShopifyAdapter', () => {
       await expect(
         adapter.fetchCustomers({ shopDomain: 'bad.myshopify.com', accessToken: 'shpat_123' }),
       ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+    });
+
+    it('throws ProviderError and never calls fetch for a stored shopDomain outside myshopify.com — SSRF guard', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      await expect(
+        adapter.fetchCustomers({ shopDomain: 'evil.com', accessToken: 'shpat_123' }),
+      ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('throws ProviderError and never calls fetch when the cursor host does not match the shop — SSRF/exfil guard', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      await expect(
+        adapter.fetchCustomers(
+          { shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' },
+          'https://attacker.example/steal',
+        ),
+      ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 });
