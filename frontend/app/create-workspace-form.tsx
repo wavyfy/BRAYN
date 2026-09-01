@@ -3,6 +3,10 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createWorkspace } from './actions';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { ErrorText } from '@/components/ui/alert';
 
 export function CreateWorkspaceForm() {
   const [name, setName] = useState('');
@@ -12,6 +16,7 @@ export function CreateWorkspaceForm() {
 
   return (
     <form
+      className="space-y-3"
       onSubmit={async (e) => {
         e.preventDefault();
         setPending(true);
@@ -25,17 +30,21 @@ export function CreateWorkspaceForm() {
         }
       }}
     >
-      <input
-        type="text"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        placeholder="Workspace name"
-        required
-      />
-      <button type="submit" disabled={pending}>
-        Create workspace
-      </button>
-      {error && <p role="alert">{error}</p>}
+      <div className="space-y-1.5">
+        <Label htmlFor="workspace-name">Workspace name</Label>
+        <Input
+          id="workspace-name"
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Acme Inc."
+          required
+        />
+      </div>
+      <Button type="submit" disabled={pending} className="w-full">
+        {pending ? 'Creating…' : 'Create workspace'}
+      </Button>
+      {error && <ErrorText>{error}</ErrorText>}
     </form>
   );
 }

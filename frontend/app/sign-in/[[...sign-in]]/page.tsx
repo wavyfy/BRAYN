@@ -2,7 +2,7 @@ import { SignIn } from '@clerk/nextjs';
 
 export default function SignInPage() {
   return (
-    <main style={{ display: 'flex', justifyContent: 'center', paddingTop: '4rem' }}>
+    <main className="flex min-h-screen items-center justify-center px-4">
       <SignIn />
     </main>
   );

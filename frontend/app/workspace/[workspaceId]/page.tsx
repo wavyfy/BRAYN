@@ -3,6 +3,8 @@ import { apiFetch } from '@/lib/api';
 import { RenameWorkspaceForm } from './rename-workspace-form';
 import { AddMemberForm } from './add-member-form';
 import { MemberRowActions } from './member-row-actions';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { RoleBadge } from '@/components/ui/badge';
 
 type Workspace = { id: string; name: string; createdAt: string };
 type WorkspaceSummary = { id: string; name: string; role: string };
@@ -22,39 +24,71 @@ export default async function WorkspacePage({ params }: { params: { workspaceId:
   const canManage = role === 'owner' || role === 'admin';
 
   return (
-    <main>
-      <p>
-        <Link href="/">&larr; Workspaces</Link>
-      </p>
-      <h1>{workspace.name}</h1>
-      <dl>
-        <dt>Workspace ID</dt>
-        <dd>{workspace.id}</dd>
-        <dt>Created</dt>
-        <dd>{new Date(workspace.createdAt).toLocaleDateString()}</dd>
-        <dt>Your role</dt>
-        <dd>{role}</dd>
-      </dl>
-      {canManage && <RenameWorkspaceForm workspaceId={workspace.id} currentName={workspace.name} />}
+    <main className="mx-auto max-w-2xl px-4 py-12">
+      <Link href="/" className="text-sm text-slate-500 hover:text-slate-700">
+        &larr; Workspaces
+      </Link>
 
-      <h2>Members</h2>
-      <ul>
-        {members.map((member) => (
-          <li key={member.id}>
-            {member.userId} — {member.role}
-            {canManage && (
-              <MemberRowActions
-                workspaceId={workspace.id}
-                userId={member.userId}
-                role={member.role}
-                isCallerOwner={role === 'owner'}
-                isSelf={member.userId === currentUser.id}
-              />
-            )}
-          </li>
-        ))}
-      </ul>
-      {canManage && <AddMemberForm workspaceId={workspace.id} />}
+      <div className="mt-2 flex items-center justify-between gap-3">
+        <h1 className="truncate text-2xl font-semibold tracking-tight text-slate-900">{workspace.name}</h1>
+        {role && <RoleBadge role={role} />}
+      </div>
+
+      <Card className="mt-6">
+        <CardContent>
+          <dl className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <dt className="text-slate-500">Workspace ID</dt>
+              <dd className="mt-0.5 truncate font-mono text-xs text-slate-700">{workspace.id}</dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">Created</dt>
+              <dd className="mt-0.5 text-slate-900">{new Date(workspace.createdAt).toLocaleDateString()}</dd>
+            </div>
+          </dl>
+        </CardContent>
+      </Card>
+
+      {canManage && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle>Workspace settings</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <RenameWorkspaceForm workspaceId={workspace.id} currentName={workspace.name} />
+          </CardContent>
+        </Card>
+      )}
+
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Members</CardTitle>
+        </CardHeader>
+        <ul className="divide-y divide-slate-200">
+          {members.map((member) => (
+            <li key={member.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="truncate font-mono text-xs text-slate-600">{member.userId}</span>
+                <RoleBadge role={member.role} />
+              </div>
+              {canManage && (
+                <MemberRowActions
+                  workspaceId={workspace.id}
+                  userId={member.userId}
+                  role={member.role}
+                  isCallerOwner={role === 'owner'}
+                  isSelf={member.userId === currentUser.id}
+                />
+              )}
+            </li>
+          ))}
+        </ul>
+        {canManage && (
+          <CardContent className="border-t border-slate-200">
+            <AddMemberForm workspaceId={workspace.id} />
+          </CardContent>
+        )}
+      </Card>
     </main>
   );
 }

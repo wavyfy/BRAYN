@@ -3,6 +3,10 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { renameWorkspace } from '../../actions';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { ErrorText } from '@/components/ui/alert';
 
 export function RenameWorkspaceForm({ workspaceId, currentName }: { workspaceId: string; currentName: string }) {
   const [name, setName] = useState(currentName);
@@ -12,6 +16,7 @@ export function RenameWorkspaceForm({ workspaceId, currentName }: { workspaceId:
 
   return (
     <form
+      className="flex flex-wrap items-end gap-3"
       onSubmit={async (e) => {
         e.preventDefault();
         setPending(true);
@@ -26,12 +31,14 @@ export function RenameWorkspaceForm({ workspaceId, currentName }: { workspaceId:
         }
       }}
     >
-      <label htmlFor="workspace-name">Rename workspace</label>
-      <input id="workspace-name" type="text" value={name} onChange={(e) => setName(e.target.value)} required />
-      <button type="submit" disabled={pending}>
-        Save
-      </button>
-      {error && <p role="alert">{error}</p>}
+      <div className="min-w-0 flex-1 space-y-1.5">
+        <Label htmlFor="workspace-name">Workspace name</Label>
+        <Input id="workspace-name" type="text" value={name} onChange={(e) => setName(e.target.value)} required />
+      </div>
+      <Button type="submit" variant="secondary" disabled={pending}>
+        {pending ? 'Saving…' : 'Save'}
+      </Button>
+      {error && <ErrorText className="w-full">{error}</ErrorText>}
     </form>
   );
 }

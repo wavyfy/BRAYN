@@ -6,7 +6,7 @@
     "build": "next build",
     "dev": "next dev",
     "start": "next start",
-    "lint": "eslint \"app/**/*.{ts,tsx}\" \"lib/**/*.{ts,tsx}\"",
+    "lint": "eslint \"app/**/*.{ts,tsx}\" \"lib/**/*.{ts,tsx}\" \"components/**/*.{ts,tsx}\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },
