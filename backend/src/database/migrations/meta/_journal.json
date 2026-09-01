@@ -71,6 +71,13 @@
       "when": 1788248662936,
       "tag": "0009_easy_lightspeed",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788249619825,
+      "tag": "0010_big_kronos",
+      "breakpoints": true
     }
   ]
 }

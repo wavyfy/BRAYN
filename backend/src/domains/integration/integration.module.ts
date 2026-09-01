@@ -6,6 +6,7 @@ import { ProviderRegistry } from './provider-registry.service';
 import { ImportRunService } from './import-run.service';
 import { WebhookIngestService } from './webhook-ingest.service';
 import { IntegrationHealthService } from './integration-health.service';
+import { ReconciliationRunService } from './reconciliation-run.service';
 
 /**
  * Owns: external connections, provider auth, imports, sync, webhook intake,
@@ -22,13 +23,31 @@ import { IntegrationHealthService } from './integration-health.service';
  * health (IntegrationHealthService — rolls up connection/sync/import
  * state into a merchant-facing status; exposed via GET .../health since
  * it only reads state this session's framework already tracks, no real
- * provider required). Imports WorkspaceModule for WorkspaceMembershipGuard
- * rather than duplicating the tenant-isolation/authorization boundary.
+ * provider required), and the retry/reconciliation foundation
+ * (ReconciliationRunService — bookkeeping only, same scope boundary as
+ * ImportRunService; retry itself reuses the existing generic
+ * common/async/retry.ts rather than a new mechanism). Imports
+ * WorkspaceModule for WorkspaceMembershipGuard rather than duplicating
+ * the tenant-isolation/authorization boundary.
  */
 @Module({
   imports: [WorkspaceModule],
   controllers: [IntegrationController],
-  providers: [IntegrationService, ProviderRegistry, ImportRunService, WebhookIngestService, IntegrationHealthService],
-  exports: [IntegrationService, ProviderRegistry, ImportRunService, WebhookIngestService, IntegrationHealthService],
+  providers: [
+    IntegrationService,
+    ProviderRegistry,
+    ImportRunService,
+    WebhookIngestService,
+    IntegrationHealthService,
+    ReconciliationRunService,
+  ],
+  exports: [
+    IntegrationService,
+    ProviderRegistry,
+    ImportRunService,
+    WebhookIngestService,
+    IntegrationHealthService,
+    ReconciliationRunService,
+  ],
 })
 export class IntegrationModule {}
