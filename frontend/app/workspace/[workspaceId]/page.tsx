@@ -1,10 +1,11 @@
 import Link from 'next/link';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, ApiError } from '@/lib/api';
 import { RenameWorkspaceForm } from './rename-workspace-form';
 import { AddMemberForm } from './add-member-form';
 import { MemberRowActions } from './member-row-actions';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { RoleBadge } from '@/components/ui/badge';
+import { ApiErrorState } from '@/components/api-error-state';
 
 type Workspace = { id: string; name: string; createdAt: string };
 type WorkspaceSummary = { id: string; name: string; role: string };
@@ -13,13 +14,22 @@ type CurrentUser = { id: string };
 
 /** Doc 19 Phase 2 Visible Result — "See workspace state" and "manage basic workspace settings". */
 export default async function WorkspacePage({ params }: { params: { workspaceId: string } }) {
-  const [workspace, memberships, members, currentUser]: [Workspace, WorkspaceSummary[], Membership[], CurrentUser] =
-    await Promise.all([
+  let workspace: Workspace, memberships: WorkspaceSummary[], members: Membership[], currentUser: CurrentUser;
+  try {
+    [workspace, memberships, members, currentUser] = await Promise.all([
       apiFetch(`/api/v1/workspaces/${params.workspaceId}`),
       apiFetch('/api/v1/users/me/workspaces'),
       apiFetch(`/api/v1/workspaces/${params.workspaceId}/members`),
       apiFetch('/api/v1/users/me'),
     ]);
+  } catch (error) {
+    // Expected API failures (not a member, workspace deleted, ...) render inline rather than
+    // crashing to the route error boundary — see "24. BRAYN UI UX Specification" (State Requirements).
+    if (error instanceof ApiError) {
+      return <ApiErrorState status={error.status} message={error.message} backHref="/" />;
+    }
+    throw error;
+  }
   const role = memberships.find((m) => m.id === workspace.id)?.role;
   const canManage = role === 'owner' || role === 'admin';
 

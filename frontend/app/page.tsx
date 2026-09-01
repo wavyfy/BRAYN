@@ -1,14 +1,23 @@
 import Link from 'next/link';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, ApiError } from '@/lib/api';
 import { CreateWorkspaceForm } from './create-workspace-form';
 import { Card, CardContent } from '@/components/ui/card';
 import { RoleBadge } from '@/components/ui/badge';
+import { ApiErrorState } from '@/components/api-error-state';
 
 type WorkspaceSummary = { id: string; name: string; role: string };
 
 /** Doc 19 Phase 2 Visible Result — "Access a workspace". */
 export default async function HomePage() {
-  const workspaces: WorkspaceSummary[] = await apiFetch('/api/v1/users/me/workspaces');
+  let workspaces: WorkspaceSummary[];
+  try {
+    workspaces = await apiFetch('/api/v1/users/me/workspaces');
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return <ApiErrorState status={error.status} message={error.message} />;
+    }
+    throw error;
+  }
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-12">
