@@ -120,6 +120,13 @@
       "when": 1788318615358,
       "tag": "0016_legal_riptide",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1788319894141,
+      "tag": "0017_magical_maginty",
+      "breakpoints": true
     }
   ]
 }

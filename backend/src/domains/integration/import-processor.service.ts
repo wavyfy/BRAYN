@@ -4,6 +4,7 @@ import type { DomainEvent } from '../../common/events/domain-event';
 import { CustomerService } from '../commerce/customer.service';
 import { ProductService } from '../commerce/product.service';
 import { OrderService } from '../commerce/order.service';
+import { CollectionService } from '../commerce/collection.service';
 import { ImportRunService } from './import-run.service';
 import { IntegrationService } from './integration.service';
 import { ProviderRegistry } from './provider-registry.service';
@@ -50,6 +51,7 @@ export class ImportProcessorService {
     private readonly customerService: CustomerService,
     private readonly productService: ProductService,
     private readonly orderService: OrderService,
+    private readonly collectionService: CollectionService,
   ) {}
 
   @OnEvent('integration.import.requested')
@@ -81,6 +83,13 @@ export class ImportProcessorService {
       }
       if (adapter.fetchOrders) {
         ({ imported, failed } = await this.importOrders(adapter, credentials, workspaceId, integrationId, provider, runId, imported, failed));
+      }
+      if (adapter.fetchCollections) {
+        ({ imported, failed } = await this.importCollections(adapter, credentials, workspaceId, integrationId, provider, runId, imported, failed));
+      }
+      // Depends on both products and collections already existing (doc 20 — "Required customer/order relationships").
+      if (adapter.fetchCollects) {
+        ({ imported, failed } = await this.importCollects(adapter, credentials, workspaceId, integrationId, provider, runId, imported, failed));
       }
 
       await this.importRunService.completeImportRun(runId);
@@ -167,6 +176,62 @@ export class ImportProcessorService {
         imported += result.ordersWritten;
       } catch {
         failed += page.orders.length;
+      }
+      cursor = page.nextCursor ?? undefined;
+      await this.importRunService.recordProgress(runId, { recordsImported: imported, recordsFailed: failed, cursor });
+    } while (cursor);
+
+    return { imported, failed };
+  }
+
+  private async importCollections(
+    adapter: ProviderAdapter,
+    credentials: Record<string, string>,
+    workspaceId: string,
+    integrationId: string,
+    provider: IntegrationProvider,
+    runId: string,
+    startImported: number,
+    startFailed: number,
+  ): Promise<{ imported: number; failed: number }> {
+    let cursor: string | undefined;
+    let imported = startImported;
+    let failed = startFailed;
+
+    do {
+      const page = await adapter.fetchCollections!(credentials, cursor);
+      try {
+        imported += await this.collectionService.upsertMany(workspaceId, integrationId, provider, page.collections);
+      } catch {
+        failed += page.collections.length;
+      }
+      cursor = page.nextCursor ?? undefined;
+      await this.importRunService.recordProgress(runId, { recordsImported: imported, recordsFailed: failed, cursor });
+    } while (cursor);
+
+    return { imported, failed };
+  }
+
+  private async importCollects(
+    adapter: ProviderAdapter,
+    credentials: Record<string, string>,
+    workspaceId: string,
+    integrationId: string,
+    provider: IntegrationProvider,
+    runId: string,
+    startImported: number,
+    startFailed: number,
+  ): Promise<{ imported: number; failed: number }> {
+    let cursor: string | undefined;
+    let imported = startImported;
+    let failed = startFailed;
+
+    do {
+      const page = await adapter.fetchCollects!(credentials, cursor);
+      try {
+        imported += await this.collectionService.upsertCollects(workspaceId, integrationId, provider, page.collects);
+      } catch {
+        failed += page.collects.length;
       }
       cursor = page.nextCursor ?? undefined;
       await this.importRunService.recordProgress(runId, { recordsImported: imported, recordsFailed: failed, cursor });

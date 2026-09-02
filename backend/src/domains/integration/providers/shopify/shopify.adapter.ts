@@ -3,6 +3,8 @@ import { Injectable, type OnModuleInit } from '@nestjs/common';
 import { ProviderError } from '../../../../common/errors/app-error';
 import { ProviderRegistry } from '../../provider-registry.service';
 import type {
+  CollectionPage,
+  CollectPage,
   CustomerPage,
   FetchOptions,
   OrderPage,
@@ -14,11 +16,14 @@ import type {
 import type { NormalizedCustomer } from '../../../commerce/customer.service';
 import type { NormalizedFulfillment, NormalizedOrder, NormalizedRefund } from '../../../commerce/order.service';
 import type { NormalizedProduct } from '../../../commerce/product.service';
+import type { NormalizedCollect, NormalizedCollection } from '../../../commerce/collection.service';
 
 const SHOPIFY_API_VERSION = '2024-10';
 const CUSTOMERS_PAGE_SIZE = 250;
 const PRODUCTS_PAGE_SIZE = 250;
 const ORDERS_PAGE_SIZE = 250;
+const COLLECTIONS_PAGE_SIZE = 250;
+const COLLECTS_PAGE_SIZE = 250;
 /** Merchant-supplied at connect time — must be pinned to Shopify's own domain before it drives any fetch() (SSRF). */
 const SHOPIFY_DOMAIN_PATTERN = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i;
 
@@ -81,6 +86,18 @@ interface ShopifyFulfillment {
   tracking_url: string | null;
   shipment_status: string | null;
   updated_at: string | null;
+}
+
+interface ShopifyCollection {
+  id: number;
+  title: string;
+  updated_at: string;
+}
+
+interface ShopifyCollect {
+  id: number;
+  collection_id: number;
+  product_id: number;
 }
 
 interface ShopifyOrder {
@@ -204,6 +221,67 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
   }
 
   /**
+   * Shopify has two distinct collection resources — CustomCollection and
+   * SmartCollection — with no unified list endpoint (doc 20 Shopify Phase
+   * 1 Data — "Collections"). This presents them as one paginated
+   * `fetchCollections` the way every other adapter method works: `cursor`
+   * carries a `custom:`/`smart:` phase prefix ahead of Shopify's own
+   * opaque next-page URL so the two real endpoints stay behind this
+   * boundary (doc 06 — Provider Isolation) — undefined cursor starts at
+   * custom collections; once that phase's pages run out, the same call
+   * immediately starts smart collections rather than returning early.
+   */
+  async fetchCollections(credentials: Record<string, string>, cursor?: string, options?: FetchOptions): Promise<CollectionPage> {
+    const isSmartPhase = cursor?.startsWith('smart:') ?? false;
+    const realCursor = cursor ? cursor.slice(cursor.indexOf(':') + 1) || undefined : undefined;
+
+    if (!isSmartPhase) {
+      const custom = await this.fetchPage(
+        credentials,
+        realCursor,
+        `custom_collections.json?limit=${COLLECTIONS_PAGE_SIZE}${updatedAtMinParam(options)}`,
+      );
+      const { custom_collections: customCollections = [] } = custom.body as { custom_collections?: ShopifyCollection[] };
+      if (custom.nextCursor) {
+        return { collections: customCollections.map(normalizeCollection), nextCursor: `custom:${custom.nextCursor}` };
+      }
+
+      const smart = await this.fetchPage(
+        credentials,
+        undefined,
+        `smart_collections.json?limit=${COLLECTIONS_PAGE_SIZE}${updatedAtMinParam(options)}`,
+      );
+      const { smart_collections: smartCollections = [] } = smart.body as { smart_collections?: ShopifyCollection[] };
+      return {
+        collections: [...customCollections, ...smartCollections].map(normalizeCollection),
+        nextCursor: smart.nextCursor ? `smart:${smart.nextCursor}` : null,
+      };
+    }
+
+    const smart = await this.fetchPage(
+      credentials,
+      realCursor,
+      `smart_collections.json?limit=${COLLECTIONS_PAGE_SIZE}${updatedAtMinParam(options)}`,
+    );
+    const { smart_collections: smartCollections } = smart.body as { smart_collections: ShopifyCollection[] };
+    return { collections: smartCollections.map(normalizeCollection), nextCursor: smart.nextCursor ? `smart:${smart.nextCursor}` : null };
+  }
+
+  /**
+   * Product-collection membership (Shopify's `Collect` resource) — its own
+   * shop-wide paginated endpoint, unrelated to a specific collection page
+   * (doc 20 — collections' "Required customer/order relationships"
+   * equivalent for products). No `updatedAtMinParam`: Collect has no
+   * `updated_at` field to filter on — a link either exists or doesn't.
+   */
+  async fetchCollects(credentials: Record<string, string>, cursor?: string): Promise<CollectPage> {
+    const { body, nextCursor } = await this.fetchPage(credentials, cursor, `collects.json?limit=${COLLECTS_PAGE_SIZE}`);
+    const { collects } = body as { collects: ShopifyCollect[] };
+
+    return { collects: collects.map(normalizeCollect), nextCursor };
+  }
+
+  /**
    * Verifies Shopify's `X-Shopify-Hmac-Sha256` header: base64(HMAC-SHA256(
    * rawBody, secret)) — the exact check Shopify's own webhook docs specify.
    * `secret` is whatever the merchant pasted as `credentials.webhookSecret`
@@ -232,9 +310,10 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
    * Shopify puts the event topic and delivery id in headers, not the
    * body — unlike the REST list endpoints, a webhook payload is just the
    * bare resource. Only the create/update topics for customers, products,
-   * orders, and fulfillments are recognized (doc 21 — "process only
-   * relevant events"); everything else, including deletes, is out of this
-   * part's scope.
+   * orders, fulfillments, and collections are recognized (doc 21 —
+   * "process only relevant events"); everything else, including deletes
+   * and Collect (no `collects/*` topic exists — see CollectionService's
+   * doc comment), is out of this part's scope.
    */
   parseWebhookEvent(rawBody: string, headers: Record<string, string>): ParsedWebhookEvent | null {
     const topic = headers['x-shopify-topic'];
@@ -257,10 +336,12 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
           ? { resource, data: normalizeProduct(raw as ShopifyProduct) }
           : resource === 'order'
             ? { resource, data: normalizeOrder(raw as ShopifyOrder) }
-            : {
-                resource,
-                data: { ...normalizeFulfillment(raw as ShopifyFulfillment), orderExternalId: String((raw as ShopifyFulfillment).order_id) },
-              };
+            : resource === 'fulfillment'
+              ? {
+                  resource,
+                  data: { ...normalizeFulfillment(raw as ShopifyFulfillment), orderExternalId: String((raw as ShopifyFulfillment).order_id) },
+                }
+              : { resource, data: normalizeCollection(raw as ShopifyCollection) };
 
     // Present on every delivery since 2022, but derive a stable fallback
     // rather than reject an otherwise-valid, signature-verified delivery.
@@ -312,7 +393,7 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
 }
 
 /** Recognized webhook topics → the commerce resource they normalize to (doc 21 — "process only relevant events"). */
-const SHOPIFY_WEBHOOK_TOPICS: Record<string, 'customer' | 'product' | 'order' | 'fulfillment'> = {
+const SHOPIFY_WEBHOOK_TOPICS: Record<string, 'customer' | 'product' | 'order' | 'fulfillment' | 'collection'> = {
   'customers/create': 'customer',
   'customers/update': 'customer',
   'products/create': 'product',
@@ -321,6 +402,9 @@ const SHOPIFY_WEBHOOK_TOPICS: Record<string, 'customer' | 'product' | 'order' | 
   'orders/updated': 'order',
   'fulfillments/create': 'fulfillment',
   'fulfillments/update': 'fulfillment',
+  // Unified across CustomCollection/SmartCollection — same bare payload shape either way (doc 21 — "process only relevant events").
+  'collections/create': 'collection',
+  'collections/update': 'collection',
 };
 
 /** Shared with fetchCustomers (list) and the customers/* webhooks (single record) — same Shopify payload shape either way. */
@@ -408,6 +492,23 @@ function normalizeRefund(refund: ShopifyRefund): NormalizedRefund {
       orderLineItemExternalId: item.line_item_id !== null ? String(item.line_item_id) : null,
       quantity: item.quantity,
     })),
+  };
+}
+
+/** Shared with fetchCollections (both phases) and the collections/* webhooks (same bare shape for CustomCollection/SmartCollection either way). */
+function normalizeCollection(collection: ShopifyCollection): NormalizedCollection {
+  return {
+    externalId: String(collection.id),
+    title: collection.title,
+    sourceUpdatedAt: new Date(collection.updated_at),
+  };
+}
+
+function normalizeCollect(collect: ShopifyCollect): NormalizedCollect {
+  return {
+    externalId: String(collect.id),
+    collectionExternalId: String(collect.collection_id),
+    productExternalId: String(collect.product_id),
   };
 }
 

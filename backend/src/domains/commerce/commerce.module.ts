@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { CustomerService } from './customer.service';
 import { ProductService } from './product.service';
 import { OrderService } from './order.service';
+import { CollectionService } from './collection.service';
 
 /**
  * Owns normalized commerce data (doc 22 — Commerce data area): customers,
@@ -13,7 +14,7 @@ import { OrderService } from './order.service';
  * all written by Integration's import pipeline.
  */
 @Module({
-  providers: [CustomerService, ProductService, OrderService],
-  exports: [CustomerService, ProductService, OrderService],
+  providers: [CustomerService, ProductService, OrderService, CollectionService],
+  exports: [CustomerService, ProductService, OrderService, CollectionService],
 })
 export class CommerceModule {}

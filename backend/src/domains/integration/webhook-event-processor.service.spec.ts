@@ -5,6 +5,7 @@ import type { DatabaseService } from '../../database/database.service';
 import type { CustomerService } from '../commerce/customer.service';
 import type { ProductService } from '../commerce/product.service';
 import type { OrderService } from '../commerce/order.service';
+import type { CollectionService } from '../commerce/collection.service';
 import type { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 
 function makeChain() {
@@ -25,15 +26,17 @@ function makeProcessor() {
     upsertMany: vi.fn(async () => ({ ordersWritten: 1, lineItemsWritten: 0 })),
     upsertFulfillments: vi.fn(async () => 1),
   } as unknown as OrderService;
+  const collectionService = { upsertMany: vi.fn(async () => 1) } as unknown as CollectionService;
   const logger = { error: vi.fn() } as unknown as StructuredLoggerService;
 
   return {
-    processor: new WebhookEventProcessorService(database, customerService, productService, orderService, logger),
+    processor: new WebhookEventProcessorService(database, customerService, productService, orderService, collectionService, logger),
     client,
     updateChain,
     customerService,
     productService,
     orderService,
+    collectionService,
     logger,
   };
 }
@@ -94,6 +97,15 @@ describe('WebhookEventProcessorService', () => {
     await processor.handleWebhookReceived(makeReceivedEvent({ resource: 'fulfillment', data: fulfillment }));
 
     expect(orderService.upsertFulfillments).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', [fulfillment]);
+  });
+
+  it('applies a collection resource event via CollectionService.upsertMany', async () => {
+    const { processor, collectionService } = makeProcessor();
+
+    const collection = { externalId: '10', title: 'Summer Sale', sourceUpdatedAt: new Date() };
+    await processor.handleWebhookReceived(makeReceivedEvent({ resource: 'collection', data: collection }));
+
+    expect(collectionService.upsertMany).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', [collection]);
   });
 
   it('does nothing when workspaceId/entityId are missing from the event envelope', async () => {

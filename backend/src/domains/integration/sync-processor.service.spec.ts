@@ -4,6 +4,7 @@ import type { DomainEvent } from '../../common/events/domain-event';
 import type { CustomerService } from '../commerce/customer.service';
 import type { ProductService } from '../commerce/product.service';
 import type { OrderService } from '../commerce/order.service';
+import type { CollectionService } from '../commerce/collection.service';
 import type { IntegrationService } from './integration.service';
 import type { ProviderRegistry } from './provider-registry.service';
 import type { CustomerPage, OrderPage, ProductPage, ProviderAdapter } from './provider-adapter.interface';
@@ -14,6 +15,10 @@ function makeProductService(): ProductService {
 
 function makeOrderService(): OrderService {
   return { upsertMany: vi.fn(async (_ws, _int, _p, orders) => ({ ordersWritten: orders.length, lineItemsWritten: 0 })) } as unknown as OrderService;
+}
+
+function makeCollectionService(): CollectionService {
+  return { upsertMany: vi.fn(async (_ws, _int, _p, collections) => collections.length) } as unknown as CollectionService;
 }
 
 function makeIntegrationService(overrides: Partial<Record<string, unknown>> = {}) {
@@ -54,6 +59,7 @@ describe('SyncProcessorService', () => {
       customerService,
       makeProductService(),
       makeOrderService(),
+      makeCollectionService(),
     );
 
     await processor.handleSyncRequested(makeEvent());
@@ -87,6 +93,7 @@ describe('SyncProcessorService', () => {
       customerService,
       makeProductService(),
       makeOrderService(),
+      makeCollectionService(),
     );
 
     await processor.handleSyncRequested(makeEvent());
@@ -130,6 +137,7 @@ describe('SyncProcessorService', () => {
       { upsertMany: vi.fn(async () => 0) } as unknown as CustomerService,
       productService,
       orderService,
+      makeCollectionService(),
     );
 
     await processor.handleSyncRequested(makeEvent());
@@ -152,12 +160,44 @@ describe('SyncProcessorService', () => {
       { upsertMany: vi.fn(async () => 0) } as unknown as CustomerService,
       productService,
       orderService,
+      makeCollectionService(),
     );
 
     await processor.handleSyncRequested(makeEvent());
 
     expect(productService.upsertMany).not.toHaveBeenCalled();
     expect(orderService.upsertMany).not.toHaveBeenCalled();
+    expect(integrationService.completeSync).toHaveBeenCalledWith('ws_1', 'shopify');
+  });
+
+  it('syncs collections (with updatedAtMin) but never collects — no updated_at field or webhook to key an incremental fetch off', async () => {
+    const fetchCustomers = vi.fn(async () => ({ customers: [], nextCursor: null }) as CustomerPage);
+    const collectionPage = { collections: [{ externalId: '10', title: 'Summer Sale', sourceUpdatedAt: null }], nextCursor: null };
+    const fetchCollections = vi.fn(async () => collectionPage);
+    const fetchCollects = vi.fn();
+    const registry = {
+      get: vi.fn(() => ({ fetchCustomers, fetchCollections, fetchCollects }) as unknown as ProviderAdapter),
+    } as unknown as ProviderRegistry;
+    const integrationService = makeIntegrationService();
+    const collectionService = makeCollectionService();
+    const processor = new SyncProcessorService(
+      registry,
+      integrationService as unknown as IntegrationService,
+      { upsertMany: vi.fn(async () => 0) } as unknown as CustomerService,
+      makeProductService(),
+      makeOrderService(),
+      collectionService,
+    );
+
+    await processor.handleSyncRequested(makeEvent());
+
+    expect(fetchCollections).toHaveBeenCalledWith(
+      { shopDomain: 'acme.myshopify.com', accessToken: 'shpat_x' },
+      undefined,
+      { updatedAtMin: new Date('2026-01-01T00:00:00.000Z') },
+    );
+    expect(collectionService.upsertMany).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', collectionPage.collections);
+    expect(fetchCollects).not.toHaveBeenCalled();
     expect(integrationService.completeSync).toHaveBeenCalledWith('ws_1', 'shopify');
   });
 
@@ -170,6 +210,7 @@ describe('SyncProcessorService', () => {
       { upsertMany: vi.fn() } as unknown as CustomerService,
       makeProductService(),
       makeOrderService(),
+      makeCollectionService(),
     );
 
     await processor.handleSyncRequested(makeEvent());
@@ -190,6 +231,7 @@ describe('SyncProcessorService', () => {
       { upsertMany: vi.fn() } as unknown as CustomerService,
       makeProductService(),
       makeOrderService(),
+      makeCollectionService(),
     );
 
     await processor.handleSyncRequested(makeEvent());
@@ -217,6 +259,7 @@ describe('SyncProcessorService', () => {
       customerService,
       makeProductService(),
       makeOrderService(),
+      makeCollectionService(),
     );
 
     await processor.handleSyncRequested(makeEvent());
@@ -234,6 +277,7 @@ describe('SyncProcessorService', () => {
       { upsertMany: vi.fn() } as unknown as CustomerService,
       makeProductService(),
       makeOrderService(),
+      makeCollectionService(),
     );
 
     await processor.handleSyncRequested(makeEvent({ workspaceId: undefined, entityId: undefined }));

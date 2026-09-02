@@ -9,6 +9,7 @@ import { StructuredLoggerService } from '../../common/logging/structured-logger.
 import { CustomerService } from '../commerce/customer.service';
 import { ProductService } from '../commerce/product.service';
 import { OrderService } from '../commerce/order.service';
+import { CollectionService } from '../commerce/collection.service';
 import { isWebhookResourceEvent, type WebhookResourceEvent } from './provider-adapter.interface';
 import type { IntegrationProvider } from './dto/connect-integration.schema';
 
@@ -45,6 +46,7 @@ export class WebhookEventProcessorService {
     private readonly customerService: CustomerService,
     private readonly productService: ProductService,
     private readonly orderService: OrderService,
+    private readonly collectionService: CollectionService,
     private readonly logger: StructuredLoggerService,
   ) {}
 
@@ -99,6 +101,9 @@ export class WebhookEventProcessorService {
         break;
       case 'fulfillment':
         await this.orderService.upsertFulfillments(workspaceId, integrationId, provider, [payload.data]);
+        break;
+      case 'collection':
+        await this.collectionService.upsertMany(workspaceId, integrationId, provider, [payload.data]);
         break;
     }
   }

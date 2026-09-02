@@ -2,6 +2,7 @@ import type { IntegrationProvider } from './dto/connect-integration.schema';
 import type { NormalizedCustomer } from '../commerce/customer.service';
 import type { NormalizedProduct } from '../commerce/product.service';
 import type { NormalizedFulfillment, NormalizedOrder } from '../commerce/order.service';
+import type { NormalizedCollect, NormalizedCollection } from '../commerce/collection.service';
 
 /** A webhook payload the adapter recognized and normalized (doc 21 — External → Internal Conversion). */
 export interface ParsedWebhookEvent {
@@ -22,7 +23,8 @@ export type WebhookResourceEvent =
   | { resource: 'customer'; data: NormalizedCustomer }
   | { resource: 'product'; data: NormalizedProduct }
   | { resource: 'order'; data: NormalizedOrder }
-  | { resource: 'fulfillment'; data: NormalizedFulfillment & { orderExternalId: string } };
+  | { resource: 'fulfillment'; data: NormalizedFulfillment & { orderExternalId: string } }
+  | { resource: 'collection'; data: NormalizedCollection };
 
 export function isWebhookResourceEvent(value: unknown): value is WebhookResourceEvent {
   return typeof value === 'object' && value !== null && 'resource' in value && 'data' in value;
@@ -45,6 +47,20 @@ export interface ProductPage {
 /** One page of a paginated order-import fetch (doc 20 — Initial Import: pagination). */
 export interface OrderPage {
   orders: NormalizedOrder[];
+  /** Opaque provider cursor for the next page, or null when this was the last page. */
+  nextCursor: string | null;
+}
+
+/** One page of a paginated collection-import fetch (doc 20 — Initial Import: pagination). */
+export interface CollectionPage {
+  collections: NormalizedCollection[];
+  /** Opaque provider cursor for the next page, or null when this was the last page. */
+  nextCursor: string | null;
+}
+
+/** One page of a paginated product-collection membership fetch (doc 20 — Initial Import: pagination). */
+export interface CollectPage {
+  collects: NormalizedCollect[];
   /** Opaque provider cursor for the next page, or null when this was the last page. */
   nextCursor: string | null;
 }
@@ -110,4 +126,15 @@ export interface ProviderAdapter {
 
   /** Same contract as `fetchCustomers`, for order/line-item data. */
   fetchOrders?(credentials: Record<string, string>, cursor?: string, options?: FetchOptions): Promise<OrderPage>;
+
+  /** Same contract as `fetchCustomers`, for collection data. */
+  fetchCollections?(credentials: Record<string, string>, cursor?: string, options?: FetchOptions): Promise<CollectionPage>;
+
+  /**
+   * Same contract as `fetchCustomers`, for product-collection membership
+   * links — its own top-level fetch, not embedded in `fetchCollections`'
+   * pages (doc 20 — "Required customer/order relationships" extends to
+   * this: collection membership needs both sides already imported).
+   */
+  fetchCollects?(credentials: Record<string, string>, cursor?: string, options?: FetchOptions): Promise<CollectPage>;
 }

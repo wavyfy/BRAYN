@@ -588,6 +588,111 @@ describe('ShopifyAdapter', () => {
     });
   });
 
+  describe('fetchCollections()', () => {
+    it('fetches custom_collections first, and stays in that phase while pages remain', async () => {
+      const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () =>
+        jsonResponse(
+          200,
+          { custom_collections: [{ id: 10, title: 'Summer Sale', updated_at: '2026-01-01T00:00:00Z' }] },
+          { link: '<https://acme.myshopify.com/admin/api/2024-10/custom_collections.json?page_info=abc>; rel="next"' },
+        ),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      const page = await adapter.fetchCollections({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
+
+      expect(page).toEqual({
+        collections: [{ externalId: '10', title: 'Summer Sale', sourceUpdatedAt: new Date('2026-01-01T00:00:00Z') }],
+        nextCursor: 'custom:https://acme.myshopify.com/admin/api/2024-10/custom_collections.json?page_info=abc',
+      });
+      expect(fetchMock.mock.calls[0][0]).toBe('https://acme.myshopify.com/admin/api/2024-10/custom_collections.json?limit=250');
+    });
+
+    it('continues custom_collections pagination when the cursor carries the custom: phase prefix', async () => {
+      const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => jsonResponse(200, { custom_collections: [] }));
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      await adapter.fetchCollections(
+        { shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' },
+        'custom:https://acme.myshopify.com/admin/api/2024-10/custom_collections.json?page_info=abc',
+      );
+
+      expect(fetchMock.mock.calls[0][0]).toBe('https://acme.myshopify.com/admin/api/2024-10/custom_collections.json?page_info=abc');
+    });
+
+    it('switches to smart_collections once custom_collections pages run out, in the same call', async () => {
+      const fetchMock = vi
+        .fn<(url: string) => Promise<Response>>()
+        .mockResolvedValueOnce(jsonResponse(200, { custom_collections: [{ id: 10, title: 'Summer Sale', updated_at: '2026-01-01T00:00:00Z' }] }))
+        .mockResolvedValueOnce(
+          jsonResponse(200, { smart_collections: [{ id: 20, title: 'Best Sellers', updated_at: '2026-01-02T00:00:00Z' }] }),
+        );
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      const page = await adapter.fetchCollections({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
+
+      expect(page.collections).toEqual([
+        { externalId: '10', title: 'Summer Sale', sourceUpdatedAt: new Date('2026-01-01T00:00:00Z') },
+        { externalId: '20', title: 'Best Sellers', sourceUpdatedAt: new Date('2026-01-02T00:00:00Z') },
+      ]);
+      expect(page.nextCursor).toBeNull();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[1][0]).toBe('https://acme.myshopify.com/admin/api/2024-10/smart_collections.json?limit=250');
+    });
+
+    it('continues smart_collections pagination when the cursor carries the smart: phase prefix', async () => {
+      const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => jsonResponse(200, { smart_collections: [] }));
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      const page = await adapter.fetchCollections(
+        { shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' },
+        'smart:https://acme.myshopify.com/admin/api/2024-10/smart_collections.json?page_info=xyz',
+      );
+
+      expect(fetchMock.mock.calls[0][0]).toBe('https://acme.myshopify.com/admin/api/2024-10/smart_collections.json?page_info=xyz');
+      expect(page.nextCursor).toBeNull();
+    });
+
+    it('appends updated_at_min to both custom and smart phase requests when options.updatedAtMin is given', async () => {
+      const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => jsonResponse(200, { custom_collections: [], smart_collections: [] }));
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      await adapter.fetchCollections({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, undefined, {
+        updatedAtMin: new Date('2026-01-01T00:00:00.000Z'),
+      });
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        'https://acme.myshopify.com/admin/api/2024-10/custom_collections.json?limit=250&updated_at_min=2026-01-01T00%3A00%3A00.000Z',
+      );
+      expect(fetchMock.mock.calls[1][0]).toBe(
+        'https://acme.myshopify.com/admin/api/2024-10/smart_collections.json?limit=250&updated_at_min=2026-01-01T00%3A00%3A00.000Z',
+      );
+    });
+  });
+
+  describe('fetchCollects()', () => {
+    it('fetches the shop-wide collects list and normalizes each membership link', async () => {
+      const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () =>
+        jsonResponse(200, { collects: [{ id: 500, collection_id: 10, product_id: 55 }] }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      const page = await adapter.fetchCollects({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
+
+      expect(page).toEqual({
+        collects: [{ externalId: '500', collectionExternalId: '10', productExternalId: '55' }],
+        nextCursor: null,
+      });
+      expect(fetchMock.mock.calls[0][0]).toBe('https://acme.myshopify.com/admin/api/2024-10/collects.json?limit=250');
+    });
+  });
+
   describe('parseWebhookEvent()', () => {
     it('normalizes a customers/update delivery, using the X-Shopify-Webhook-Id header as the dedupe key', () => {
       const adapter = new ShopifyAdapter(makeRegistry());
@@ -712,6 +817,33 @@ describe('ShopifyAdapter', () => {
       });
 
       expect(result?.payload).toMatchObject({ resource: 'fulfillment', data: { externalId: '7002', orderExternalId: '901', shipmentStatus: 'delivered' } });
+    });
+
+    it('normalizes a collections/create delivery — same bare shape for custom and smart collections', () => {
+      const adapter = new ShopifyAdapter(makeRegistry());
+      const rawBody = JSON.stringify({ id: 10, title: 'Summer Sale', updated_at: '2026-01-01T00:00:00Z' });
+
+      const result = adapter.parseWebhookEvent(rawBody, {
+        'x-shopify-topic': 'collections/create',
+        'x-shopify-webhook-id': 'wh_evt_6',
+      });
+
+      expect(result?.payload).toEqual({
+        resource: 'collection',
+        data: { externalId: '10', title: 'Summer Sale', sourceUpdatedAt: new Date('2026-01-01T00:00:00Z') },
+      });
+    });
+
+    it('recognizes collections/update the same way as collections/create', () => {
+      const adapter = new ShopifyAdapter(makeRegistry());
+      const rawBody = JSON.stringify({ id: 11, title: 'Best Sellers', updated_at: '2026-01-02T00:00:00Z' });
+
+      const result = adapter.parseWebhookEvent(rawBody, {
+        'x-shopify-topic': 'collections/update',
+        'x-shopify-webhook-id': 'wh_evt_7',
+      });
+
+      expect(result?.payload).toMatchObject({ resource: 'collection', data: { externalId: '11', title: 'Best Sellers' } });
     });
 
     it('returns null for an unrecognized topic (e.g. a delete event) — doc 21 "process only relevant events"', () => {

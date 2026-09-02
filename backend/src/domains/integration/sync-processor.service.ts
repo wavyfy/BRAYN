@@ -4,6 +4,7 @@ import type { DomainEvent } from '../../common/events/domain-event';
 import { CustomerService } from '../commerce/customer.service';
 import { ProductService } from '../commerce/product.service';
 import { OrderService } from '../commerce/order.service';
+import { CollectionService } from '../commerce/collection.service';
 import { IntegrationService } from './integration.service';
 import { ProviderRegistry } from './provider-registry.service';
 import type { IntegrationProvider } from './dto/connect-integration.schema';
@@ -43,6 +44,7 @@ export class SyncProcessorService {
     private readonly customerService: CustomerService,
     private readonly productService: ProductService,
     private readonly orderService: OrderService,
+    private readonly collectionService: CollectionService,
   ) {}
 
   @OnEvent('integration.sync.requested')
@@ -73,6 +75,15 @@ export class SyncProcessorService {
       if (adapter.fetchOrders) {
         await this.syncOrders(adapter, credentials, workspaceId, integrationId, provider, options);
       }
+      if (adapter.fetchCollections) {
+        await this.syncCollections(adapter, credentials, workspaceId, integrationId, provider, options);
+      }
+      // Collect (membership) is deliberately not synced incrementally: no
+      // `updated_at` field to filter on and no webhook (see
+      // CollectionService's doc comment), so re-fetching it every sync pass
+      // would mean re-walking the whole shop-wide list every time. Left to
+      // reconciliation, the heavier full-recheck mechanism doc 06 already
+      // distinguishes sync from.
 
       await this.integrationService.completeSync(workspaceId, provider);
     } catch (error) {
@@ -124,6 +135,22 @@ export class SyncProcessorService {
     do {
       const page = await adapter.fetchOrders!(credentials, cursor, options);
       await this.orderService.upsertMany(workspaceId, integrationId, provider, page.orders);
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+  }
+
+  private async syncCollections(
+    adapter: ProviderAdapter,
+    credentials: Record<string, string>,
+    workspaceId: string,
+    integrationId: string,
+    provider: IntegrationProvider,
+    options: FetchOptions,
+  ): Promise<void> {
+    let cursor: string | undefined;
+    do {
+      const page = await adapter.fetchCollections!(credentials, cursor, options);
+      await this.collectionService.upsertMany(workspaceId, integrationId, provider, page.collections);
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
   }

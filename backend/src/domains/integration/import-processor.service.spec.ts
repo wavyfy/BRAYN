@@ -4,6 +4,7 @@ import type { DomainEvent } from '../../common/events/domain-event';
 import type { CustomerService } from '../commerce/customer.service';
 import type { ProductService } from '../commerce/product.service';
 import type { OrderService } from '../commerce/order.service';
+import type { CollectionService } from '../commerce/collection.service';
 import type { ImportRunService } from './import-run.service';
 import type { IntegrationService } from './integration.service';
 import type { ProviderRegistry } from './provider-registry.service';
@@ -15,6 +16,13 @@ function makeProductService(): ProductService {
 
 function makeOrderService(): OrderService {
   return { upsertMany: vi.fn(async (_ws, _int, _p, orders) => ({ ordersWritten: orders.length, lineItemsWritten: 0 })) } as unknown as OrderService;
+}
+
+function makeCollectionService(): CollectionService {
+  return {
+    upsertMany: vi.fn(async (_ws, _int, _p, collections) => collections.length),
+    upsertCollects: vi.fn(async (_ws, _int, _p, collects) => collects.length),
+  } as unknown as CollectionService;
 }
 
 function makeEvent(overrides: Partial<DomainEvent<{ provider: 'shopify'; runId: string }>> = {}) {
@@ -62,6 +70,7 @@ describe('ImportProcessorService', () => {
       customerService,
       makeProductService(),
       makeOrderService(),
+      makeCollectionService(),
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -97,6 +106,7 @@ describe('ImportProcessorService', () => {
       customerService,
       makeProductService(),
       makeOrderService(),
+      makeCollectionService(),
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -124,6 +134,7 @@ describe('ImportProcessorService', () => {
       customerService,
       makeProductService(),
       makeOrderService(),
+      makeCollectionService(),
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -160,6 +171,7 @@ describe('ImportProcessorService', () => {
       customerService,
       makeProductService(),
       makeOrderService(),
+      makeCollectionService(),
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -201,6 +213,7 @@ describe('ImportProcessorService', () => {
       customerService,
       productService,
       makeOrderService(),
+      makeCollectionService(),
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -236,6 +249,7 @@ describe('ImportProcessorService', () => {
       customerService,
       productService,
       makeOrderService(),
+      makeCollectionService(),
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -289,6 +303,7 @@ describe('ImportProcessorService', () => {
       customerService,
       productService,
       orderService,
+      makeCollectionService(),
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -323,11 +338,91 @@ describe('ImportProcessorService', () => {
       customerService,
       makeProductService(),
       orderService,
+      makeCollectionService(),
     );
 
     await processor.handleImportRequested(makeEvent());
 
     expect(orderService.upsertMany).not.toHaveBeenCalled();
+    expect(importRunService.completeImportRun).toHaveBeenCalledWith('run_1');
+  });
+
+  it('imports collections, then collects, last of all — after orders', async () => {
+    const callOrder: string[] = [];
+    const fetchCustomers = vi.fn(async () => {
+      callOrder.push('customers');
+      return { customers: [], nextCursor: null } as CustomerPage;
+    });
+    const fetchProducts = vi.fn(async () => {
+      callOrder.push('products');
+      return { products: [], nextCursor: null } as ProductPage;
+    });
+    const fetchOrders = vi.fn(async () => {
+      callOrder.push('orders');
+      return { orders: [], nextCursor: null } as OrderPage;
+    });
+    const collectionPage = { collections: [{ externalId: '10', title: 'Summer Sale', sourceUpdatedAt: null }], nextCursor: null };
+    const collectPage = { collects: [{ externalId: '500', collectionExternalId: '10', productExternalId: '55' }], nextCursor: null };
+    const fetchCollections = vi.fn(async () => {
+      callOrder.push('collections');
+      return collectionPage;
+    });
+    const fetchCollects = vi.fn(async () => {
+      callOrder.push('collects');
+      return collectPage;
+    });
+    const registry = {
+      get: vi.fn(() => ({ fetchCustomers, fetchProducts, fetchOrders, fetchCollections, fetchCollects }) as unknown as ProviderAdapter),
+    } as unknown as ProviderRegistry;
+    const importRunService = {
+      recordProgress: vi.fn(async () => undefined),
+      completeImportRun: vi.fn(async () => undefined),
+      failImportRun: vi.fn(async () => undefined),
+    } as unknown as ImportRunService;
+    const integrationService = { getCredentials: vi.fn(async () => credentials) } as unknown as IntegrationService;
+    const collectionService = makeCollectionService();
+    const processor = new ImportProcessorService(
+      registry,
+      importRunService,
+      integrationService,
+      { upsertMany: vi.fn(async () => 0) } as unknown as CustomerService,
+      makeProductService(),
+      makeOrderService(),
+      collectionService,
+    );
+
+    await processor.handleImportRequested(makeEvent());
+
+    expect(callOrder).toEqual(['customers', 'products', 'orders', 'collections', 'collects']);
+    expect(collectionService.upsertMany).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', collectionPage.collections);
+    expect(collectionService.upsertCollects).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', collectPage.collects);
+    expect(importRunService.completeImportRun).toHaveBeenCalledWith('run_1');
+  });
+
+  it('skips collections/collects import entirely when the adapter does not support them', async () => {
+    const fetchCustomers = vi.fn(async () => ({ customers: [], nextCursor: null }) as CustomerPage);
+    const registry = { get: vi.fn(() => ({ fetchCustomers }) as unknown as ProviderAdapter) } as unknown as ProviderRegistry;
+    const importRunService = {
+      recordProgress: vi.fn(async () => undefined),
+      completeImportRun: vi.fn(async () => undefined),
+      failImportRun: vi.fn(async () => undefined),
+    } as unknown as ImportRunService;
+    const integrationService = { getCredentials: vi.fn(async () => credentials) } as unknown as IntegrationService;
+    const collectionService = makeCollectionService();
+    const processor = new ImportProcessorService(
+      registry,
+      importRunService,
+      integrationService,
+      { upsertMany: vi.fn(async () => 0) } as unknown as CustomerService,
+      makeProductService(),
+      makeOrderService(),
+      collectionService,
+    );
+
+    await processor.handleImportRequested(makeEvent());
+
+    expect(collectionService.upsertMany).not.toHaveBeenCalled();
+    expect(collectionService.upsertCollects).not.toHaveBeenCalled();
     expect(importRunService.completeImportRun).toHaveBeenCalledWith('run_1');
   });
 });

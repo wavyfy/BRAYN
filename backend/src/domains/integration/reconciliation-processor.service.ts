@@ -4,6 +4,7 @@ import type { DomainEvent } from '../../common/events/domain-event';
 import { CustomerService } from '../commerce/customer.service';
 import { ProductService } from '../commerce/product.service';
 import { OrderService } from '../commerce/order.service';
+import { CollectionService } from '../commerce/collection.service';
 import { ReconciliationRunService } from './reconciliation-run.service';
 import { IntegrationService } from './integration.service';
 import { ProviderRegistry } from './provider-registry.service';
@@ -53,6 +54,7 @@ export class ReconciliationProcessorService {
     private readonly customerService: CustomerService,
     private readonly productService: ProductService,
     private readonly orderService: OrderService,
+    private readonly collectionService: CollectionService,
   ) {}
 
   @OnEvent('integration.reconciliation.requested')
@@ -85,7 +87,14 @@ export class ReconciliationProcessorService {
         counts = await this.reconcileProducts(adapter, credentials, workspaceId, integrationId, provider, runId, counts);
       }
       if (adapter.fetchOrders) {
-        await this.reconcileOrders(adapter, credentials, workspaceId, integrationId, provider, runId, counts);
+        counts = await this.reconcileOrders(adapter, credentials, workspaceId, integrationId, provider, runId, counts);
+      }
+      if (adapter.fetchCollections) {
+        counts = await this.reconcileCollections(adapter, credentials, workspaceId, integrationId, provider, runId, counts);
+      }
+      // Depends on both products and collections already being reconciled above.
+      if (adapter.fetchCollects) {
+        await this.reconcileCollects(adapter, credentials, workspaceId, integrationId, provider, runId, counts);
       }
 
       await this.reconciliationRunService.completeReconciliationRun(runId);
@@ -209,6 +218,87 @@ export class ReconciliationProcessorService {
 
       checked += page.orders.length;
       found += discrepancies;
+      cursor = page.nextCursor ?? undefined;
+      await this.reconciliationRunService.recordProgress(runId, {
+        recordsChecked: checked,
+        discrepanciesFound: found,
+        discrepanciesRepaired: repaired,
+      });
+    } while (cursor);
+
+    return { checked, found, repaired };
+  }
+
+  private async reconcileCollections(
+    adapter: ProviderAdapter,
+    credentials: Record<string, string>,
+    workspaceId: string,
+    integrationId: string,
+    provider: IntegrationProvider,
+    runId: string,
+    start: ReconcileCounts,
+  ): Promise<ReconcileCounts> {
+    let cursor: string | undefined;
+    let { checked, found, repaired } = start;
+
+    do {
+      const page = await adapter.fetchCollections!(credentials, cursor);
+      const existing = await this.collectionService.findExistingUpdatedAt(
+        workspaceId,
+        provider,
+        page.collections.map((c) => c.externalId),
+      );
+      const discrepancies = page.collections.filter((c) => isDiscrepancy(existing.get(c.externalId), c.sourceUpdatedAt)).length;
+
+      try {
+        await this.collectionService.upsertMany(workspaceId, integrationId, provider, page.collections);
+        repaired += discrepancies;
+      } catch {
+        // Leave `found` counted but not repaired — mirrors ImportProcessorService's per-page failure tolerance.
+      }
+
+      checked += page.collections.length;
+      found += discrepancies;
+      cursor = page.nextCursor ?? undefined;
+      await this.reconciliationRunService.recordProgress(runId, {
+        recordsChecked: checked,
+        discrepanciesFound: found,
+        discrepanciesRepaired: repaired,
+      });
+    } while (cursor);
+
+    return { checked, found, repaired };
+  }
+
+  /**
+   * Collect has no `sourceUpdatedAt` to compare (see CollectionService's
+   * doc comment — a membership link either exists or doesn't), so this
+   * can't distinguish missing-vs-already-correct the way the other
+   * reconcile* methods do. `found` isn't incremented — everything checked
+   * here is simply re-applied idempotently.
+   */
+  private async reconcileCollects(
+    adapter: ProviderAdapter,
+    credentials: Record<string, string>,
+    workspaceId: string,
+    integrationId: string,
+    provider: IntegrationProvider,
+    runId: string,
+    start: ReconcileCounts,
+  ): Promise<ReconcileCounts> {
+    let cursor: string | undefined;
+    let { checked, repaired } = start;
+    const { found } = start;
+
+    do {
+      const page = await adapter.fetchCollects!(credentials, cursor);
+      try {
+        repaired += await this.collectionService.upsertCollects(workspaceId, integrationId, provider, page.collects);
+      } catch {
+        // Leave this page's collects uncounted as repaired — mirrors ImportProcessorService's per-page failure tolerance.
+      }
+
+      checked += page.collects.length;
       cursor = page.nextCursor ?? undefined;
       await this.reconciliationRunService.recordProgress(runId, {
         recordsChecked: checked,

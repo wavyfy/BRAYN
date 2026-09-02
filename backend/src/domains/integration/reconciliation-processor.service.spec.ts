@@ -4,6 +4,7 @@ import type { DomainEvent } from '../../common/events/domain-event';
 import type { CustomerService } from '../commerce/customer.service';
 import type { ProductService } from '../commerce/product.service';
 import type { OrderService } from '../commerce/order.service';
+import type { CollectionService } from '../commerce/collection.service';
 import type { ReconciliationRunService } from './reconciliation-run.service';
 import type { IntegrationService } from './integration.service';
 import type { ProviderRegistry } from './provider-registry.service';
@@ -29,6 +30,14 @@ function makeOrderService(): OrderService {
     findExistingUpdatedAt: vi.fn(async () => new Map()),
     upsertMany: vi.fn(async (_ws, _int, _p, orders) => ({ ordersWritten: orders.length, lineItemsWritten: 0 })),
   } as unknown as OrderService;
+}
+
+function makeCollectionService(): CollectionService {
+  return {
+    findExistingUpdatedAt: vi.fn(async () => new Map()),
+    upsertMany: vi.fn(async (_ws, _int, _p, collections) => collections.length),
+    upsertCollects: vi.fn(async (_ws, _int, _p, collects) => collects.length),
+  } as unknown as CollectionService;
 }
 
 function makeEvent(overrides: Partial<DomainEvent<{ provider: 'shopify'; runId: string }>> = {}) {
@@ -67,6 +76,7 @@ describe('ReconciliationProcessorService', () => {
       customerService,
       makeProductService(),
       makeOrderService(),
+      makeCollectionService(),
     );
 
     await processor.handleReconciliationRequested(makeEvent());
@@ -100,6 +110,7 @@ describe('ReconciliationProcessorService', () => {
       customerService,
       makeProductService(),
       makeOrderService(),
+      makeCollectionService(),
     );
 
     await processor.handleReconciliationRequested(makeEvent());
@@ -132,6 +143,7 @@ describe('ReconciliationProcessorService', () => {
       customerService,
       makeProductService(),
       makeOrderService(),
+      makeCollectionService(),
     );
 
     await processor.handleReconciliationRequested(makeEvent());
@@ -155,6 +167,7 @@ describe('ReconciliationProcessorService', () => {
       customerService,
       makeProductService(),
       makeOrderService(),
+      makeCollectionService(),
     );
 
     await processor.handleReconciliationRequested(makeEvent());
@@ -178,6 +191,7 @@ describe('ReconciliationProcessorService', () => {
       customerService,
       makeProductService(),
       makeOrderService(),
+      makeCollectionService(),
     );
 
     await processor.handleReconciliationRequested(makeEvent());
@@ -208,6 +222,7 @@ describe('ReconciliationProcessorService', () => {
       customerService,
       makeProductService(),
       makeOrderService(),
+      makeCollectionService(),
     );
 
     await processor.handleReconciliationRequested(makeEvent());
@@ -264,6 +279,7 @@ describe('ReconciliationProcessorService', () => {
       customerService,
       productService,
       orderService,
+      makeCollectionService(),
     );
 
     await processor.handleReconciliationRequested(makeEvent());
@@ -294,6 +310,7 @@ describe('ReconciliationProcessorService', () => {
       customerService,
       productService,
       orderService,
+      makeCollectionService(),
     );
 
     await processor.handleReconciliationRequested(makeEvent());
@@ -301,5 +318,82 @@ describe('ReconciliationProcessorService', () => {
     expect(productService.upsertMany).not.toHaveBeenCalled();
     expect(orderService.upsertMany).not.toHaveBeenCalled();
     expect(reconciliationRunService.completeReconciliationRun).toHaveBeenCalledWith('run_1');
+  });
+
+  it('reconciles collections, then collects, last of all — after orders', async () => {
+    const callOrder: string[] = [];
+    const fetchCustomers = vi.fn(async () => {
+      callOrder.push('customers');
+      return { customers: [], nextCursor: null } as CustomerPage;
+    });
+    const fetchProducts = vi.fn(async () => {
+      callOrder.push('products');
+      return { products: [], nextCursor: null } as ProductPage;
+    });
+    const fetchOrders = vi.fn(async () => {
+      callOrder.push('orders');
+      return { orders: [], nextCursor: null } as OrderPage;
+    });
+    const collectionPage = { collections: [{ externalId: '10', title: 'Summer Sale', sourceUpdatedAt: new Date('2026-01-02T00:00:00Z') }], nextCursor: null };
+    const collectPage = { collects: [{ externalId: '500', collectionExternalId: '10', productExternalId: '55' }], nextCursor: null };
+    const fetchCollections = vi.fn(async () => {
+      callOrder.push('collections');
+      return collectionPage;
+    });
+    const fetchCollects = vi.fn(async () => {
+      callOrder.push('collects');
+      return collectPage;
+    });
+    const registry = {
+      get: vi.fn(() => ({ fetchCustomers, fetchProducts, fetchOrders, fetchCollections, fetchCollects }) as unknown as ProviderAdapter),
+    } as unknown as ProviderRegistry;
+    const reconciliationRunService = makeReconciliationRunService();
+    const integrationService = { getCredentials: vi.fn(async () => credentials) } as unknown as IntegrationService;
+    const collectionService = makeCollectionService();
+    const processor = new ReconciliationProcessorService(
+      registry,
+      reconciliationRunService as unknown as ReconciliationRunService,
+      integrationService,
+      { findExistingUpdatedAt: vi.fn(async () => new Map()), upsertMany: vi.fn(async () => 0) } as unknown as CustomerService,
+      makeProductService(),
+      makeOrderService(),
+      collectionService,
+    );
+
+    await processor.handleReconciliationRequested(makeEvent());
+
+    expect(callOrder).toEqual(['customers', 'products', 'orders', 'collections', 'collects']);
+    expect(collectionService.upsertMany).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', collectionPage.collections);
+    expect(collectionService.upsertCollects).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', collectPage.collects);
+    expect(reconciliationRunService.completeReconciliationRun).toHaveBeenCalledWith('run_1');
+  });
+
+  it('counts a collect page as checked/repaired without a discrepancy count — Collect has no sourceUpdatedAt to compare', async () => {
+    const fetchCustomers = vi.fn(async () => ({ customers: [], nextCursor: null }) as CustomerPage);
+    const collectPage = { collects: [{ externalId: '500', collectionExternalId: '10', productExternalId: '55' }], nextCursor: null };
+    const fetchCollects = vi.fn(async () => collectPage);
+    const registry = {
+      get: vi.fn(() => ({ fetchCustomers, fetchCollects }) as unknown as ProviderAdapter),
+    } as unknown as ProviderRegistry;
+    const reconciliationRunService = makeReconciliationRunService();
+    const integrationService = { getCredentials: vi.fn(async () => credentials) } as unknown as IntegrationService;
+    const collectionService = makeCollectionService();
+    const processor = new ReconciliationProcessorService(
+      registry,
+      reconciliationRunService as unknown as ReconciliationRunService,
+      integrationService,
+      { findExistingUpdatedAt: vi.fn(async () => new Map()), upsertMany: vi.fn(async () => 0) } as unknown as CustomerService,
+      makeProductService(),
+      makeOrderService(),
+      collectionService,
+    );
+
+    await processor.handleReconciliationRequested(makeEvent());
+
+    expect(reconciliationRunService.recordProgress).toHaveBeenLastCalledWith('run_1', {
+      recordsChecked: 1,
+      discrepanciesFound: 0,
+      discrepanciesRepaired: 1,
+    });
   });
 });
