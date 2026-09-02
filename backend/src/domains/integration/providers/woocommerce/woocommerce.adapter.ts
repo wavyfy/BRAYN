@@ -1,7 +1,16 @@
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { Injectable, type OnModuleInit } from '@nestjs/common';
 import { ProviderError } from '../../../../common/errors/app-error';
 import { ProviderRegistry } from '../../provider-registry.service';
-import type { CustomerPage, FetchOptions, OrderPage, ProductPage, ProviderAdapter } from '../../provider-adapter.interface';
+import type {
+  CustomerPage,
+  FetchOptions,
+  OrderPage,
+  ParsedWebhookEvent,
+  ProductPage,
+  ProviderAdapter,
+  WebhookResourceEvent,
+} from '../../provider-adapter.interface';
 import type { NormalizedCustomer } from '../../../commerce/customer.service';
 import type { NormalizedProduct } from '../../../commerce/product.service';
 import type { NormalizedOrder } from '../../../commerce/order.service';
@@ -192,6 +201,68 @@ export class WooCommerceAdapter implements ProviderAdapter, OnModuleInit {
   }
 
   /**
+   * Verifies WooCommerce's `X-WC-Webhook-Signature` header:
+   * base64(HMAC-SHA256(rawBody, secret)) — same algorithm as Shopify's
+   * own webhook signature, just a different header name. `secret` is
+   * whatever the merchant pasted as `credentials.webhookSecret` (the
+   * secret shown when they create the webhook in WooCommerce Settings →
+   * Advanced → Webhooks, or via the Webhook REST resource).
+   */
+  verifyWebhookSignature(rawBody: string, headers: Record<string, string>, secret: string): boolean {
+    const signature = headers['x-wc-webhook-signature'];
+    if (!signature) {
+      return false;
+    }
+
+    const computed = createHmac('sha256', secret).update(rawBody, 'utf8').digest('base64');
+    const computedBuffer = Buffer.from(computed);
+    const signatureBuffer = Buffer.from(signature);
+    // timingSafeEqual throws on a length mismatch rather than returning false.
+    if (computedBuffer.length !== signatureBuffer.length) {
+      return false;
+    }
+
+    return timingSafeEqual(computedBuffer, signatureBuffer);
+  }
+
+  /**
+   * WooCommerce puts the topic in a header (`X-WC-Webhook-Topic`, e.g.
+   * `customer.updated`), and the body is "exactly the same as if
+   * requested via the REST API" — the same bare resource shape
+   * fetchCustomers/fetchProducts/fetchOrders already normalize, so this
+   * reuses those same normalize* functions. Only the create/update topics
+   * for customers, products, and orders are recognized (doc 21 —
+   * "process only relevant events"); deletes are out of this part's scope.
+   */
+  parseWebhookEvent(rawBody: string, headers: Record<string, string>): ParsedWebhookEvent | null {
+    const topic = headers['x-wc-webhook-topic'];
+    const resource = topic ? WOOCOMMERCE_WEBHOOK_TOPICS[topic] : undefined;
+    if (!resource) {
+      return null;
+    }
+
+    let raw: unknown;
+    try {
+      raw = JSON.parse(rawBody);
+    } catch {
+      return null;
+    }
+
+    const payload: WebhookResourceEvent =
+      resource === 'customer'
+        ? { resource, data: normalizeCustomer(raw as WooCommerceCustomer) }
+        : resource === 'product'
+          ? { resource, data: normalizeProduct(raw as WooCommerceProduct) }
+          : { resource, data: normalizeOrder(raw as WooCommerceOrder) };
+
+    // WooCommerce's own delivery-log id, but derive a stable fallback rather
+    // than reject an otherwise-valid, signature-verified delivery if it's absent.
+    const externalEventId = headers['x-wc-webhook-delivery-id'] ?? `${topic}:${createHash('sha256').update(rawBody).digest('hex')}`;
+
+    return { externalEventId, eventType: topic!, payload };
+  }
+
+  /**
    * Shared fetch+pagination for every resource page (doc 20 — Initial
    * Import: pagination). Unlike `verifyConnection`, a validation failure
    * here throws rather than returning false — credentials/storeUrl were
@@ -228,6 +299,16 @@ export class WooCommerceAdapter implements ProviderAdapter, OnModuleInit {
     return { body: await response.json(), nextCursor: parseNextCursor(response.headers.get('link')) };
   }
 }
+
+/** Recognized webhook topics → the commerce resource they normalize to (doc 21 — "process only relevant events"). */
+const WOOCOMMERCE_WEBHOOK_TOPICS: Record<string, 'customer' | 'product' | 'order'> = {
+  'customer.created': 'customer',
+  'customer.updated': 'customer',
+  'product.created': 'product',
+  'product.updated': 'product',
+  'order.created': 'order',
+  'order.updated': 'order',
+};
 
 /** Resolves and validates `storeUrl`; null on anything that should be treated as an ordinary rejection (see WooCommerceAdapter's doc comment). */
 function parseStoreUrl(storeUrl: string): URL | null {

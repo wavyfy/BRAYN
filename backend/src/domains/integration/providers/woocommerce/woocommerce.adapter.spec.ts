@@ -1,6 +1,11 @@
+import { createHash, createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WooCommerceAdapter } from './woocommerce.adapter';
 import type { ProviderRegistry } from '../../provider-registry.service';
+
+function sign(rawBody: string, secret: string) {
+  return createHmac('sha256', secret).update(rawBody, 'utf8').digest('base64');
+}
 
 function makeRegistry(): ProviderRegistry {
   return { register: vi.fn() } as unknown as ProviderRegistry;
@@ -453,6 +458,119 @@ describe('WooCommerceAdapter', () => {
       await expect(
         adapter.fetchOrders({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' }),
       ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+    });
+  });
+
+  describe('verifyWebhookSignature()', () => {
+    it('returns true for a correctly signed body', () => {
+      const adapter = new WooCommerceAdapter(makeRegistry());
+      const rawBody = '{"id":1}';
+      const signature = sign(rawBody, 'shhh');
+
+      expect(adapter.verifyWebhookSignature(rawBody, { 'x-wc-webhook-signature': signature }, 'shhh')).toBe(true);
+    });
+
+    it('returns false when the signature does not match', () => {
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      expect(adapter.verifyWebhookSignature('{"id":1}', { 'x-wc-webhook-signature': 'bogus==' }, 'shhh')).toBe(false);
+    });
+
+    it('returns false when the body was tampered with after signing', () => {
+      const adapter = new WooCommerceAdapter(makeRegistry());
+      const signature = sign('{"id":1}', 'shhh');
+
+      expect(adapter.verifyWebhookSignature('{"id":2}', { 'x-wc-webhook-signature': signature }, 'shhh')).toBe(false);
+    });
+
+    it('returns false when the signature header is missing', () => {
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      expect(adapter.verifyWebhookSignature('{"id":1}', {}, 'shhh')).toBe(false);
+    });
+  });
+
+  describe('parseWebhookEvent()', () => {
+    it('normalizes a customer.updated delivery, using the X-WC-Webhook-Delivery-ID header as the dedupe key', () => {
+      const adapter = new WooCommerceAdapter(makeRegistry());
+      const rawBody = JSON.stringify({
+        id: 1,
+        email: 'a@x.com',
+        first_name: 'Ada',
+        last_name: 'Lovelace',
+        date_modified_gmt: '2026-01-01T00:00:00',
+        billing: { phone: '555-1234' },
+      });
+
+      const result = adapter.parseWebhookEvent(rawBody, {
+        'x-wc-webhook-topic': 'customer.updated',
+        'x-wc-webhook-delivery-id': 'wh_evt_1',
+      });
+
+      expect(result).toEqual({
+        externalEventId: 'wh_evt_1',
+        eventType: 'customer.updated',
+        payload: {
+          resource: 'customer',
+          data: { externalId: '1', email: 'a@x.com', firstName: 'Ada', lastName: 'Lovelace', phone: '555-1234', sourceUpdatedAt: new Date('2026-01-01T00:00:00Z') },
+        },
+      });
+    });
+
+    it('derives a stable fallback event id when the delivery-id header is absent', () => {
+      const adapter = new WooCommerceAdapter(makeRegistry());
+      const rawBody = JSON.stringify({ id: 1, email: null, first_name: null, last_name: null, date_modified_gmt: null });
+
+      const result = adapter.parseWebhookEvent(rawBody, { 'x-wc-webhook-topic': 'customer.updated' });
+
+      expect(result?.externalEventId).toBe(`customer.updated:${createHash('sha256').update(rawBody).digest('hex')}`);
+    });
+
+    it('normalizes a product.created delivery via the same shape fetchProducts uses', () => {
+      const adapter = new WooCommerceAdapter(makeRegistry());
+      const rawBody = JSON.stringify({ id: 55, name: 'Tee', date_modified_gmt: '2026-01-01T00:00:00', sku: 'TEE-1', price: '19.99', stock_quantity: 8 });
+
+      const result = adapter.parseWebhookEvent(rawBody, {
+        'x-wc-webhook-topic': 'product.created',
+        'x-wc-webhook-delivery-id': 'wh_evt_2',
+      });
+
+      expect(result?.payload).toMatchObject({
+        resource: 'product',
+        data: { externalId: '55', title: 'Tee', variants: [{ externalId: '55', sku: 'TEE-1', price: '19.99', inventoryQuantity: 8 }] },
+      });
+    });
+
+    it('normalizes an order.updated delivery with a guest checkout (customer_id 0) as a null customerExternalId', () => {
+      const adapter = new WooCommerceAdapter(makeRegistry());
+      const rawBody = JSON.stringify({ id: 900, customer_id: 0, total: '19.99', date_modified_gmt: '2026-01-01T00:00:00', line_items: [] });
+
+      const result = adapter.parseWebhookEvent(rawBody, {
+        'x-wc-webhook-topic': 'order.updated',
+        'x-wc-webhook-delivery-id': 'wh_evt_3',
+      });
+
+      expect(result?.payload).toMatchObject({ resource: 'order', data: { externalId: '900', customerExternalId: null } });
+    });
+
+    it('returns null for an unrecognized topic (e.g. a delete event) — doc 21 "process only relevant events"', () => {
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      const result = adapter.parseWebhookEvent('{}', { 'x-wc-webhook-topic': 'customer.deleted' });
+
+      expect(result).toBeNull();
+    });
+
+    it('returns null when the topic header is missing entirely', () => {
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      expect(adapter.parseWebhookEvent('{}', {})).toBeNull();
+    });
+
+    it('returns null for unparseable JSON', () => {
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      expect(adapter.parseWebhookEvent('not json', { 'x-wc-webhook-topic': 'customer.updated' })).toBeNull();
     });
   });
 });
