@@ -1,7 +1,7 @@
 import { Injectable, type OnModuleInit } from '@nestjs/common';
 import { ProviderError } from '../../../../common/errors/app-error';
 import { ProviderRegistry } from '../../provider-registry.service';
-import type { CustomerPage, OrderPage, ProductPage, ProviderAdapter } from '../../provider-adapter.interface';
+import type { CustomerPage, FetchOptions, OrderPage, ProductPage, ProviderAdapter } from '../../provider-adapter.interface';
 import type { NormalizedCustomer } from '../../../commerce/customer.service';
 import type { NormalizedProduct } from '../../../commerce/product.service';
 import type { NormalizedOrder } from '../../../commerce/order.service';
@@ -123,10 +123,11 @@ export class WooCommerceAdapter implements ProviderAdapter, OnModuleInit {
    * WooCommerce returned in its previous response's `Link` header — same
    * "opaque provider-specific" cursor contract ShopifyAdapter uses.
    *
-   * `options.updatedAtMin` isn't applied: WooCommerce's customers list has
-   * no modified-since filter (only `after`/`before`, which filter by
-   * registration date, not `date_modified`) — incremental sync for this
-   * resource is deferred to a later part.
+   * `options.updatedAtMin` isn't applied: unlike products/orders below,
+   * WooCommerce's customers list has no modified-since filter at all
+   * (only `orderby=registered_date`, not a `date_modified` filter) — a
+   * "sync" of customers is necessarily a full re-fetch, not a true
+   * incremental one. Still safe: every apply is idempotent.
    */
   async fetchCustomers(credentials: Record<string, string>, cursor?: string): Promise<CustomerPage> {
     const { body, nextCursor } = await this.fetchPage(credentials, cursor, `customers?per_page=${CUSTOMERS_PAGE_SIZE}`);
@@ -152,9 +153,17 @@ export class WooCommerceAdapter implements ProviderAdapter, OnModuleInit {
    * ponytail: real per-variation import (`/products/{id}/variations`) is
    * deferred — add a dedicated fetch if a real variable-product catalog
    * demonstrates the approximation isn't good enough.
+   *
+   * Unlike fetchCustomers, `options.updatedAtMin` applies here — the
+   * products list supports `modified_after` (doc 06/20 — Incremental
+   * Synchronization).
    */
-  async fetchProducts(credentials: Record<string, string>, cursor?: string): Promise<ProductPage> {
-    const { body, nextCursor } = await this.fetchPage(credentials, cursor, `products?per_page=${PRODUCTS_PAGE_SIZE}`);
+  async fetchProducts(credentials: Record<string, string>, cursor?: string, options?: FetchOptions): Promise<ProductPage> {
+    const { body, nextCursor } = await this.fetchPage(
+      credentials,
+      cursor,
+      `products?per_page=${PRODUCTS_PAGE_SIZE}${modifiedAfterParam(options)}`,
+    );
     const products = body as WooCommerceProduct[];
 
     return { products: products.map(normalizeProduct), nextCursor };
@@ -167,9 +176,16 @@ export class WooCommerceAdapter implements ProviderAdapter, OnModuleInit {
    * Shopify, whose default excludes closed/cancelled orders) — passed
    * explicitly so a future WooCommerce default change can't silently
    * narrow BRAYN's import.
+   *
+   * Like fetchProducts, `options.updatedAtMin` applies — orders also
+   * support `modified_after`.
    */
-  async fetchOrders(credentials: Record<string, string>, cursor?: string): Promise<OrderPage> {
-    const { body, nextCursor } = await this.fetchPage(credentials, cursor, `orders?per_page=${ORDERS_PAGE_SIZE}&status=any`);
+  async fetchOrders(credentials: Record<string, string>, cursor?: string, options?: FetchOptions): Promise<OrderPage> {
+    const { body, nextCursor } = await this.fetchPage(
+      credentials,
+      cursor,
+      `orders?per_page=${ORDERS_PAGE_SIZE}&status=any${modifiedAfterParam(options)}`,
+    );
     const orders = body as WooCommerceOrder[];
 
     return { orders: orders.map(normalizeOrder), nextCursor };
@@ -230,6 +246,17 @@ function parseStoreUrl(storeUrl: string): URL | null {
 /** Joins the WooCommerce REST API path onto `baseUrl`, preserving any subpath the merchant's store runs under (e.g. `https://example.com/shop`). */
 function resolveWcUrl(baseUrl: URL, relativePath: string): URL {
   return new URL(`${trimTrailingSlash(baseUrl.pathname)}/${WC_API_PATH}/${relativePath}`, baseUrl);
+}
+
+/**
+ * Only meaningful on the first page (`cursor` undefined) — `fetchPage`
+ * ignores the relative-path argument once a cursor exists, since the
+ * `Link` header's next-page URL already carries every original query
+ * param forward (doc 06/20 — Incremental Synchronization). Same
+ * convention as ShopifyAdapter's `updatedAtMinParam`.
+ */
+function modifiedAfterParam(options?: FetchOptions): string {
+  return options?.updatedAtMin ? `&modified_after=${encodeURIComponent(options.updatedAtMin.toISOString())}` : '';
 }
 
 function authHeader(consumerKey: string, consumerSecret: string): Record<string, string> {

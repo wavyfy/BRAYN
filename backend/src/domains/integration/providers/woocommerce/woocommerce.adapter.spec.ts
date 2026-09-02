@@ -289,6 +289,35 @@ describe('WooCommerceAdapter', () => {
       expect(page.nextCursor).toBe(nextUrl);
     });
 
+    it('appends modified_after on the first page when options.updatedAtMin is given', async () => {
+      const fetchMock = vi.fn<(url: string | URL) => Promise<Response>>(async () => jsonResponse(200, []));
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      await adapter.fetchProducts({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' }, undefined, {
+        updatedAtMin: new Date('2026-01-01T00:00:00.000Z'),
+      });
+
+      expect(String(fetchMock.mock.calls[0][0])).toBe(
+        'https://merchant-store.com/wp-json/wc/v3/products?per_page=100&modified_after=2026-01-01T00%3A00%3A00.000Z',
+      );
+    });
+
+    it('does not append modified_after when continuing pagination via a cursor', async () => {
+      const fetchMock = vi.fn<(url: string | URL) => Promise<Response>>(async () => jsonResponse(200, []));
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new WooCommerceAdapter(makeRegistry());
+      const cursor = 'https://merchant-store.com/wp-json/wc/v3/products?per_page=100&page=2';
+
+      await adapter.fetchProducts(
+        { storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' },
+        cursor,
+        { updatedAtMin: new Date('2026-01-01T00:00:00.000Z') },
+      );
+
+      expect(String(fetchMock.mock.calls[0][0])).toBe(cursor);
+    });
+
     it('throws ProviderError on a non-2xx response', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(500)));
       const adapter = new WooCommerceAdapter(makeRegistry());
@@ -401,6 +430,20 @@ describe('WooCommerceAdapter', () => {
       const page = await adapter.fetchOrders({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' });
 
       expect(page.nextCursor).toBe(nextUrl);
+    });
+
+    it('appends modified_after after status=any on the first page when options.updatedAtMin is given', async () => {
+      const fetchMock = vi.fn<(url: string | URL) => Promise<Response>>(async () => jsonResponse(200, []));
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      await adapter.fetchOrders({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' }, undefined, {
+        updatedAtMin: new Date('2026-01-01T00:00:00.000Z'),
+      });
+
+      expect(String(fetchMock.mock.calls[0][0])).toBe(
+        'https://merchant-store.com/wp-json/wc/v3/orders?per_page=100&status=any&modified_after=2026-01-01T00%3A00%3A00.000Z',
+      );
     });
 
     it('throws ProviderError on a non-2xx response', async () => {
