@@ -5,6 +5,7 @@ import { CustomerService } from '../commerce/customer.service';
 import { ProductService } from '../commerce/product.service';
 import { OrderService } from '../commerce/order.service';
 import { CollectionService } from '../commerce/collection.service';
+import { IdentityResolutionService } from '../identity-resolution/identity-resolution.service';
 import { IntegrationService } from './integration.service';
 import { ProviderRegistry } from './provider-registry.service';
 import type { IntegrationProvider } from './dto/connect-integration.schema';
@@ -45,6 +46,7 @@ export class SyncProcessorService {
     private readonly productService: ProductService,
     private readonly orderService: OrderService,
     private readonly collectionService: CollectionService,
+    private readonly identityResolutionService: IdentityResolutionService,
   ) {}
 
   @OnEvent('integration.sync.requested')
@@ -103,6 +105,7 @@ export class SyncProcessorService {
     do {
       const page = await adapter.fetchCustomers!(credentials, cursor, options);
       await this.customerService.upsertMany(workspaceId, integrationId, provider, page.customers);
+      await this.identityResolutionService.resolveMany(workspaceId, provider, page.customers.map((c) => c.externalId));
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
   }

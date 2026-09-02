@@ -5,6 +5,7 @@ import { CustomerService } from '../commerce/customer.service';
 import { ProductService } from '../commerce/product.service';
 import { OrderService } from '../commerce/order.service';
 import { CollectionService } from '../commerce/collection.service';
+import { IdentityResolutionService } from '../identity-resolution/identity-resolution.service';
 import { ReconciliationRunService } from './reconciliation-run.service';
 import { IntegrationService } from './integration.service';
 import { ProviderRegistry } from './provider-registry.service';
@@ -55,6 +56,7 @@ export class ReconciliationProcessorService {
     private readonly productService: ProductService,
     private readonly orderService: OrderService,
     private readonly collectionService: CollectionService,
+    private readonly identityResolutionService: IdentityResolutionService,
   ) {}
 
   @OnEvent('integration.reconciliation.requested')
@@ -129,6 +131,7 @@ export class ReconciliationProcessorService {
 
       try {
         await this.customerService.upsertMany(workspaceId, integrationId, provider, page.customers);
+        await this.identityResolutionService.resolveMany(workspaceId, provider, page.customers.map((c) => c.externalId));
         repaired += discrepancies;
       } catch {
         // Leave `found` counted but not repaired — mirrors ImportProcessorService's per-page failure tolerance.

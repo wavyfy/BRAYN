@@ -5,6 +5,7 @@ import type { CustomerService } from '../commerce/customer.service';
 import type { ProductService } from '../commerce/product.service';
 import type { OrderService } from '../commerce/order.service';
 import type { CollectionService } from '../commerce/collection.service';
+import type { IdentityResolutionService } from '../identity-resolution/identity-resolution.service';
 import type { ReconciliationRunService } from './reconciliation-run.service';
 import type { IntegrationService } from './integration.service';
 import type { ProviderRegistry } from './provider-registry.service';
@@ -40,6 +41,10 @@ function makeCollectionService(): CollectionService {
   } as unknown as CollectionService;
 }
 
+function makeIdentityResolutionService(): IdentityResolutionService {
+  return { resolveMany: vi.fn(async () => undefined) } as unknown as IdentityResolutionService;
+}
+
 function makeEvent(overrides: Partial<DomainEvent<{ provider: 'shopify'; runId: string }>> = {}) {
   return {
     id: 'evt_1',
@@ -69,6 +74,7 @@ describe('ReconciliationProcessorService', () => {
       findExistingUpdatedAt: vi.fn(async () => new Map()),
       upsertMany: vi.fn(async () => 1),
     } as unknown as CustomerService;
+    const identityResolutionService = makeIdentityResolutionService();
     const processor = new ReconciliationProcessorService(
       registry,
       reconciliationRunService as unknown as ReconciliationRunService,
@@ -77,11 +83,13 @@ describe('ReconciliationProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       makeCollectionService(),
+      identityResolutionService,
     );
 
     await processor.handleReconciliationRequested(makeEvent());
 
     expect(customerService.upsertMany).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', page.customers);
+    expect(identityResolutionService.resolveMany).toHaveBeenCalledWith('ws_1', 'shopify', page.customers.map((c) => c.externalId));
     expect(reconciliationRunService.recordProgress).toHaveBeenCalledWith('run_1', {
       recordsChecked: 1,
       discrepanciesFound: 1,
@@ -111,6 +119,7 @@ describe('ReconciliationProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleReconciliationRequested(makeEvent());
@@ -144,6 +153,7 @@ describe('ReconciliationProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleReconciliationRequested(makeEvent());
@@ -168,6 +178,7 @@ describe('ReconciliationProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleReconciliationRequested(makeEvent());
@@ -192,6 +203,7 @@ describe('ReconciliationProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleReconciliationRequested(makeEvent());
@@ -223,6 +235,7 @@ describe('ReconciliationProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleReconciliationRequested(makeEvent());
@@ -280,6 +293,7 @@ describe('ReconciliationProcessorService', () => {
       productService,
       orderService,
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleReconciliationRequested(makeEvent());
@@ -311,6 +325,7 @@ describe('ReconciliationProcessorService', () => {
       productService,
       orderService,
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleReconciliationRequested(makeEvent());
@@ -358,6 +373,7 @@ describe('ReconciliationProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       collectionService,
+      makeIdentityResolutionService(),
     );
 
     await processor.handleReconciliationRequested(makeEvent());
@@ -386,6 +402,7 @@ describe('ReconciliationProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       collectionService,
+      makeIdentityResolutionService(),
     );
 
     await processor.handleReconciliationRequested(makeEvent());

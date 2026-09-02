@@ -5,6 +5,7 @@ import type { CustomerService } from '../commerce/customer.service';
 import type { ProductService } from '../commerce/product.service';
 import type { OrderService } from '../commerce/order.service';
 import type { CollectionService } from '../commerce/collection.service';
+import type { IdentityResolutionService } from '../identity-resolution/identity-resolution.service';
 import type { IntegrationService } from './integration.service';
 import type { ProviderRegistry } from './provider-registry.service';
 import type { CustomerPage, OrderPage, ProductPage, ProviderAdapter } from './provider-adapter.interface';
@@ -19,6 +20,10 @@ function makeOrderService(): OrderService {
 
 function makeCollectionService(): CollectionService {
   return { upsertMany: vi.fn(async (_ws, _int, _p, collections) => collections.length) } as unknown as CollectionService;
+}
+
+function makeIdentityResolutionService(): IdentityResolutionService {
+  return { resolveMany: vi.fn(async () => undefined) } as unknown as IdentityResolutionService;
 }
 
 function makeIntegrationService(overrides: Partial<Record<string, unknown>> = {}) {
@@ -53,6 +58,7 @@ describe('SyncProcessorService', () => {
     const registry = { get: vi.fn(() => ({ fetchCustomers }) as unknown as ProviderAdapter) } as unknown as ProviderRegistry;
     const integrationService = makeIntegrationService();
     const customerService = { upsertMany: vi.fn(async () => 1) } as unknown as CustomerService;
+    const identityResolutionService = makeIdentityResolutionService();
     const processor = new SyncProcessorService(
       registry,
       integrationService as unknown as IntegrationService,
@@ -60,6 +66,7 @@ describe('SyncProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       makeCollectionService(),
+      identityResolutionService,
     );
 
     await processor.handleSyncRequested(makeEvent());
@@ -70,6 +77,7 @@ describe('SyncProcessorService', () => {
       { updatedAtMin: new Date('2026-01-01T00:00:00.000Z') },
     );
     expect(customerService.upsertMany).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', page.customers);
+    expect(identityResolutionService.resolveMany).toHaveBeenCalledWith('ws_1', 'shopify', page.customers.map((c) => c.externalId));
     expect(integrationService.completeSync).toHaveBeenCalledWith('ws_1', 'shopify');
     expect(integrationService.failSync).not.toHaveBeenCalled();
   });
@@ -94,6 +102,7 @@ describe('SyncProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleSyncRequested(makeEvent());
@@ -138,6 +147,7 @@ describe('SyncProcessorService', () => {
       productService,
       orderService,
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleSyncRequested(makeEvent());
@@ -161,6 +171,7 @@ describe('SyncProcessorService', () => {
       productService,
       orderService,
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleSyncRequested(makeEvent());
@@ -187,6 +198,7 @@ describe('SyncProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       collectionService,
+      makeIdentityResolutionService(),
     );
 
     await processor.handleSyncRequested(makeEvent());
@@ -211,6 +223,7 @@ describe('SyncProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleSyncRequested(makeEvent());
@@ -232,6 +245,7 @@ describe('SyncProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleSyncRequested(makeEvent());
@@ -260,6 +274,7 @@ describe('SyncProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleSyncRequested(makeEvent());
@@ -278,6 +293,7 @@ describe('SyncProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleSyncRequested(makeEvent({ workspaceId: undefined, entityId: undefined }));

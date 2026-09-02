@@ -6,6 +6,7 @@ import type { CustomerService } from '../commerce/customer.service';
 import type { ProductService } from '../commerce/product.service';
 import type { OrderService } from '../commerce/order.service';
 import type { CollectionService } from '../commerce/collection.service';
+import type { IdentityResolutionService } from '../identity-resolution/identity-resolution.service';
 import type { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 
 function makeChain() {
@@ -27,16 +28,26 @@ function makeProcessor() {
     upsertFulfillments: vi.fn(async () => 1),
   } as unknown as OrderService;
   const collectionService = { upsertMany: vi.fn(async () => 1) } as unknown as CollectionService;
+  const identityResolutionService = { resolveMany: vi.fn(async () => undefined) } as unknown as IdentityResolutionService;
   const logger = { error: vi.fn() } as unknown as StructuredLoggerService;
 
   return {
-    processor: new WebhookEventProcessorService(database, customerService, productService, orderService, collectionService, logger),
+    processor: new WebhookEventProcessorService(
+      database,
+      customerService,
+      productService,
+      orderService,
+      collectionService,
+      identityResolutionService,
+      logger,
+    ),
     client,
     updateChain,
     customerService,
     productService,
     orderService,
     collectionService,
+    identityResolutionService,
     logger,
   };
 }
@@ -52,12 +63,13 @@ function makeReceivedEvent(payload: unknown, overrides: { webhookEventId?: strin
 
 describe('WebhookEventProcessorService', () => {
   it('applies a customer resource event and marks the row processed', async () => {
-    const { processor, customerService, productService, orderService, updateChain } = makeProcessor();
+    const { processor, customerService, productService, orderService, identityResolutionService, updateChain } = makeProcessor();
 
     const customer = { externalId: '1', email: 'a@x.com', firstName: 'Ada', lastName: 'L', phone: null, sourceUpdatedAt: new Date() };
     await processor.handleWebhookReceived(makeReceivedEvent({ resource: 'customer', data: customer }));
 
     expect(customerService.upsertMany).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', [customer]);
+    expect(identityResolutionService.resolveMany).toHaveBeenCalledWith('ws_1', 'shopify', ['1']);
     expect(productService.upsertMany).not.toHaveBeenCalled();
     expect(orderService.upsertMany).not.toHaveBeenCalled();
     expect(updateChain.set).toHaveBeenCalledWith({ status: 'processed', error: null, retryCount: 0 });

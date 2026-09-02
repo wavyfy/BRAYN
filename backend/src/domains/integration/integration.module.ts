@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { WorkspaceModule } from '../workspace/workspace.module';
 import { CommerceModule } from '../commerce/commerce.module';
+import { IdentityResolutionModule } from '../identity-resolution/identity-resolution.module';
 import { IntegrationController } from './integration.controller';
 import { WebhookController } from './webhook.controller';
 import { IntegrationService } from './integration.service';
@@ -35,7 +36,7 @@ import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter'
  * duplicating the tenant-isolation/authorization boundary.
  */
 @Module({
-  imports: [WorkspaceModule, CommerceModule],
+  imports: [WorkspaceModule, CommerceModule, IdentityResolutionModule],
   controllers: [IntegrationController, WebhookController],
   providers: [
     IntegrationService,

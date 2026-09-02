@@ -5,6 +5,7 @@ import type { CustomerService } from '../commerce/customer.service';
 import type { ProductService } from '../commerce/product.service';
 import type { OrderService } from '../commerce/order.service';
 import type { CollectionService } from '../commerce/collection.service';
+import type { IdentityResolutionService } from '../identity-resolution/identity-resolution.service';
 import type { ImportRunService } from './import-run.service';
 import type { IntegrationService } from './integration.service';
 import type { ProviderRegistry } from './provider-registry.service';
@@ -23,6 +24,10 @@ function makeCollectionService(): CollectionService {
     upsertMany: vi.fn(async (_ws, _int, _p, collections) => collections.length),
     upsertCollects: vi.fn(async (_ws, _int, _p, collects) => collects.length),
   } as unknown as CollectionService;
+}
+
+function makeIdentityResolutionService(): IdentityResolutionService {
+  return { resolveMany: vi.fn(async () => undefined) } as unknown as IdentityResolutionService;
 }
 
 function makeEvent(overrides: Partial<DomainEvent<{ provider: 'shopify'; runId: string }>> = {}) {
@@ -63,6 +68,7 @@ describe('ImportProcessorService', () => {
     } as unknown as ImportRunService;
     const integrationService = { getCredentials: vi.fn(async () => credentials) } as unknown as IntegrationService;
     const customerService = { upsertMany: vi.fn(async (_ws, _int, _p, customers) => customers.length) } as unknown as CustomerService;
+    const identityResolutionService = makeIdentityResolutionService();
     const processor = new ImportProcessorService(
       registry,
       importRunService,
@@ -71,6 +77,7 @@ describe('ImportProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       makeCollectionService(),
+      identityResolutionService,
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -80,6 +87,8 @@ describe('ImportProcessorService', () => {
     expect(fetchCustomers).toHaveBeenNthCalledWith(2, credentials, 'cursor_2');
     expect(customerService.upsertMany).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', page1.customers);
     expect(customerService.upsertMany).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', page2.customers);
+    expect(identityResolutionService.resolveMany).toHaveBeenCalledWith('ws_1', 'shopify', ['1']);
+    expect(identityResolutionService.resolveMany).toHaveBeenCalledWith('ws_1', 'shopify', ['2']);
     expect(importRunService.recordProgress).toHaveBeenNthCalledWith(1, 'run_1', {
       recordsImported: 1,
       recordsFailed: 0,
@@ -107,6 +116,7 @@ describe('ImportProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -135,6 +145,7 @@ describe('ImportProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -172,6 +183,7 @@ describe('ImportProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -214,6 +226,7 @@ describe('ImportProcessorService', () => {
       productService,
       makeOrderService(),
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -250,6 +263,7 @@ describe('ImportProcessorService', () => {
       productService,
       makeOrderService(),
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -304,6 +318,7 @@ describe('ImportProcessorService', () => {
       productService,
       orderService,
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -339,6 +354,7 @@ describe('ImportProcessorService', () => {
       makeProductService(),
       orderService,
       makeCollectionService(),
+      makeIdentityResolutionService(),
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -389,6 +405,7 @@ describe('ImportProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       collectionService,
+      makeIdentityResolutionService(),
     );
 
     await processor.handleImportRequested(makeEvent());
@@ -417,6 +434,7 @@ describe('ImportProcessorService', () => {
       makeProductService(),
       makeOrderService(),
       collectionService,
+      makeIdentityResolutionService(),
     );
 
     await processor.handleImportRequested(makeEvent());
