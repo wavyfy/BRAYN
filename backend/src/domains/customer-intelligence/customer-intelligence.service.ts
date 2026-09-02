@@ -7,6 +7,7 @@ import { DatabaseService } from '../../database/database.service';
 import { NotFoundError } from '../../common/errors/app-error';
 
 const RECENT_ORDERS_LIMIT = 10;
+const ACTIVITY_LIMIT = 50;
 
 export interface CustomerProfile {
   email: string | null;
@@ -37,14 +38,31 @@ export interface CustomerRecord {
   commerceContext: CommerceContext;
 }
 
+/** A chronological event (doc08 — Customer Activity History: "Activity entries should reference their source/domain rather than becoming an independent source of business truth"). */
+export type ActivityEntry =
+  | { type: 'customer_created'; occurredAt: Date; provider: string; externalId: string }
+  | { type: 'order_placed'; occurredAt: Date; provider: string; externalId: string; totalPrice: string | null };
+
+interface SourceCustomerRow {
+  id: string;
+  provider: string;
+  externalId: string;
+  firstName: string | null;
+  lastName: string | null;
+  phone: string | null;
+  sourceUpdatedAt: Date | null;
+  createdAt: Date;
+}
+
 /**
  * Reads the Unified Customer Intelligence Record (doc 08 — "unifies
  * relevant customer information across Commerce, Website behaviour,
- * Conversations..."). Phase 1: Customer profile + Commerce context only —
- * Behavioural/Conversation context need domains that don't exist yet
- * (Website Behaviour, Conversation), and Activity History/preferences/
- * memory/summary are new concepts with no schema anywhere yet; each is
- * its own later part.
+ * Conversations..."). Phase 1: Customer profile + Commerce context +
+ * Activity History synthesized from Commerce events only — Behavioural/
+ * Conversation context need domains that don't exist yet (Website
+ * Behaviour, Conversation), and preferences/memory/summary have no real
+ * source yet (no AI, no conversations, no explicit merchant-input
+ * pipeline); each is its own later part once its source exists.
  *
  * Pure aggregation, no duplicate storage (doc08 — "Domain-owned data may
  * remain in its owning domain and be referenced rather than duplicated";
@@ -58,31 +76,8 @@ export class CustomerIntelligenceService {
   constructor(private readonly database: DatabaseService) {}
 
   async getCustomer(workspaceId: string, canonicalCustomerId: string): Promise<CustomerRecord> {
-    const [canonical] = await this.database.client
-      .select({ id: canonicalCustomers.id, primaryEmail: canonicalCustomers.primaryEmail })
-      .from(canonicalCustomers)
-      .where(and(eq(canonicalCustomers.workspaceId, workspaceId), eq(canonicalCustomers.id, canonicalCustomerId)))
-      .limit(1);
-
-    if (!canonical) {
-      throw new NotFoundError('No customer with that id exists in this workspace.');
-    }
-
-    const sourceRows = await this.database.client
-      .select({
-        id: commerceCustomers.id,
-        provider: commerceCustomers.provider,
-        externalId: commerceCustomers.externalId,
-        firstName: commerceCustomers.firstName,
-        lastName: commerceCustomers.lastName,
-        phone: commerceCustomers.phone,
-        sourceUpdatedAt: commerceCustomers.sourceUpdatedAt,
-      })
-      .from(commerceCustomers)
-      .where(
-        and(eq(commerceCustomers.workspaceId, workspaceId), eq(commerceCustomers.canonicalCustomerId, canonicalCustomerId)),
-      )
-      .orderBy(desc(commerceCustomers.sourceUpdatedAt));
+    const canonical = await this.requireCanonical(workspaceId, canonicalCustomerId);
+    const sourceRows = await this.getSourceRows(workspaceId, canonicalCustomerId);
 
     const profile: CustomerProfile = {
       email: canonical.primaryEmail,
@@ -100,6 +95,94 @@ export class CustomerIntelligenceService {
         sourceRows.map((row) => row.id),
       ),
     };
+  }
+
+  /**
+   * Chronological feed, newest first, capped at `ACTIVITY_LIMIT` (doc08
+   * Customer Activity History examples: "Customer creation, Orders,
+   * Purchases..."). Each `commerce_customers` row becomes one
+   * `customer_created` entry (there can be more than one — a customer
+   * connected across two providers has two source records, doc08 — each
+   * entry keeps its own source, not a merged fiction); each order becomes
+   * one `order_placed` entry, timed by the provider's own `sourceUpdatedAt`
+   * where available (falling back to BRAYN's own `createdAt`).
+   */
+  async getActivity(workspaceId: string, canonicalCustomerId: string): Promise<ActivityEntry[]> {
+    await this.requireCanonical(workspaceId, canonicalCustomerId);
+    const sourceRows = await this.getSourceRows(workspaceId, canonicalCustomerId);
+    const sourceCustomerIds = sourceRows.map((row) => row.id);
+
+    const orders =
+      sourceCustomerIds.length === 0
+        ? []
+        : await this.database.client
+            .select({
+              provider: commerceOrders.provider,
+              externalId: commerceOrders.externalId,
+              totalPrice: commerceOrders.totalPrice,
+              sourceUpdatedAt: commerceOrders.sourceUpdatedAt,
+              createdAt: commerceOrders.createdAt,
+            })
+            .from(commerceOrders)
+            .where(and(eq(commerceOrders.workspaceId, workspaceId), inArray(commerceOrders.customerId, sourceCustomerIds)));
+
+    const entries: ActivityEntry[] = [
+      ...sourceRows.map(
+        (row): ActivityEntry => ({
+          type: 'customer_created',
+          occurredAt: row.createdAt,
+          provider: row.provider,
+          externalId: row.externalId,
+        }),
+      ),
+      ...orders.map(
+        (order): ActivityEntry => ({
+          type: 'order_placed',
+          occurredAt: order.sourceUpdatedAt ?? order.createdAt,
+          provider: order.provider,
+          externalId: order.externalId,
+          totalPrice: order.totalPrice,
+        }),
+      ),
+    ];
+
+    return entries.sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime()).slice(0, ACTIVITY_LIMIT);
+  }
+
+  private async requireCanonical(
+    workspaceId: string,
+    canonicalCustomerId: string,
+  ): Promise<{ id: string; primaryEmail: string | null }> {
+    const [canonical] = await this.database.client
+      .select({ id: canonicalCustomers.id, primaryEmail: canonicalCustomers.primaryEmail })
+      .from(canonicalCustomers)
+      .where(and(eq(canonicalCustomers.workspaceId, workspaceId), eq(canonicalCustomers.id, canonicalCustomerId)))
+      .limit(1);
+
+    if (!canonical) {
+      throw new NotFoundError('No customer with that id exists in this workspace.');
+    }
+
+    return canonical;
+  }
+
+  private async getSourceRows(workspaceId: string, canonicalCustomerId: string): Promise<SourceCustomerRow[]> {
+    return this.database.client
+      .select({
+        id: commerceCustomers.id,
+        provider: commerceCustomers.provider,
+        externalId: commerceCustomers.externalId,
+        firstName: commerceCustomers.firstName,
+        lastName: commerceCustomers.lastName,
+        phone: commerceCustomers.phone,
+        sourceUpdatedAt: commerceCustomers.sourceUpdatedAt,
+        createdAt: commerceCustomers.createdAt,
+      })
+      .from(commerceCustomers)
+      .where(
+        and(eq(commerceCustomers.workspaceId, workspaceId), eq(commerceCustomers.canonicalCustomerId, canonicalCustomerId)),
+      )
+      .orderBy(desc(commerceCustomers.sourceUpdatedAt));
   }
 
   /** `sourceCustomerIds` are `commerce_customers.id` rows — `commerce_orders.customerId` links to those, not to the canonical customer directly. */

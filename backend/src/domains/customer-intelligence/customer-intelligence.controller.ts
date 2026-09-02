@@ -17,4 +17,9 @@ export class CustomerIntelligenceController {
   async get(@Param('workspaceId') workspaceId: string, @Param('canonicalCustomerId') canonicalCustomerId: string) {
     return this.customerIntelligenceService.getCustomer(workspaceId, canonicalCustomerId);
   }
+
+  @Get(':canonicalCustomerId/activity')
+  async getActivity(@Param('workspaceId') workspaceId: string, @Param('canonicalCustomerId') canonicalCustomerId: string) {
+    return this.customerIntelligenceService.getActivity(workspaceId, canonicalCustomerId);
+  }
 }

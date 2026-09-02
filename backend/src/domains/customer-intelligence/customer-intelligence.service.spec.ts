@@ -94,4 +94,71 @@ describe('CustomerIntelligenceService', () => {
       });
     });
   });
+
+  describe('getActivity()', () => {
+    it('throws NotFoundError when no canonical customer exists in this workspace', async () => {
+      const select = makeSelectQueue([[]]);
+      const service = new CustomerIntelligenceService({ client: { select } } as unknown as DatabaseService);
+
+      await expect(service.getActivity('ws_1', 'canon_missing')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    });
+
+    it('returns a customer_created entry per source row when there are no orders', async () => {
+      const createdAt = new Date('2026-01-01T00:00:00Z');
+      const select = makeSelectQueue([
+        [{ id: 'canon_1', primaryEmail: 'a@example.com' }],
+        [{ id: 'cc_1', provider: 'shopify', externalId: '900', firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, createdAt }],
+        [],
+      ]);
+      const service = new CustomerIntelligenceService({ client: { select } } as unknown as DatabaseService);
+
+      const result = await service.getActivity('ws_1', 'canon_1');
+
+      expect(result).toEqual([{ type: 'customer_created', occurredAt: createdAt, provider: 'shopify', externalId: '900' }]);
+    });
+
+    it('merges customer_created and order_placed entries, sorted newest first, timed by an order\'s sourceUpdatedAt over its createdAt', async () => {
+      const customerCreatedAt = new Date('2026-01-01T00:00:00Z');
+      const orderSourceUpdatedAt = new Date('2026-01-05T00:00:00Z');
+      const orderCreatedAt = new Date('2026-01-03T00:00:00Z');
+      const select = makeSelectQueue([
+        [{ id: 'canon_1', primaryEmail: 'a@example.com' }],
+        [{ id: 'cc_1', provider: 'shopify', externalId: '900', firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, createdAt: customerCreatedAt }],
+        [{ provider: 'shopify', externalId: '9001', totalPrice: '19.99', sourceUpdatedAt: orderSourceUpdatedAt, createdAt: orderCreatedAt }],
+      ]);
+      const service = new CustomerIntelligenceService({ client: { select } } as unknown as DatabaseService);
+
+      const result = await service.getActivity('ws_1', 'canon_1');
+
+      expect(result).toEqual([
+        { type: 'order_placed', occurredAt: orderSourceUpdatedAt, provider: 'shopify', externalId: '9001', totalPrice: '19.99' },
+        { type: 'customer_created', occurredAt: customerCreatedAt, provider: 'shopify', externalId: '900' },
+      ]);
+    });
+
+    it('falls back to an order\'s own createdAt when sourceUpdatedAt is null', async () => {
+      const customerCreatedAt = new Date('2026-01-01T00:00:00Z');
+      const orderCreatedAt = new Date('2026-01-02T00:00:00Z');
+      const select = makeSelectQueue([
+        [{ id: 'canon_1', primaryEmail: 'a@example.com' }],
+        [{ id: 'cc_1', provider: 'shopify', externalId: '900', firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, createdAt: customerCreatedAt }],
+        [{ provider: 'shopify', externalId: '9001', totalPrice: '19.99', sourceUpdatedAt: null, createdAt: orderCreatedAt }],
+      ]);
+      const service = new CustomerIntelligenceService({ client: { select } } as unknown as DatabaseService);
+
+      const result = await service.getActivity('ws_1', 'canon_1');
+
+      expect(result[0]).toMatchObject({ type: 'order_placed', occurredAt: orderCreatedAt });
+    });
+
+    it('skips the orders query entirely when there are no source rows', async () => {
+      const select = makeSelectQueue([[{ id: 'canon_1', primaryEmail: null }], []]);
+      const service = new CustomerIntelligenceService({ client: { select } } as unknown as DatabaseService);
+
+      const result = await service.getActivity('ws_1', 'canon_1');
+
+      expect(result).toEqual([]);
+      expect(select).toHaveBeenCalledTimes(2);
+    });
+  });
 });
