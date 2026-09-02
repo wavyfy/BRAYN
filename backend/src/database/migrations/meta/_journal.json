@@ -134,6 +134,13 @@
       "when": 1788341505772,
       "tag": "0018_kind_adam_destine",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1788341951042,
+      "tag": "0019_new_fenris",
+      "breakpoints": true
     }
   ]
 }
