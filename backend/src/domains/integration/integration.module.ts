@@ -14,6 +14,7 @@ import { ReconciliationRunService } from './reconciliation-run.service';
 import { ReconciliationProcessorService } from './reconciliation-processor.service';
 import { SyncProcessorService } from './sync-processor.service';
 import { ShopifyAdapter } from './providers/shopify/shopify.adapter';
+import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter';
 
 /**
  * Owns: external connections, provider auth, imports, sync, webhook intake,
@@ -48,6 +49,7 @@ import { ShopifyAdapter } from './providers/shopify/shopify.adapter';
     ReconciliationProcessorService,
     SyncProcessorService,
     ShopifyAdapter,
+    WooCommerceAdapter,
   ],
   exports: [
     IntegrationService,
