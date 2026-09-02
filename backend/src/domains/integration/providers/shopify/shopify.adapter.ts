@@ -4,6 +4,7 @@ import { ProviderError } from '../../../../common/errors/app-error';
 import { ProviderRegistry } from '../../provider-registry.service';
 import type {
   CustomerPage,
+  FetchOptions,
   OrderPage,
   ParsedWebhookEvent,
   ProductPage,
@@ -128,11 +129,11 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
    * param ourselves, and matches ImportRunService's "opaque provider-
    * specific" cursor contract.
    */
-  async fetchCustomers(credentials: Record<string, string>, cursor?: string): Promise<CustomerPage> {
+  async fetchCustomers(credentials: Record<string, string>, cursor?: string, options?: FetchOptions): Promise<CustomerPage> {
     const { body, nextCursor } = await this.fetchPage(
       credentials,
       cursor,
-      `customers.json?limit=${CUSTOMERS_PAGE_SIZE}`,
+      `customers.json?limit=${CUSTOMERS_PAGE_SIZE}${updatedAtMinParam(options)}`,
     );
     const { customers } = body as { customers: ShopifyCustomer[] };
 
@@ -140,8 +141,12 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
   }
 
   /** Same contract/pagination as fetchCustomers, for products and their variants (doc 20 Shopify Phase 1 Data). */
-  async fetchProducts(credentials: Record<string, string>, cursor?: string): Promise<ProductPage> {
-    const { body, nextCursor } = await this.fetchPage(credentials, cursor, `products.json?limit=${PRODUCTS_PAGE_SIZE}`);
+  async fetchProducts(credentials: Record<string, string>, cursor?: string, options?: FetchOptions): Promise<ProductPage> {
+    const { body, nextCursor } = await this.fetchPage(
+      credentials,
+      cursor,
+      `products.json?limit=${PRODUCTS_PAGE_SIZE}${updatedAtMinParam(options)}`,
+    );
     const { products } = body as { products: ShopifyProduct[] };
 
     return { products: products.map(normalizeProduct), nextCursor };
@@ -153,8 +158,12 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
    * default order listing excludes closed/cancelled orders — an initial
    * import needs the merchant's full order history.
    */
-  async fetchOrders(credentials: Record<string, string>, cursor?: string): Promise<OrderPage> {
-    const { body, nextCursor } = await this.fetchPage(credentials, cursor, `orders.json?limit=${ORDERS_PAGE_SIZE}&status=any`);
+  async fetchOrders(credentials: Record<string, string>, cursor?: string, options?: FetchOptions): Promise<OrderPage> {
+    const { body, nextCursor } = await this.fetchPage(
+      credentials,
+      cursor,
+      `orders.json?limit=${ORDERS_PAGE_SIZE}&status=any${updatedAtMinParam(options)}`,
+    );
     const { orders } = body as { orders: ShopifyOrder[] };
 
     return { orders: orders.map(normalizeOrder), nextCursor };
@@ -273,6 +282,16 @@ const SHOPIFY_WEBHOOK_TOPICS: Record<string, 'customer' | 'product' | 'order'> =
 };
 
 /** Shared with fetchCustomers (list) and the customers/* webhooks (single record) — same Shopify payload shape either way. */
+/**
+ * Only meaningful on the first page (`cursor` undefined) — `fetchPage`
+ * ignores the relative-URL argument once a cursor exists, since Shopify's
+ * own `Link` header already carries every original query param forward
+ * (doc 06/20 — Incremental Synchronization).
+ */
+function updatedAtMinParam(options?: FetchOptions): string {
+  return options?.updatedAtMin ? `&updated_at_min=${encodeURIComponent(options.updatedAtMin.toISOString())}` : '';
+}
+
 function normalizeCustomer(customer: ShopifyCustomer): NormalizedCustomer {
   return {
     externalId: String(customer.id),

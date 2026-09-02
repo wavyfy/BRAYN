@@ -170,6 +170,35 @@ describe('ShopifyAdapter', () => {
       expect(fetchMock.mock.calls[0][0]).toBe(cursor);
     });
 
+    it('appends updated_at_min on the first page when options.updatedAtMin is given (doc 06/20 — Incremental Synchronization)', async () => {
+      const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => jsonResponse(200, { customers: [] }));
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      await adapter.fetchCustomers(
+        { shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' },
+        undefined,
+        { updatedAtMin: new Date('2026-01-01T00:00:00.000Z') },
+      );
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        'https://acme.myshopify.com/admin/api/2024-10/customers.json?limit=250&updated_at_min=2026-01-01T00%3A00%3A00.000Z',
+      );
+    });
+
+    it('ignores options.updatedAtMin on a subsequent page — the cursor URL already carries it forward', async () => {
+      const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => jsonResponse(200, { customers: [] }));
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry());
+      const cursor = 'https://acme.myshopify.com/admin/api/2024-10/customers.json?page_info=abc123&updated_at_min=2026-01-01T00%3A00%3A00.000Z';
+
+      await adapter.fetchCustomers({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, cursor, {
+        updatedAtMin: new Date('2026-01-01T00:00:00.000Z'),
+      });
+
+      expect(fetchMock.mock.calls[0][0]).toBe(cursor);
+    });
+
     it('throws ProviderError on a non-2xx response', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401)));
       const adapter = new ShopifyAdapter(makeRegistry());
@@ -274,6 +303,20 @@ describe('ShopifyAdapter', () => {
       expect(page.nextCursor).toBe(nextUrl);
     });
 
+    it('appends updated_at_min on the first page when options.updatedAtMin is given', async () => {
+      const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => jsonResponse(200, { products: [] }));
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      await adapter.fetchProducts({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, undefined, {
+        updatedAtMin: new Date('2026-01-01T00:00:00.000Z'),
+      });
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        'https://acme.myshopify.com/admin/api/2024-10/products.json?limit=250&updated_at_min=2026-01-01T00%3A00%3A00.000Z',
+      );
+    });
+
     it('throws ProviderError on a non-2xx response', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401)));
       const adapter = new ShopifyAdapter(makeRegistry());
@@ -329,6 +372,20 @@ describe('ShopifyAdapter', () => {
       });
       const [url] = fetchMock.mock.calls[0];
       expect(url).toBe('https://acme.myshopify.com/admin/api/2024-10/orders.json?limit=250&status=any');
+    });
+
+    it('appends updated_at_min after status=any on the first page when options.updatedAtMin is given', async () => {
+      const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => jsonResponse(200, { orders: [] }));
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, undefined, {
+        updatedAtMin: new Date('2026-01-01T00:00:00.000Z'),
+      });
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        'https://acme.myshopify.com/admin/api/2024-10/orders.json?limit=250&status=any&updated_at_min=2026-01-01T00%3A00%3A00.000Z',
+      );
     });
 
     it('normalizes a null customer (guest checkout) and a null variant_id (custom line) to null', async () => {

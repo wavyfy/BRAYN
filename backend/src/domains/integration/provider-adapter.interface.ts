@@ -49,6 +49,17 @@ export interface OrderPage {
 }
 
 /**
+ * Scopes a fetch to records changed since a point in time (doc 06/20 —
+ * Incremental Synchronization: after initial import, poll for what a
+ * provider says changed rather than re-walking every record). Omitted
+ * entirely by initial-import and reconciliation callers, who want
+ * everything.
+ */
+export interface FetchOptions {
+  updatedAtMin?: Date;
+}
+
+/**
  * Contract every provider integration implements (doc 20 — Common
  * Integration Contract). Provider-specific API clients, payload shapes and
  * quirks stay behind this boundary so core BRAYN domains never depend on
@@ -91,11 +102,11 @@ export interface ProviderAdapter {
    * for the first page); must throw `ProviderError` for infrastructure
    * failures, same convention as `verifyConnection`.
    */
-  fetchCustomers?(credentials: Record<string, string>, cursor?: string): Promise<CustomerPage>;
+  fetchCustomers?(credentials: Record<string, string>, cursor?: string, options?: FetchOptions): Promise<CustomerPage>;
 
   /** Same contract as `fetchCustomers`, for product/variant data. */
-  fetchProducts?(credentials: Record<string, string>, cursor?: string): Promise<ProductPage>;
+  fetchProducts?(credentials: Record<string, string>, cursor?: string, options?: FetchOptions): Promise<ProductPage>;
 
   /** Same contract as `fetchCustomers`, for order/line-item data. */
-  fetchOrders?(credentials: Record<string, string>, cursor?: string): Promise<OrderPage>;
+  fetchOrders?(credentials: Record<string, string>, cursor?: string, options?: FetchOptions): Promise<OrderPage>;
 }

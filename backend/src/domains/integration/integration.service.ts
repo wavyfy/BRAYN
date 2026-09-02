@@ -17,6 +17,7 @@ import { ReconciliationRunService } from './reconciliation-run.service';
 import { ProviderRegistry } from './provider-registry.service';
 import type { ImportRequestedPayload } from './import-processor.service';
 import type { ReconciliationRequestedPayload } from './reconciliation-processor.service';
+import type { SyncRequestedPayload } from './sync-processor.service';
 import type { IntegrationProvider } from './dto/connect-integration.schema';
 import type { Env } from '../../config/env.schema';
 
@@ -166,6 +167,37 @@ export class IntegrationService {
       .set({ status: 'error', lastSyncError: error })
       .where(eq(integrations.id, existing.id))
       .returning(integrationPublicColumns);
+
+    return updated;
+  }
+
+  /**
+   * Starts a background incremental sync (doc 06/20 — Incremental
+   * Synchronization: the catch-up mechanism after webhooks, before
+   * reconciliation), same async-job shape as startInitialImport/
+   * startReconciliation. `startSync()` does the state transition and
+   * returns the row still carrying the *previous* `lastSyncedAt` — exactly
+   * the cursor SyncProcessorService needs to ask the provider "what
+   * changed since then." Falls back to `createdAt` (connect time) if this
+   * integration has never completed a sync.
+   */
+  async startIncrementalSync(workspaceId: string, provider: IntegrationProvider) {
+    const adapter = this.providerRegistry.get(provider);
+    if (!adapter.fetchCustomers) {
+      throw new ProviderError(`Provider "${provider}" does not support incremental synchronization.`);
+    }
+
+    const updated = await this.startSync(workspaceId, provider);
+    const updatedAtMin = updated.lastSyncedAt ?? updated.createdAt;
+
+    this.eventBus.emit(
+      createEvent<SyncRequestedPayload>({
+        type: 'integration.sync.requested',
+        workspaceId,
+        entityId: updated.id,
+        payload: { provider, updatedAtMin: updatedAtMin.toISOString() },
+      }),
+    );
 
     return updated;
   }

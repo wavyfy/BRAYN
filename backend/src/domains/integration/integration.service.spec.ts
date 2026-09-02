@@ -344,6 +344,81 @@ describe('IntegrationService', () => {
     });
   });
 
+  describe('startIncrementalSync()', () => {
+    it('starts a sync via startSync() and emits integration.sync.requested using the previous lastSyncedAt as the cursor', async () => {
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected', lastSyncedAt: new Date('2026-08-01T00:00:00Z') };
+      const syncing = { ...existing, status: 'syncing' };
+      const updateChain = makeChain([syncing]);
+      const client = { select: makeSelectQueue([[existing]]), update: vi.fn(() => updateChain) };
+      const eventBus = { emit: vi.fn() } as unknown as EventBus;
+      const service = new IntegrationService(
+        { client } as unknown as DatabaseService,
+        makeConfig(),
+        makeRegistry({ fetchCustomers: vi.fn() }),
+        makeImportRunService(),
+        makeReconciliationRunService(),
+        eventBus,
+      );
+
+      const result = await service.startIncrementalSync('ws_1', 'shopify');
+
+      expect(result).toEqual(syncing);
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'integration.sync.requested',
+          workspaceId: 'ws_1',
+          entityId: 'int_1',
+          payload: { provider: 'shopify', updatedAtMin: '2026-08-01T00:00:00.000Z' },
+        }),
+      );
+    });
+
+    it('falls back to createdAt as the cursor when this integration has never completed a sync', async () => {
+      const existing = {
+        id: 'int_1',
+        workspaceId: 'ws_1',
+        provider: 'shopify',
+        status: 'connected',
+        lastSyncedAt: null,
+        createdAt: new Date('2026-07-01T00:00:00Z'),
+      };
+      const updateChain = makeChain([{ ...existing, status: 'syncing' }]);
+      const client = { select: makeSelectQueue([[existing]]), update: vi.fn(() => updateChain) };
+      const eventBus = { emit: vi.fn() } as unknown as EventBus;
+      const service = new IntegrationService(
+        { client } as unknown as DatabaseService,
+        makeConfig(),
+        makeRegistry({ fetchCustomers: vi.fn() }),
+        makeImportRunService(),
+        makeReconciliationRunService(),
+        eventBus,
+      );
+
+      await service.startIncrementalSync('ws_1', 'shopify');
+
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        expect.objectContaining({ payload: { provider: 'shopify', updatedAtMin: '2026-07-01T00:00:00.000Z' } }),
+      );
+    });
+
+    it('throws ProviderError without starting a sync when the adapter does not support customer sync', async () => {
+      const eventBus = { emit: vi.fn() } as unknown as EventBus;
+      const client = { select: vi.fn() };
+      const service = new IntegrationService(
+        { client } as unknown as DatabaseService,
+        makeConfig(),
+        makeRegistry({}),
+        makeImportRunService(),
+        makeReconciliationRunService(),
+        eventBus,
+      );
+
+      await expect(service.startIncrementalSync('ws_1', 'shopify')).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+      expect(client.select).not.toHaveBeenCalled();
+      expect(eventBus.emit).not.toHaveBeenCalled();
+    });
+  });
+
   describe('setCredentials() / getCredentials()', () => {
     it('encrypts on set and decrypts back the same payload on get', async () => {
       const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected', credentials: null };

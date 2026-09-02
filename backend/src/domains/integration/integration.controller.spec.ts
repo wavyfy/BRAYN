@@ -55,6 +55,12 @@ describe('IntegrationController (e2e)', () => {
       provider,
       status: 'running',
     })),
+    startIncrementalSync: vi.fn(async (workspaceId: string, provider: string) => ({
+      id: 'int_1',
+      workspaceId,
+      provider,
+      status: 'syncing',
+    })),
   };
   const integrationHealthService = {
     getHealth: vi.fn(async (workspaceId: string, provider: string) => ({

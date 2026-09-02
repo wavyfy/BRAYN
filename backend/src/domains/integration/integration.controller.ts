@@ -89,6 +89,17 @@ export class IntegrationController {
     return this.importRunService.getLatestImportRun(workspaceId, provider);
   }
 
+  /** Starts a background incremental sync (doc 06/20 — Incremental Synchronization); poll via GET /integrations (status/lastSyncedAt/lastSyncError). */
+  @Post(':provider/sync')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @RequireWorkspaceRole('owner', 'admin')
+  async startSync(
+    @Param('workspaceId') workspaceId: string,
+    @Param('provider') provider: ConnectIntegrationInput['provider'],
+  ) {
+    return this.integrationService.startIncrementalSync(workspaceId, provider);
+  }
+
   /** Starts a manual reconciliation pass (doc 06/19 — Reconciliation); returns the run so the caller can poll it (doc 23 — Async Operations). */
   @Post(':provider/reconcile')
   @HttpCode(HttpStatus.ACCEPTED)
