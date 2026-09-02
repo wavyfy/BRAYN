@@ -34,6 +34,14 @@ function makeLineItemInsertChain(returned: { id: string; externalId: string }[] 
   return chain;
 }
 
+function makeFulfillmentInsertChain() {
+  const chain: Record<string, unknown> = {
+    values: vi.fn(() => chain),
+    onConflictDoUpdate: vi.fn(async () => undefined),
+  };
+  return chain;
+}
+
 const order: NormalizedOrder = {
   externalId: '900',
   customerExternalId: '1',
@@ -41,6 +49,7 @@ const order: NormalizedOrder = {
   sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
   lineItems: [{ externalId: '9001', variantExternalId: '901', quantity: 2, price: '9.99' }],
   refunds: [],
+  fulfillments: [],
 };
 
 describe('OrderService', () => {
@@ -51,7 +60,7 @@ describe('OrderService', () => {
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', []);
 
-      expect(result).toEqual({ ordersWritten: 0, lineItemsWritten: 0, refundsWritten: 0 });
+      expect(result).toEqual({ ordersWritten: 0, lineItemsWritten: 0, refundsWritten: 0, fulfillmentsWritten: 0 });
       expect(client.select).not.toHaveBeenCalled();
       expect(client.insert).not.toHaveBeenCalled();
     });
@@ -69,7 +78,7 @@ describe('OrderService', () => {
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [order]);
 
-      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 1, refundsWritten: 0 });
+      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 1, refundsWritten: 0, fulfillmentsWritten: 0 });
       expect(orderChain.values).toHaveBeenCalledWith([
         {
           workspaceId: 'ws_1',
@@ -131,7 +140,7 @@ describe('OrderService', () => {
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [order]);
 
-      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 0, refundsWritten: 0 });
+      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 0, refundsWritten: 0, fulfillmentsWritten: 0 });
       expect(insert).toHaveBeenCalledTimes(1);
     });
 
@@ -167,7 +176,7 @@ describe('OrderService', () => {
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [refundedOrder]);
 
-      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 1, refundsWritten: 1 });
+      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 1, refundsWritten: 1, fulfillmentsWritten: 0 });
       expect(refundChain.values).toHaveBeenCalledWith([
         {
           workspaceId: 'ws_1',
@@ -191,6 +200,114 @@ describe('OrderService', () => {
           quantity: 1,
         },
       ]);
+    });
+
+    it("writes an order's embedded fulfillments, linked to the just-upserted order", async () => {
+      const fulfilledOrder: NormalizedOrder = {
+        ...order,
+        fulfillments: [
+          {
+            externalId: '7001',
+            status: 'success',
+            trackingCompany: 'UPS',
+            trackingNumber: '1Z999',
+            trackingUrl: 'https://ups.com/track/1Z999',
+            shipmentStatus: 'in_transit',
+            sourceUpdatedAt: new Date('2026-01-03T00:00:00Z'),
+          },
+        ],
+      };
+      const orderChain = makeOrderInsertChain([{ id: 'order_1', externalId: '900' }]);
+      const lineItemChain = makeLineItemInsertChain([{ id: 'line_item_1', externalId: '9001' }]);
+      const fulfillmentChain = makeFulfillmentInsertChain();
+      const insert = vi.fn().mockReturnValueOnce(orderChain).mockReturnValueOnce(lineItemChain).mockReturnValueOnce(fulfillmentChain);
+      const select = makeSelectQueue([
+        [{ id: 'cust_1', externalId: '1' }],
+        [{ id: 'variant_1', externalId: '901' }],
+      ]);
+      const client = { select, insert };
+      const service = new OrderService({ client } as unknown as DatabaseService);
+
+      const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [fulfilledOrder]);
+
+      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 1, refundsWritten: 0, fulfillmentsWritten: 1 });
+      expect(fulfillmentChain.values).toHaveBeenCalledWith([
+        {
+          workspaceId: 'ws_1',
+          integrationId: 'int_1',
+          provider: 'shopify',
+          orderId: 'order_1',
+          externalId: '7001',
+          status: 'success',
+          trackingCompany: 'UPS',
+          trackingNumber: '1Z999',
+          trackingUrl: 'https://ups.com/track/1Z999',
+          shipmentStatus: 'in_transit',
+          sourceUpdatedAt: fulfilledOrder.fulfillments[0].sourceUpdatedAt,
+        },
+      ]);
+    });
+  });
+
+  describe('upsertFulfillments()', () => {
+    it('does nothing for an empty batch', async () => {
+      const client = { select: vi.fn(), insert: vi.fn() };
+      const service = new OrderService({ client } as unknown as DatabaseService);
+
+      const result = await service.upsertFulfillments('ws_1', 'int_1', 'shopify', []);
+
+      expect(result).toBe(0);
+      expect(client.select).not.toHaveBeenCalled();
+      expect(client.insert).not.toHaveBeenCalled();
+    });
+
+    it('resolves the order by external id itself, then writes the fulfillment', async () => {
+      const fulfillmentChain = makeFulfillmentInsertChain();
+      const insert = vi.fn().mockReturnValueOnce(fulfillmentChain);
+      const select = makeSelectQueue([[{ id: 'order_1', externalId: '900' }]]);
+      const client = { select, insert };
+      const service = new OrderService({ client } as unknown as DatabaseService);
+
+      const result = await service.upsertFulfillments('ws_1', 'int_1', 'shopify', [
+        {
+          externalId: '7001',
+          orderExternalId: '900',
+          status: 'success',
+          trackingCompany: 'UPS',
+          trackingNumber: '1Z999',
+          trackingUrl: 'https://ups.com/track/1Z999',
+          shipmentStatus: 'in_transit',
+          sourceUpdatedAt: new Date('2026-01-03T00:00:00Z'),
+        },
+      ]);
+
+      expect(result).toBe(1);
+      expect(fulfillmentChain.values).toHaveBeenCalledWith([
+        expect.objectContaining({ orderId: 'order_1', externalId: '7001' }),
+      ]);
+    });
+
+    it('skips a fulfillment whose order is not found (not yet imported)', async () => {
+      const insert = vi.fn();
+      const select = makeSelectQueue([[]]);
+      const client = { select, insert };
+      const service = new OrderService({ client } as unknown as DatabaseService);
+
+      const result = await service.upsertFulfillments('ws_1', 'int_1', 'shopify', [
+        {
+          externalId: '7001',
+          orderExternalId: 'not-imported-yet',
+          status: 'success',
+          trackingCompany: null,
+          trackingNumber: null,
+          trackingUrl: null,
+          shipmentStatus: null,
+          sourceUpdatedAt: null,
+        },
+      ]);
+
+      expect(result).toBe(0);
+      expect(insert).not.toHaveBeenCalled();
     });
   });
 

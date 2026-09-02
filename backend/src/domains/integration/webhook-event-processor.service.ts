@@ -97,6 +97,9 @@ export class WebhookEventProcessorService {
       case 'order':
         await this.orderService.upsertMany(workspaceId, integrationId, provider, [payload.data]);
         break;
+      case 'fulfillment':
+        await this.orderService.upsertFulfillments(workspaceId, integrationId, provider, [payload.data]);
+        break;
     }
   }
 }

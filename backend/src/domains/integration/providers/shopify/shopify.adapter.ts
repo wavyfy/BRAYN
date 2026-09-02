@@ -12,7 +12,7 @@ import type {
   WebhookResourceEvent,
 } from '../../provider-adapter.interface';
 import type { NormalizedCustomer } from '../../../commerce/customer.service';
-import type { NormalizedOrder, NormalizedRefund } from '../../../commerce/order.service';
+import type { NormalizedFulfillment, NormalizedOrder, NormalizedRefund } from '../../../commerce/order.service';
 import type { NormalizedProduct } from '../../../commerce/product.service';
 
 const SHOPIFY_API_VERSION = '2024-10';
@@ -72,6 +72,17 @@ interface ShopifyRefund {
   transactions: ShopifyRefundTransaction[];
 }
 
+interface ShopifyFulfillment {
+  id: number;
+  order_id: number;
+  status: string | null;
+  tracking_company: string | null;
+  tracking_number: string | null;
+  tracking_url: string | null;
+  shipment_status: string | null;
+  updated_at: string | null;
+}
+
 interface ShopifyOrder {
   id: number;
   customer: { id: number } | null;
@@ -80,6 +91,8 @@ interface ShopifyOrder {
   line_items: ShopifyLineItem[];
   /** Embedded, not a separate resource — Shopify has no top-level refunds list/webhook (doc 20 Shopify Phase 1 Data — "Refunds"). */
   refunds: ShopifyRefund[];
+  /** Embedded here too, in addition to its own `fulfillments/create`/`fulfillments/update` webhook topics — see normalizeFulfillment's doc comment. */
+  fulfillments: ShopifyFulfillment[];
 }
 
 /**
@@ -219,8 +232,9 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
    * Shopify puts the event topic and delivery id in headers, not the
    * body — unlike the REST list endpoints, a webhook payload is just the
    * bare resource. Only the create/update topics for customers, products,
-   * and orders are recognized (doc 21 — "process only relevant events");
-   * everything else, including deletes, is out of this part's scope.
+   * orders, and fulfillments are recognized (doc 21 — "process only
+   * relevant events"); everything else, including deletes, is out of this
+   * part's scope.
    */
   parseWebhookEvent(rawBody: string, headers: Record<string, string>): ParsedWebhookEvent | null {
     const topic = headers['x-shopify-topic'];
@@ -241,7 +255,12 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
         ? { resource, data: normalizeCustomer(raw as ShopifyCustomer) }
         : resource === 'product'
           ? { resource, data: normalizeProduct(raw as ShopifyProduct) }
-          : { resource, data: normalizeOrder(raw as ShopifyOrder) };
+          : resource === 'order'
+            ? { resource, data: normalizeOrder(raw as ShopifyOrder) }
+            : {
+                resource,
+                data: { ...normalizeFulfillment(raw as ShopifyFulfillment), orderExternalId: String((raw as ShopifyFulfillment).order_id) },
+              };
 
     // Present on every delivery since 2022, but derive a stable fallback
     // rather than reject an otherwise-valid, signature-verified delivery.
@@ -293,13 +312,15 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
 }
 
 /** Recognized webhook topics → the commerce resource they normalize to (doc 21 — "process only relevant events"). */
-const SHOPIFY_WEBHOOK_TOPICS: Record<string, 'customer' | 'product' | 'order'> = {
+const SHOPIFY_WEBHOOK_TOPICS: Record<string, 'customer' | 'product' | 'order' | 'fulfillment'> = {
   'customers/create': 'customer',
   'customers/update': 'customer',
   'products/create': 'product',
   'products/update': 'product',
   'orders/create': 'order',
   'orders/updated': 'order',
+  'fulfillments/create': 'fulfillment',
+  'fulfillments/update': 'fulfillment',
 };
 
 /** Shared with fetchCustomers (list) and the customers/* webhooks (single record) — same Shopify payload shape either way. */
@@ -354,6 +375,20 @@ function normalizeOrder(order: ShopifyOrder): NormalizedOrder {
       price: item.price,
     })),
     refunds: (order.refunds ?? []).map(normalizeRefund),
+    fulfillments: (order.fulfillments ?? []).map(normalizeFulfillment),
+  };
+}
+
+/** Shared with normalizeOrder's embedded `order.fulfillments[]` and the standalone fulfillments/* webhooks (same bare Shopify fulfillment shape either way). */
+function normalizeFulfillment(fulfillment: ShopifyFulfillment): NormalizedFulfillment {
+  return {
+    externalId: String(fulfillment.id),
+    status: fulfillment.status,
+    trackingCompany: fulfillment.tracking_company,
+    trackingNumber: fulfillment.tracking_number,
+    trackingUrl: fulfillment.tracking_url,
+    shipmentStatus: fulfillment.shipment_status,
+    sourceUpdatedAt: fulfillment.updated_at ? new Date(fulfillment.updated_at) : null,
   };
 }
 

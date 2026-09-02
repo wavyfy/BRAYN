@@ -254,7 +254,7 @@ describe('ImportProcessorService', () => {
       nextCursor: null,
     };
     const orderPage: OrderPage = {
-      orders: [{ externalId: '900', customerExternalId: '1', totalPrice: '19.99', sourceUpdatedAt: null, lineItems: [], refunds: [] }],
+      orders: [{ externalId: '900', customerExternalId: '1', totalPrice: '19.99', sourceUpdatedAt: null, lineItems: [], refunds: [], fulfillments: [] }],
       nextCursor: null,
     };
     const callOrder: string[] = [];

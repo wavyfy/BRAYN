@@ -367,6 +367,7 @@ describe('ShopifyAdapter', () => {
             sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
             lineItems: [{ externalId: '9001', variantExternalId: '901', quantity: 2, price: '9.99' }],
             refunds: [],
+            fulfillments: [],
           },
         ],
         nextCursor: null,
@@ -493,6 +494,53 @@ describe('ShopifyAdapter', () => {
       const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
 
       expect(page.orders[0].refunds).toEqual([]);
+      expect(page.orders[0].fulfillments).toEqual([]);
+    });
+
+    it("normalizes an order's embedded fulfillments", async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          jsonResponse(200, {
+            orders: [
+              {
+                id: 900,
+                customer: { id: 1 },
+                total_price: '19.99',
+                updated_at: '2026-01-01T00:00:00Z',
+                line_items: [],
+                fulfillments: [
+                  {
+                    id: 7001,
+                    order_id: 900,
+                    status: 'success',
+                    tracking_company: 'UPS',
+                    tracking_number: '1Z999',
+                    tracking_url: 'https://ups.com/track/1Z999',
+                    shipment_status: 'in_transit',
+                    updated_at: '2026-01-03T00:00:00Z',
+                  },
+                ],
+              },
+            ],
+          }),
+        ),
+      );
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
+
+      expect(page.orders[0].fulfillments).toEqual([
+        {
+          externalId: '7001',
+          status: 'success',
+          trackingCompany: 'UPS',
+          trackingNumber: '1Z999',
+          trackingUrl: 'https://ups.com/track/1Z999',
+          shipmentStatus: 'in_transit',
+          sourceUpdatedAt: new Date('2026-01-03T00:00:00Z'),
+        },
+      ]);
     });
 
     it('throws ProviderError and never calls fetch for a stored shopDomain outside myshopify.com — SSRF guard', async () => {
@@ -610,6 +658,60 @@ describe('ShopifyAdapter', () => {
       });
 
       expect(result?.payload).toMatchObject({ resource: 'order', data: { externalId: '900', customerExternalId: null } });
+    });
+
+    it('normalizes a fulfillments/create delivery — bare fulfillment plus order_id, no nested order', () => {
+      const adapter = new ShopifyAdapter(makeRegistry());
+      const rawBody = JSON.stringify({
+        id: 7001,
+        order_id: 900,
+        status: 'success',
+        tracking_company: 'UPS',
+        tracking_number: '1Z999',
+        tracking_url: 'https://ups.com/track/1Z999',
+        shipment_status: null,
+        updated_at: '2026-01-03T00:00:00Z',
+      });
+
+      const result = adapter.parseWebhookEvent(rawBody, {
+        'x-shopify-topic': 'fulfillments/create',
+        'x-shopify-webhook-id': 'wh_evt_4',
+      });
+
+      expect(result?.payload).toEqual({
+        resource: 'fulfillment',
+        data: {
+          externalId: '7001',
+          orderExternalId: '900',
+          status: 'success',
+          trackingCompany: 'UPS',
+          trackingNumber: '1Z999',
+          trackingUrl: 'https://ups.com/track/1Z999',
+          shipmentStatus: null,
+          sourceUpdatedAt: new Date('2026-01-03T00:00:00Z'),
+        },
+      });
+    });
+
+    it('recognizes fulfillments/update the same way as fulfillments/create', () => {
+      const adapter = new ShopifyAdapter(makeRegistry());
+      const rawBody = JSON.stringify({
+        id: 7002,
+        order_id: 901,
+        status: 'success',
+        tracking_company: null,
+        tracking_number: null,
+        tracking_url: null,
+        shipment_status: 'delivered',
+        updated_at: '2026-01-04T00:00:00Z',
+      });
+
+      const result = adapter.parseWebhookEvent(rawBody, {
+        'x-shopify-topic': 'fulfillments/update',
+        'x-shopify-webhook-id': 'wh_evt_5',
+      });
+
+      expect(result?.payload).toMatchObject({ resource: 'fulfillment', data: { externalId: '7002', orderExternalId: '901', shipmentStatus: 'delivered' } });
     });
 
     it('returns null for an unrecognized topic (e.g. a delete event) — doc 21 "process only relevant events"', () => {

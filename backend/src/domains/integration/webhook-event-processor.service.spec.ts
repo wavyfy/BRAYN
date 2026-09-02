@@ -21,7 +21,10 @@ function makeProcessor() {
   const database = { client } as unknown as DatabaseService;
   const customerService = { upsertMany: vi.fn(async () => 1) } as unknown as CustomerService;
   const productService = { upsertMany: vi.fn(async () => ({ productsWritten: 1, variantsWritten: 0 })) } as unknown as ProductService;
-  const orderService = { upsertMany: vi.fn(async () => ({ ordersWritten: 1, lineItemsWritten: 0 })) } as unknown as OrderService;
+  const orderService = {
+    upsertMany: vi.fn(async () => ({ ordersWritten: 1, lineItemsWritten: 0 })),
+    upsertFulfillments: vi.fn(async () => 1),
+  } as unknown as OrderService;
   const logger = { error: vi.fn() } as unknown as StructuredLoggerService;
 
   return {
@@ -73,6 +76,24 @@ describe('WebhookEventProcessorService', () => {
     await processor.handleWebhookReceived(makeReceivedEvent({ resource: 'order', data: order }));
 
     expect(orderService.upsertMany).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', [order]);
+  });
+
+  it('applies a fulfillment resource event via OrderService.upsertFulfillments', async () => {
+    const { processor, orderService } = makeProcessor();
+
+    const fulfillment = {
+      externalId: '7001',
+      orderExternalId: '900',
+      status: 'success',
+      trackingCompany: 'UPS',
+      trackingNumber: '1Z999',
+      trackingUrl: 'https://ups.com/track/1Z999',
+      shipmentStatus: 'in_transit',
+      sourceUpdatedAt: new Date(),
+    };
+    await processor.handleWebhookReceived(makeReceivedEvent({ resource: 'fulfillment', data: fulfillment }));
+
+    expect(orderService.upsertFulfillments).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', [fulfillment]);
   });
 
   it('does nothing when workspaceId/entityId are missing from the event envelope', async () => {

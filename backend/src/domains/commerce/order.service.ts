@@ -6,6 +6,7 @@ import { commerceOrderLineItems } from '../../database/schema/commerce-order-lin
 import { commerceProductVariants } from '../../database/schema/commerce-product-variants';
 import { commerceRefunds } from '../../database/schema/commerce-refunds';
 import { commerceRefundLineItems } from '../../database/schema/commerce-refund-line-items';
+import { commerceFulfillments } from '../../database/schema/commerce-fulfillments';
 import { DatabaseService } from '../../database/database.service';
 import type { IntegrationProvider } from '../integration/dto/connect-integration.schema';
 
@@ -33,6 +34,22 @@ export interface NormalizedRefund {
   lineItems: NormalizedRefundLineItem[];
 }
 
+/**
+ * A provider's fulfillment record. Embedded in `NormalizedOrder.fulfillments`
+ * when it arrives via order import/sync/reconciliation; carries its own
+ * `orderExternalId` when it arrives via a standalone fulfillment webhook —
+ * see OrderService.upsertFulfillments' doc comment.
+ */
+export interface NormalizedFulfillment {
+  externalId: string;
+  status: string | null;
+  trackingCompany: string | null;
+  trackingNumber: string | null;
+  trackingUrl: string | null;
+  shipmentStatus: string | null;
+  sourceUpdatedAt: Date | null;
+}
+
 /** A provider's order record, already mapped into BRAYN's shape (doc 06 — Normalization output). */
 export interface NormalizedOrder {
   externalId: string;
@@ -42,6 +59,7 @@ export interface NormalizedOrder {
   sourceUpdatedAt: Date | null;
   lineItems: NormalizedOrderLineItem[];
   refunds: NormalizedRefund[];
+  fulfillments: NormalizedFulfillment[];
 }
 
 /**
@@ -63,9 +81,9 @@ export class OrderService {
     integrationId: string,
     provider: IntegrationProvider,
     orders: NormalizedOrder[],
-  ): Promise<{ ordersWritten: number; lineItemsWritten: number; refundsWritten: number }> {
+  ): Promise<{ ordersWritten: number; lineItemsWritten: number; refundsWritten: number; fulfillmentsWritten: number }> {
     if (orders.length === 0) {
-      return { ordersWritten: 0, lineItemsWritten: 0, refundsWritten: 0 };
+      return { ordersWritten: 0, lineItemsWritten: 0, refundsWritten: 0, fulfillmentsWritten: 0 };
     }
 
     const customerIdByExternalId = await this.lookupIds(
@@ -156,7 +174,96 @@ export class OrderService {
       orderLineItemIdByExternalId,
     );
 
-    return { ordersWritten: orders.length, lineItemsWritten: lineItemValues.length, refundsWritten };
+    const fulfillmentRows = orders.flatMap((order) => {
+      const orderId = orderIdByExternalId.get(order.externalId);
+      if (!orderId) {
+        return [];
+      }
+      return order.fulfillments.map((fulfillment) => ({ ...fulfillment, orderId }));
+    });
+    const fulfillmentsWritten = await this.writeFulfillments(workspaceId, integrationId, provider, fulfillmentRows);
+
+    return { ordersWritten: orders.length, lineItemsWritten: lineItemValues.length, refundsWritten, fulfillmentsWritten };
+  }
+
+  /**
+   * Applies a standalone fulfillment webhook delivery (Shopify
+   * `fulfillments/create`/`fulfillments/update` — unlike refunds, these are
+   * their own webhook topics whose payload is the bare fulfillment plus
+   * `order_id`, not a nested order). Resolves the order by external id
+   * itself since, unlike `upsertMany`'s embedded case, no order was just
+   * fetched/applied alongside it.
+   */
+  async upsertFulfillments(
+    workspaceId: string,
+    integrationId: string,
+    provider: IntegrationProvider,
+    fulfillments: Array<NormalizedFulfillment & { orderExternalId: string }>,
+  ): Promise<number> {
+    if (fulfillments.length === 0) {
+      return 0;
+    }
+
+    const orderIdByExternalId = await this.lookupIds(
+      commerceOrders,
+      workspaceId,
+      provider,
+      fulfillments.map((f) => f.orderExternalId),
+    );
+
+    const rows = fulfillments.flatMap((fulfillment) => {
+      const orderId = orderIdByExternalId.get(fulfillment.orderExternalId);
+      if (!orderId) {
+        return [];
+      }
+      return [{ ...fulfillment, orderId }];
+    });
+
+    return this.writeFulfillments(workspaceId, integrationId, provider, rows);
+  }
+
+  private async writeFulfillments(
+    workspaceId: string,
+    integrationId: string,
+    provider: IntegrationProvider,
+    fulfillments: Array<NormalizedFulfillment & { orderId: string }>,
+  ): Promise<number> {
+    if (fulfillments.length === 0) {
+      return 0;
+    }
+
+    await this.database.client
+      .insert(commerceFulfillments)
+      .values(
+        fulfillments.map((fulfillment) => ({
+          workspaceId,
+          integrationId,
+          provider,
+          orderId: fulfillment.orderId,
+          externalId: fulfillment.externalId,
+          status: fulfillment.status,
+          trackingCompany: fulfillment.trackingCompany,
+          trackingNumber: fulfillment.trackingNumber,
+          trackingUrl: fulfillment.trackingUrl,
+          shipmentStatus: fulfillment.shipmentStatus,
+          sourceUpdatedAt: fulfillment.sourceUpdatedAt,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: [commerceFulfillments.workspaceId, commerceFulfillments.provider, commerceFulfillments.externalId],
+        set: {
+          orderId: sql`excluded.order_id`,
+          status: sql`excluded.status`,
+          trackingCompany: sql`excluded.tracking_company`,
+          trackingNumber: sql`excluded.tracking_number`,
+          trackingUrl: sql`excluded.tracking_url`,
+          shipmentStatus: sql`excluded.shipment_status`,
+          sourceUpdatedAt: sql`excluded.source_updated_at`,
+          updatedAt: new Date(),
+        },
+      });
+
+    return fulfillments.length;
   }
 
   /**
@@ -275,7 +382,7 @@ export class OrderService {
 
   /** Resolves a batch of external ids to this workspace/provider's existing row ids for `table`. */
   private async lookupIds(
-    table: typeof commerceCustomers | typeof commerceProductVariants,
+    table: typeof commerceCustomers | typeof commerceProductVariants | typeof commerceOrders,
     workspaceId: string,
     provider: IntegrationProvider,
     externalIds: (string | null)[],
