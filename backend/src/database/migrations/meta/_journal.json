@@ -148,6 +148,13 @@
       "when": 1788343229656,
       "tag": "0020_exotic_karma",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1788343604758,
+      "tag": "0021_flat_wolfsbane",
+      "breakpoints": true
     }
   ]
 }
