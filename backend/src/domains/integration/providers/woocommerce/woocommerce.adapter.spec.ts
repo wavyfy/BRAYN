@@ -237,4 +237,65 @@ describe('WooCommerceAdapter', () => {
       ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
     });
   });
+
+  describe('fetchProducts()', () => {
+    it('requests the first page and maps a simple product to a single synthetic variant from its own top-level fields', async () => {
+      const fetchMock = vi.fn<(url: string | URL) => Promise<Response>>(async () =>
+        jsonResponse(200, [
+          { id: 55, name: 'Tee', date_modified_gmt: '2026-01-01T00:00:00', sku: 'TEE-1', price: '19.99', stock_quantity: 8 },
+        ]),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      const page = await adapter.fetchProducts({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' });
+
+      expect(page).toEqual({
+        products: [
+          {
+            externalId: '55',
+            title: 'Tee',
+            sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
+            variants: [
+              { externalId: '55', sku: 'TEE-1', price: '19.99', inventoryQuantity: 8, sourceUpdatedAt: new Date('2026-01-01T00:00:00Z') },
+            ],
+          },
+        ],
+        nextCursor: null,
+      });
+      expect(String(fetchMock.mock.calls[0][0])).toBe('https://merchant-store.com/wp-json/wc/v3/products?per_page=100');
+    });
+
+    it('normalizes a null sku/price/stock_quantity/date_modified_gmt to null throughout', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => jsonResponse(200, [{ id: 56, name: 'Custom Item', date_modified_gmt: null, sku: null, price: null, stock_quantity: null }])),
+      );
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      const page = await adapter.fetchProducts({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' });
+
+      expect(page.products[0].sourceUpdatedAt).toBeNull();
+      expect(page.products[0].variants[0]).toEqual({ externalId: '56', sku: null, price: null, inventoryQuantity: null, sourceUpdatedAt: null });
+    });
+
+    it('extracts the next-page URL from the Link header', async () => {
+      const nextUrl = 'https://merchant-store.com/wp-json/wc/v3/products?per_page=100&page=2';
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, [], { link: `<${nextUrl}>; rel="next"` })));
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      const page = await adapter.fetchProducts({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' });
+
+      expect(page.nextCursor).toBe(nextUrl);
+    });
+
+    it('throws ProviderError on a non-2xx response', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(500)));
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      await expect(
+        adapter.fetchProducts({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' }),
+      ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+    });
+  });
 });

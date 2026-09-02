@@ -1,11 +1,13 @@
 import { Injectable, type OnModuleInit } from '@nestjs/common';
 import { ProviderError } from '../../../../common/errors/app-error';
 import { ProviderRegistry } from '../../provider-registry.service';
-import type { CustomerPage, ProviderAdapter } from '../../provider-adapter.interface';
+import type { CustomerPage, ProductPage, ProviderAdapter } from '../../provider-adapter.interface';
 import type { NormalizedCustomer } from '../../../commerce/customer.service';
+import type { NormalizedProduct } from '../../../commerce/product.service';
 
 const WC_API_PATH = 'wp-json/wc/v3';
 const CUSTOMERS_PAGE_SIZE = 100;
+const PRODUCTS_PAGE_SIZE = 100;
 
 interface WooCommerceCustomer {
   id: number;
@@ -14,6 +16,15 @@ interface WooCommerceCustomer {
   last_name: string | null;
   date_modified_gmt: string | null;
   billing?: { phone?: string | null };
+}
+
+interface WooCommerceProduct {
+  id: number;
+  name: string;
+  date_modified_gmt: string | null;
+  sku: string | null;
+  price: string | null;
+  stock_quantity: number | null;
 }
 
 /**
@@ -103,6 +114,31 @@ export class WooCommerceAdapter implements ProviderAdapter, OnModuleInit {
     const customers = body as WooCommerceCustomer[];
 
     return { customers: customers.map(normalizeCustomer), nextCursor };
+  }
+
+  /**
+   * Same contract/pagination as fetchCustomers, for products (doc 20
+   * WooCommerce Phase 1 Data — "Products"; note, unlike Shopify, there is
+   * no "Variants" line item for WooCommerce).
+   *
+   * WooCommerce's `product.variations` is only an array of variation IDs
+   * — full variant detail lives at a *separate*, *per-product* endpoint
+   * (`/products/{id}/variations`), an N+1 call pattern doc 20 doesn't ask
+   * BRAYN to pay for here. Each product instead maps to BRAYN's existing
+   * product/variant shape as a single synthetic "default variant" built
+   * from the product's own top-level sku/price/stock_quantity — exact for
+   * a `simple` product (which has no real variants), an approximation for
+   * a `variable` one.
+   *
+   * ponytail: real per-variation import (`/products/{id}/variations`) is
+   * deferred — add a dedicated fetch if a real variable-product catalog
+   * demonstrates the approximation isn't good enough.
+   */
+  async fetchProducts(credentials: Record<string, string>, cursor?: string): Promise<ProductPage> {
+    const { body, nextCursor } = await this.fetchPage(credentials, cursor, `products?per_page=${PRODUCTS_PAGE_SIZE}`);
+    const products = body as WooCommerceProduct[];
+
+    return { products: products.map(normalizeProduct), nextCursor };
   }
 
   /**
@@ -234,6 +270,26 @@ function normalizeCustomer(customer: WooCommerceCustomer): NormalizedCustomer {
     lastName: customer.last_name,
     phone: customer.billing?.phone ?? null,
     sourceUpdatedAt: customer.date_modified_gmt ? parseGmtDate(customer.date_modified_gmt) : null,
+  };
+}
+
+/** See fetchProducts' doc comment for why this is a single synthetic variant built from the product's own top-level fields, not real per-variation data. */
+function normalizeProduct(product: WooCommerceProduct): NormalizedProduct {
+  const sourceUpdatedAt = product.date_modified_gmt ? parseGmtDate(product.date_modified_gmt) : null;
+
+  return {
+    externalId: String(product.id),
+    title: product.name,
+    sourceUpdatedAt,
+    variants: [
+      {
+        externalId: String(product.id),
+        sku: product.sku,
+        price: product.price,
+        inventoryQuantity: product.stock_quantity,
+        sourceUpdatedAt,
+      },
+    ],
   };
 }
 
