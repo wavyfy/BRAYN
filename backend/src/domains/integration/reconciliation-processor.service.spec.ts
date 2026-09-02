@@ -230,7 +230,7 @@ describe('ReconciliationProcessorService', () => {
       nextCursor: null,
     };
     const orderPage: OrderPage = {
-      orders: [{ externalId: '900', customerExternalId: '1', totalPrice: '19.99', sourceUpdatedAt: null, lineItems: [] }],
+      orders: [{ externalId: '900', customerExternalId: '1', totalPrice: '19.99', sourceUpdatedAt: null, lineItems: [], refunds: [] }],
       nextCursor: null,
     };
     const callOrder: string[] = [];

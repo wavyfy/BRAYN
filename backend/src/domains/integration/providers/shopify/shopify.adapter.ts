@@ -12,7 +12,7 @@ import type {
   WebhookResourceEvent,
 } from '../../provider-adapter.interface';
 import type { NormalizedCustomer } from '../../../commerce/customer.service';
-import type { NormalizedOrder } from '../../../commerce/order.service';
+import type { NormalizedOrder, NormalizedRefund } from '../../../commerce/order.service';
 import type { NormalizedProduct } from '../../../commerce/product.service';
 
 const SHOPIFY_API_VERSION = '2024-10';
@@ -53,12 +53,33 @@ interface ShopifyLineItem {
   price: string | null;
 }
 
+interface ShopifyRefundLineItem {
+  id: number;
+  line_item_id: number | null;
+  quantity: number;
+}
+
+interface ShopifyRefundTransaction {
+  amount: string | null;
+  status: string | null;
+}
+
+interface ShopifyRefund {
+  id: number;
+  note: string | null;
+  processed_at: string | null;
+  refund_line_items: ShopifyRefundLineItem[];
+  transactions: ShopifyRefundTransaction[];
+}
+
 interface ShopifyOrder {
   id: number;
   customer: { id: number } | null;
   total_price: string | null;
   updated_at: string;
   line_items: ShopifyLineItem[];
+  /** Embedded, not a separate resource — Shopify has no top-level refunds list/webhook (doc 20 Shopify Phase 1 Data — "Refunds"). */
+  refunds: ShopifyRefund[];
 }
 
 /**
@@ -331,6 +352,26 @@ function normalizeOrder(order: ShopifyOrder): NormalizedOrder {
       variantExternalId: item.variant_id !== null ? String(item.variant_id) : null,
       quantity: item.quantity,
       price: item.price,
+    })),
+    refunds: (order.refunds ?? []).map(normalizeRefund),
+  };
+}
+
+/** Refunds arrive only embedded in an order (see ShopifyOrder.refunds doc comment). `totalRefunded` sums successful transaction amounts — a refund's own record carries no single total. */
+function normalizeRefund(refund: ShopifyRefund): NormalizedRefund {
+  const successfulAmounts = (refund.transactions ?? [])
+    .filter((transaction) => transaction.status === 'success' && transaction.amount !== null)
+    .map((transaction) => Number(transaction.amount));
+
+  return {
+    externalId: String(refund.id),
+    note: refund.note,
+    totalRefunded: successfulAmounts.length > 0 ? successfulAmounts.reduce((sum, amount) => sum + amount, 0).toFixed(2) : null,
+    processedAt: refund.processed_at ? new Date(refund.processed_at) : null,
+    lineItems: (refund.refund_line_items ?? []).map((item) => ({
+      externalId: String(item.id),
+      orderLineItemExternalId: item.line_item_id !== null ? String(item.line_item_id) : null,
+      quantity: item.quantity,
     })),
   };
 }

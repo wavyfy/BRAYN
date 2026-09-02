@@ -366,6 +366,7 @@ describe('ShopifyAdapter', () => {
             totalPrice: '19.99',
             sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
             lineItems: [{ externalId: '9001', variantExternalId: '901', quantity: 2, price: '9.99' }],
+            refunds: [],
           },
         ],
         nextCursor: null,
@@ -430,6 +431,68 @@ describe('ShopifyAdapter', () => {
       await expect(
         adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }),
       ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+    });
+
+    it('normalizes an order\'s embedded refunds, summing only successful transaction amounts', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          jsonResponse(200, {
+            orders: [
+              {
+                id: 900,
+                customer: { id: 1 },
+                total_price: '19.99',
+                updated_at: '2026-01-01T00:00:00Z',
+                line_items: [{ id: 9001, variant_id: 901, quantity: 2, price: '9.99' }],
+                refunds: [
+                  {
+                    id: 9500,
+                    note: 'Damaged item',
+                    processed_at: '2026-01-02T00:00:00Z',
+                    refund_line_items: [{ id: 9501, line_item_id: 9001, quantity: 1 }],
+                    transactions: [
+                      { amount: '9.99', status: 'success' },
+                      { amount: '9.99', status: 'pending' },
+                    ],
+                  },
+                ],
+              },
+            ],
+          }),
+        ),
+      );
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
+
+      expect(page.orders[0].refunds).toEqual([
+        {
+          externalId: '9500',
+          note: 'Damaged item',
+          totalRefunded: '9.99',
+          processedAt: new Date('2026-01-02T00:00:00Z'),
+          lineItems: [{ externalId: '9501', orderLineItemExternalId: '9001', quantity: 1 }],
+        },
+      ]);
+    });
+
+    it('normalizes an order with no refunds field to an empty refunds array', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          jsonResponse(200, {
+            orders: [
+              { id: 902, customer: null, total_price: '5.00', updated_at: '2026-01-01T00:00:00Z', line_items: [] },
+            ],
+          }),
+        ),
+      );
+      const adapter = new ShopifyAdapter(makeRegistry());
+
+      const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
+
+      expect(page.orders[0].refunds).toEqual([]);
     });
 
     it('throws ProviderError and never calls fetch for a stored shopDomain outside myshopify.com — SSRF guard', async () => {

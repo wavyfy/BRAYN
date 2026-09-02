@@ -25,10 +25,11 @@ function makeOrderInsertChain(returned: { id: string; externalId: string }[]) {
   return chain;
 }
 
-function makeLineItemInsertChain() {
+function makeLineItemInsertChain(returned: { id: string; externalId: string }[] = []) {
   const chain: Record<string, unknown> = {
     values: vi.fn(() => chain),
-    onConflictDoUpdate: vi.fn(async () => undefined),
+    onConflictDoUpdate: vi.fn(() => chain),
+    returning: vi.fn(async () => returned),
   };
   return chain;
 }
@@ -39,6 +40,7 @@ const order: NormalizedOrder = {
   totalPrice: '19.99',
   sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
   lineItems: [{ externalId: '9001', variantExternalId: '901', quantity: 2, price: '9.99' }],
+  refunds: [],
 };
 
 describe('OrderService', () => {
@@ -49,7 +51,7 @@ describe('OrderService', () => {
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', []);
 
-      expect(result).toEqual({ ordersWritten: 0, lineItemsWritten: 0 });
+      expect(result).toEqual({ ordersWritten: 0, lineItemsWritten: 0, refundsWritten: 0 });
       expect(client.select).not.toHaveBeenCalled();
       expect(client.insert).not.toHaveBeenCalled();
     });
@@ -67,7 +69,7 @@ describe('OrderService', () => {
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [order]);
 
-      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 1 });
+      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 1, refundsWritten: 0 });
       expect(orderChain.values).toHaveBeenCalledWith([
         {
           workspaceId: 'ws_1',
@@ -129,8 +131,66 @@ describe('OrderService', () => {
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [order]);
 
-      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 0 });
+      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 0, refundsWritten: 0 });
       expect(insert).toHaveBeenCalledTimes(1);
+    });
+
+    it('writes a refund and links its line item to the order line item it refunds', async () => {
+      const refundedOrder: NormalizedOrder = {
+        ...order,
+        refunds: [
+          {
+            externalId: '9500',
+            note: 'Damaged item',
+            totalRefunded: '9.99',
+            processedAt: new Date('2026-01-02T00:00:00Z'),
+            lineItems: [{ externalId: '9501', orderLineItemExternalId: '9001', quantity: 1 }],
+          },
+        ],
+      };
+      const orderChain = makeOrderInsertChain([{ id: 'order_1', externalId: '900' }]);
+      const lineItemChain = makeLineItemInsertChain([{ id: 'line_item_1', externalId: '9001' }]);
+      const refundChain = makeOrderInsertChain([{ id: 'refund_1', externalId: '9500' }]);
+      const refundLineItemChain = makeLineItemInsertChain();
+      const insert = vi
+        .fn()
+        .mockReturnValueOnce(orderChain)
+        .mockReturnValueOnce(lineItemChain)
+        .mockReturnValueOnce(refundChain)
+        .mockReturnValueOnce(refundLineItemChain);
+      const select = makeSelectQueue([
+        [{ id: 'cust_1', externalId: '1' }],
+        [{ id: 'variant_1', externalId: '901' }],
+      ]);
+      const client = { select, insert };
+      const service = new OrderService({ client } as unknown as DatabaseService);
+
+      const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [refundedOrder]);
+
+      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 1, refundsWritten: 1 });
+      expect(refundChain.values).toHaveBeenCalledWith([
+        {
+          workspaceId: 'ws_1',
+          integrationId: 'int_1',
+          provider: 'shopify',
+          orderId: 'order_1',
+          externalId: '9500',
+          note: 'Damaged item',
+          totalRefunded: '9.99',
+          processedAt: refundedOrder.refunds[0].processedAt,
+        },
+      ]);
+      expect(refundLineItemChain.values).toHaveBeenCalledWith([
+        {
+          workspaceId: 'ws_1',
+          integrationId: 'int_1',
+          provider: 'shopify',
+          refundId: 'refund_1',
+          orderLineItemId: 'line_item_1',
+          externalId: '9501',
+          quantity: 1,
+        },
+      ]);
     });
   });
 

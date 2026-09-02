@@ -4,6 +4,8 @@ import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { commerceOrders } from '../../database/schema/commerce-orders';
 import { commerceOrderLineItems } from '../../database/schema/commerce-order-line-items';
 import { commerceProductVariants } from '../../database/schema/commerce-product-variants';
+import { commerceRefunds } from '../../database/schema/commerce-refunds';
+import { commerceRefundLineItems } from '../../database/schema/commerce-refund-line-items';
 import { DatabaseService } from '../../database/database.service';
 import type { IntegrationProvider } from '../integration/dto/connect-integration.schema';
 
@@ -15,6 +17,22 @@ export interface NormalizedOrderLineItem {
   price: string | null;
 }
 
+export interface NormalizedRefundLineItem {
+  externalId: string;
+  /** The refunded order line's provider id, or null if the provider didn't reference one. */
+  orderLineItemExternalId: string | null;
+  quantity: number;
+}
+
+/** A provider's refund record, embedded in its order — see commerce_refunds' doc comment for why there's no separate refund fetch/webhook. */
+export interface NormalizedRefund {
+  externalId: string;
+  note: string | null;
+  totalRefunded: string | null;
+  processedAt: Date | null;
+  lineItems: NormalizedRefundLineItem[];
+}
+
 /** A provider's order record, already mapped into BRAYN's shape (doc 06 — Normalization output). */
 export interface NormalizedOrder {
   externalId: string;
@@ -23,6 +41,7 @@ export interface NormalizedOrder {
   totalPrice: string | null;
   sourceUpdatedAt: Date | null;
   lineItems: NormalizedOrderLineItem[];
+  refunds: NormalizedRefund[];
 }
 
 /**
@@ -44,9 +63,9 @@ export class OrderService {
     integrationId: string,
     provider: IntegrationProvider,
     orders: NormalizedOrder[],
-  ): Promise<{ ordersWritten: number; lineItemsWritten: number }> {
+  ): Promise<{ ordersWritten: number; lineItemsWritten: number; refundsWritten: number }> {
     if (orders.length === 0) {
-      return { ordersWritten: 0, lineItemsWritten: 0 };
+      return { ordersWritten: 0, lineItemsWritten: 0, refundsWritten: 0 };
     }
 
     const customerIdByExternalId = await this.lookupIds(
@@ -106,8 +125,9 @@ export class OrderService {
       }));
     });
 
+    let orderLineItemIdByExternalId = new Map<string, string>();
     if (lineItemValues.length > 0) {
-      await this.database.client
+      const lineItemRows = await this.database.client
         .insert(commerceOrderLineItems)
         .values(lineItemValues)
         .onConflictDoUpdate({
@@ -122,10 +142,111 @@ export class OrderService {
             price: sql`excluded.price`,
             updatedAt: new Date(),
           },
+        })
+        .returning({ id: commerceOrderLineItems.id, externalId: commerceOrderLineItems.externalId });
+      orderLineItemIdByExternalId = new Map(lineItemRows.map((row) => [row.externalId, row.id]));
+    }
+
+    const refundsWritten = await this.upsertRefunds(
+      workspaceId,
+      integrationId,
+      provider,
+      orders,
+      orderIdByExternalId,
+      orderLineItemIdByExternalId,
+    );
+
+    return { ordersWritten: orders.length, lineItemsWritten: lineItemValues.length, refundsWritten };
+  }
+
+  /**
+   * Writes refunds embedded in each order's payload (see commerce_refunds'
+   * doc comment — Shopify has no separate refund fetch/webhook, so this is
+   * always driven from an already-fetched/applied order, not its own loop).
+   */
+  private async upsertRefunds(
+    workspaceId: string,
+    integrationId: string,
+    provider: IntegrationProvider,
+    orders: NormalizedOrder[],
+    orderIdByExternalId: Map<string, string>,
+    orderLineItemIdByExternalId: Map<string, string>,
+  ): Promise<number> {
+    const refundValues = orders.flatMap((order) => {
+      const orderId = orderIdByExternalId.get(order.externalId);
+      if (!orderId) {
+        return [];
+      }
+      return order.refunds.map((refund) => ({
+        workspaceId,
+        integrationId,
+        provider,
+        orderId,
+        externalId: refund.externalId,
+        note: refund.note,
+        totalRefunded: refund.totalRefunded,
+        processedAt: refund.processedAt,
+      }));
+    });
+
+    if (refundValues.length === 0) {
+      return 0;
+    }
+
+    const refundRows = await this.database.client
+      .insert(commerceRefunds)
+      .values(refundValues)
+      .onConflictDoUpdate({
+        target: [commerceRefunds.workspaceId, commerceRefunds.provider, commerceRefunds.externalId],
+        set: {
+          note: sql`excluded.note`,
+          totalRefunded: sql`excluded.total_refunded`,
+          processedAt: sql`excluded.processed_at`,
+          updatedAt: new Date(),
+        },
+      })
+      .returning({ id: commerceRefunds.id, externalId: commerceRefunds.externalId });
+    const refundIdByExternalId = new Map(refundRows.map((row) => [row.externalId, row.id]));
+
+    const refundLineItemValues = orders.flatMap((order) => {
+      return order.refunds.flatMap((refund) => {
+        const refundId = refundIdByExternalId.get(refund.externalId);
+        if (!refundId) {
+          return [];
+        }
+        return refund.lineItems.map((item) => ({
+          workspaceId,
+          integrationId,
+          provider,
+          refundId,
+          orderLineItemId: item.orderLineItemExternalId
+            ? (orderLineItemIdByExternalId.get(item.orderLineItemExternalId) ?? null)
+            : null,
+          externalId: item.externalId,
+          quantity: item.quantity,
+        }));
+      });
+    });
+
+    if (refundLineItemValues.length > 0) {
+      await this.database.client
+        .insert(commerceRefundLineItems)
+        .values(refundLineItemValues)
+        .onConflictDoUpdate({
+          target: [
+            commerceRefundLineItems.workspaceId,
+            commerceRefundLineItems.provider,
+            commerceRefundLineItems.externalId,
+          ],
+          set: {
+            orderLineItemId: sql`excluded.order_line_item_id`,
+            quantity: sql`excluded.quantity`,
+            updatedAt: new Date(),
+          },
         });
     }
 
-    return { ordersWritten: orders.length, lineItemsWritten: lineItemValues.length };
+    return refundValues.length;
   }
 
   /** This workspace/provider's current `sourceUpdatedAt` for each existing order externalId (doc 06/20 — Reconciliation: detect missing/changed records before repairing; line-item-level drift isn't tracked separately). Absent from the map means no such row exists yet. */

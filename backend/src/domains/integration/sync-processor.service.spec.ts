@@ -102,7 +102,7 @@ describe('SyncProcessorService', () => {
     const customerPage: CustomerPage = { customers: [], nextCursor: null };
     const productPage: ProductPage = { products: [{ externalId: '55', title: 'Tee', sourceUpdatedAt: null, variants: [] }], nextCursor: null };
     const orderPage: OrderPage = {
-      orders: [{ externalId: '900', customerExternalId: null, totalPrice: '19.99', sourceUpdatedAt: null, lineItems: [] }],
+      orders: [{ externalId: '900', customerExternalId: null, totalPrice: '19.99', sourceUpdatedAt: null, lineItems: [], refunds: [] }],
       nextCursor: null,
     };
     const callOrder: string[] = [];
