@@ -1,13 +1,15 @@
 import { Injectable, type OnModuleInit } from '@nestjs/common';
 import { ProviderError } from '../../../../common/errors/app-error';
 import { ProviderRegistry } from '../../provider-registry.service';
-import type { CustomerPage, ProductPage, ProviderAdapter } from '../../provider-adapter.interface';
+import type { CustomerPage, OrderPage, ProductPage, ProviderAdapter } from '../../provider-adapter.interface';
 import type { NormalizedCustomer } from '../../../commerce/customer.service';
 import type { NormalizedProduct } from '../../../commerce/product.service';
+import type { NormalizedOrder } from '../../../commerce/order.service';
 
 const WC_API_PATH = 'wp-json/wc/v3';
 const CUSTOMERS_PAGE_SIZE = 100;
 const PRODUCTS_PAGE_SIZE = 100;
+const ORDERS_PAGE_SIZE = 100;
 
 interface WooCommerceCustomer {
   id: number;
@@ -25,6 +27,23 @@ interface WooCommerceProduct {
   sku: string | null;
   price: string | null;
   stock_quantity: number | null;
+}
+
+interface WooCommerceLineItem {
+  id: number;
+  product_id: number | null;
+  variation_id: number | null;
+  quantity: number;
+  price: string | null;
+}
+
+interface WooCommerceOrder {
+  id: number;
+  /** 0 for a guest checkout (WooCommerce convention) — never null/absent. */
+  customer_id: number;
+  total: string | null;
+  date_modified_gmt: string | null;
+  line_items: WooCommerceLineItem[];
 }
 
 /**
@@ -139,6 +158,21 @@ export class WooCommerceAdapter implements ProviderAdapter, OnModuleInit {
     const products = body as WooCommerceProduct[];
 
     return { products: products.map(normalizeProduct), nextCursor };
+  }
+
+  /**
+   * Same contract/pagination as fetchCustomers, for orders and their line
+   * items (doc 20 WooCommerce Phase 1 Data — "Orders", "Order line
+   * items"). `status=any` matches this endpoint's own default (unlike
+   * Shopify, whose default excludes closed/cancelled orders) — passed
+   * explicitly so a future WooCommerce default change can't silently
+   * narrow BRAYN's import.
+   */
+  async fetchOrders(credentials: Record<string, string>, cursor?: string): Promise<OrderPage> {
+    const { body, nextCursor } = await this.fetchPage(credentials, cursor, `orders?per_page=${ORDERS_PAGE_SIZE}&status=any`);
+    const orders = body as WooCommerceOrder[];
+
+    return { orders: orders.map(normalizeOrder), nextCursor };
   }
 
   /**
@@ -290,6 +324,31 @@ function normalizeProduct(product: WooCommerceProduct): NormalizedProduct {
         sourceUpdatedAt,
       },
     ],
+  };
+}
+
+/**
+ * `line_items` arrive embedded, unlike products' variations (doc 20
+ * WooCommerce Phase 1 Data). Each line's `variantExternalId` links via
+ * `product_id`, not `variation_id` — WooCommerce's real per-variation ids
+ * were never imported as their own variant rows (see fetchProducts' doc
+ * comment), so `product_id` is the only id that actually resolves to a
+ * `commerce_product_variants` row for a variable-product line.
+ */
+function normalizeOrder(order: WooCommerceOrder): NormalizedOrder {
+  return {
+    externalId: String(order.id),
+    customerExternalId: order.customer_id !== 0 ? String(order.customer_id) : null,
+    totalPrice: order.total,
+    sourceUpdatedAt: order.date_modified_gmt ? parseGmtDate(order.date_modified_gmt) : null,
+    lineItems: order.line_items.map((item) => ({
+      externalId: String(item.id),
+      variantExternalId: item.product_id !== null ? String(item.product_id) : null,
+      quantity: item.quantity,
+      price: item.price,
+    })),
+    refunds: [],
+    fulfillments: [],
   };
 }
 

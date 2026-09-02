@@ -298,4 +298,118 @@ describe('WooCommerceAdapter', () => {
       ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
     });
   });
+
+  describe('fetchOrders()', () => {
+    it('requests status=any and normalizes orders with their line items', async () => {
+      const fetchMock = vi.fn<(url: string | URL) => Promise<Response>>(async () =>
+        jsonResponse(200, [
+          {
+            id: 900,
+            customer_id: 1,
+            total: '19.99',
+            date_modified_gmt: '2026-01-01T00:00:00',
+            line_items: [{ id: 9001, product_id: 55, variation_id: null, quantity: 2, price: '9.99' }],
+          },
+        ]),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      const page = await adapter.fetchOrders({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' });
+
+      expect(page).toEqual({
+        orders: [
+          {
+            externalId: '900',
+            customerExternalId: '1',
+            totalPrice: '19.99',
+            sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
+            lineItems: [{ externalId: '9001', variantExternalId: '55', quantity: 2, price: '9.99' }],
+            refunds: [],
+            fulfillments: [],
+          },
+        ],
+        nextCursor: null,
+      });
+      expect(String(fetchMock.mock.calls[0][0])).toBe('https://merchant-store.com/wp-json/wc/v3/orders?per_page=100&status=any');
+    });
+
+    it('normalizes customer_id 0 (guest checkout) to a null customerExternalId', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          jsonResponse(200, [{ id: 901, customer_id: 0, total: '5.00', date_modified_gmt: null, line_items: [] }]),
+        ),
+      );
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      const page = await adapter.fetchOrders({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' });
+
+      expect(page.orders[0].customerExternalId).toBeNull();
+      expect(page.orders[0].sourceUpdatedAt).toBeNull();
+    });
+
+    it("links a line item's variant via product_id, not variation_id — real variations were never imported as their own rows", async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          jsonResponse(200, [
+            {
+              id: 902,
+              customer_id: 1,
+              total: '9.99',
+              date_modified_gmt: '2026-01-01T00:00:00',
+              line_items: [{ id: 9002, product_id: 55, variation_id: 9999, quantity: 1, price: '9.99' }],
+            },
+          ]),
+        ),
+      );
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      const page = await adapter.fetchOrders({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' });
+
+      expect(page.orders[0].lineItems[0].variantExternalId).toBe('55');
+    });
+
+    it('normalizes a null product_id (custom line) to a null variantExternalId', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          jsonResponse(200, [
+            {
+              id: 903,
+              customer_id: 1,
+              total: '1.00',
+              date_modified_gmt: null,
+              line_items: [{ id: 9003, product_id: null, variation_id: null, quantity: 1, price: '1.00' }],
+            },
+          ]),
+        ),
+      );
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      const page = await adapter.fetchOrders({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' });
+
+      expect(page.orders[0].lineItems[0].variantExternalId).toBeNull();
+    });
+
+    it('extracts the next-page URL from the Link header', async () => {
+      const nextUrl = 'https://merchant-store.com/wp-json/wc/v3/orders?per_page=100&status=any&page=2';
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, [], { link: `<${nextUrl}>; rel="next"` })));
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      const page = await adapter.fetchOrders({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' });
+
+      expect(page.nextCursor).toBe(nextUrl);
+    });
+
+    it('throws ProviderError on a non-2xx response', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(500)));
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      await expect(
+        adapter.fetchOrders({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' }),
+      ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+    });
+  });
 });
