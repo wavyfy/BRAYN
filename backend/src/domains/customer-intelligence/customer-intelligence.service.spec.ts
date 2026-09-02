@@ -7,7 +7,8 @@ function makeChain(result: unknown) {
     from: vi.fn(() => chain),
     where: vi.fn(() => chain),
     orderBy: vi.fn(() => chain),
-    limit: vi.fn(async () => result),
+    limit: vi.fn(() => chain),
+    offset: vi.fn(async () => result),
     then: (resolve: (value: unknown) => void) => resolve(result),
   };
   return chain;
@@ -93,6 +94,56 @@ describe('CustomerIntelligenceService', () => {
         ordersLast90Days: 2,
         recentOrders: [{ provider: 'shopify', externalId: '900', totalPrice: '19.99', createdAt: lastOrderAt }],
       });
+    });
+  });
+
+  describe('listCustomers()', () => {
+    it('returns an empty page without querying names when there are no canonical customers', async () => {
+      const select = makeSelectQueue([[]]);
+      const service = new CustomerIntelligenceService({ client: { select } } as unknown as DatabaseService);
+
+      const result = await service.listCustomers('ws_1');
+
+      expect(result).toEqual({ customers: [], page: 1, limit: 20, hasMore: false });
+      expect(select).toHaveBeenCalledTimes(1);
+    });
+
+    it('lists customers with names filled from commerce_customers, and reports hasMore correctly', async () => {
+      const select = makeSelectQueue([
+        [{ id: 'canon_1', primaryEmail: 'a@example.com' }, { id: 'canon_2', primaryEmail: 'b@example.com' }, { id: 'canon_3', primaryEmail: null }], // limit+1 = 3, limit=2 -> hasMore
+        [
+          { canonicalCustomerId: 'canon_1', firstName: 'Ada', lastName: 'Lovelace' },
+          { canonicalCustomerId: 'canon_2', firstName: null, lastName: 'Smith' },
+        ],
+      ]);
+      const service = new CustomerIntelligenceService({ client: { select } } as unknown as DatabaseService);
+
+      const result = await service.listCustomers('ws_1', { limit: 2 });
+
+      expect(result).toEqual({
+        customers: [
+          { canonicalCustomerId: 'canon_1', email: 'a@example.com', firstName: 'Ada', lastName: 'Lovelace' },
+          { canonicalCustomerId: 'canon_2', email: 'b@example.com', firstName: null, lastName: 'Smith' },
+        ],
+        page: 1,
+        limit: 2,
+        hasMore: true,
+      });
+    });
+
+    it('merges a name from a second source row when the first is missing it', async () => {
+      const select = makeSelectQueue([
+        [{ id: 'canon_1', primaryEmail: 'a@example.com' }],
+        [
+          { canonicalCustomerId: 'canon_1', firstName: null, lastName: 'Lovelace' },
+          { canonicalCustomerId: 'canon_1', firstName: 'Ada', lastName: null },
+        ],
+      ]);
+      const service = new CustomerIntelligenceService({ client: { select } } as unknown as DatabaseService);
+
+      const result = await service.listCustomers('ws_1');
+
+      expect(result.customers[0]).toEqual({ canonicalCustomerId: 'canon_1', email: 'a@example.com', firstName: 'Ada', lastName: 'Lovelace' });
     });
   });
 

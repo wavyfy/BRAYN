@@ -44,6 +44,15 @@ export default async function WorkspacePage({ params }: { params: { workspaceId:
         {role && <RoleBadge role={role} />}
       </div>
 
+      <nav className="mt-4 flex gap-4 text-sm">
+        <Link href={`/workspace/${workspace.id}/customers`} className="font-medium text-slate-600 hover:text-slate-900">
+          Customers
+        </Link>
+        <Link href={`/workspace/${workspace.id}/integrations`} className="font-medium text-slate-600 hover:text-slate-900">
+          Integrations
+        </Link>
+      </nav>
+
       <Card className="mt-6">
         <CardContent>
           <dl className="grid grid-cols-2 gap-4 text-sm">

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, isNotNull, sql } from 'drizzle-orm';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { commerceOrders } from '../../database/schema/commerce-orders';
@@ -8,6 +8,21 @@ import { NotFoundError } from '../../common/errors/app-error';
 
 const RECENT_ORDERS_LIMIT = 10;
 const ACTIVITY_LIMIT = 50;
+const DEFAULT_LIST_LIMIT = 20;
+
+export interface CustomerListItem {
+  canonicalCustomerId: string;
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+}
+
+export interface CustomerListPage {
+  customers: CustomerListItem[];
+  page: number;
+  limit: number;
+  hasMore: boolean;
+}
 
 export interface CustomerProfile {
   email: string | null;
@@ -76,6 +91,76 @@ interface SourceCustomerRow {
 @Injectable()
 export class CustomerIntelligenceService {
   constructor(private readonly database: DatabaseService) {}
+
+  /**
+   * Customer list/search (doc19 Phase 8 — canonical UI scope). Search is
+   * email-only (`canonical_customers.primary_email`) — the deterministic
+   * field Identity Resolution already keys matching on; searching by
+   * name too would mean joining/searching `commerce_customers` in the
+   * same paginated query, deferred to keep this first slice simple.
+   * Deliberately lightweight — email + name only, offset-paginated; full
+   * commerce context lives on `getCustomer` for a selected customer, not
+   * duplicated here.
+   */
+  async listCustomers(workspaceId: string, options: { search?: string; page?: number; limit?: number } = {}): Promise<CustomerListPage> {
+    const page = Math.max(1, options.page ?? 1);
+    const limit = options.limit ?? DEFAULT_LIST_LIMIT;
+
+    const rows = await this.database.client
+      .select({ id: canonicalCustomers.id, primaryEmail: canonicalCustomers.primaryEmail })
+      .from(canonicalCustomers)
+      .where(
+        and(
+          eq(canonicalCustomers.workspaceId, workspaceId),
+          options.search ? ilike(canonicalCustomers.primaryEmail, `%${options.search}%`) : undefined,
+        ),
+      )
+      .orderBy(desc(canonicalCustomers.createdAt))
+      .limit(limit + 1)
+      .offset((page - 1) * limit);
+
+    const hasMore = rows.length > limit;
+    const pageRows = hasMore ? rows.slice(0, limit) : rows;
+    if (pageRows.length === 0) {
+      return { customers: [], page, limit, hasMore: false };
+    }
+
+    const ids = pageRows.map((row) => row.id);
+    const nameRows = await this.database.client
+      .select({ canonicalCustomerId: commerceCustomers.canonicalCustomerId, firstName: commerceCustomers.firstName, lastName: commerceCustomers.lastName })
+      .from(commerceCustomers)
+      .where(
+        and(
+          eq(commerceCustomers.workspaceId, workspaceId),
+          inArray(commerceCustomers.canonicalCustomerId, ids),
+          isNotNull(commerceCustomers.canonicalCustomerId),
+        ),
+      );
+
+    const namesById = new Map<string, { firstName: string | null; lastName: string | null }>();
+    for (const row of nameRows) {
+      if (!row.canonicalCustomerId) continue;
+      const existing = namesById.get(row.canonicalCustomerId);
+      if (!existing) {
+        namesById.set(row.canonicalCustomerId, { firstName: row.firstName, lastName: row.lastName });
+      } else {
+        existing.firstName ??= row.firstName;
+        existing.lastName ??= row.lastName;
+      }
+    }
+
+    return {
+      customers: pageRows.map((row) => ({
+        canonicalCustomerId: row.id,
+        email: row.primaryEmail,
+        firstName: namesById.get(row.id)?.firstName ?? null,
+        lastName: namesById.get(row.id)?.lastName ?? null,
+      })),
+      page,
+      limit,
+      hasMore,
+    };
+  }
 
   async getCustomer(workspaceId: string, canonicalCustomerId: string): Promise<CustomerRecord> {
     const canonical = await this.requireCanonical(workspaceId, canonicalCustomerId);

@@ -15,6 +15,8 @@ import { ReconciliationRunService } from './reconciliation-run.service';
 import { ReconciliationProcessorService } from './reconciliation-processor.service';
 import { SyncProcessorService } from './sync-processor.service';
 import { ShopifyAdapter } from './providers/shopify/shopify.adapter';
+import { ShopifyOAuthService } from './providers/shopify/shopify-oauth.service';
+import { ShopifyOAuthStartController, ShopifyOAuthCallbackController } from './providers/shopify/shopify-oauth.controller';
 import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter';
 
 /**
@@ -37,7 +39,7 @@ import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter'
  */
 @Module({
   imports: [WorkspaceModule, CommerceModule, IdentityResolutionModule],
-  controllers: [IntegrationController, WebhookController],
+  controllers: [IntegrationController, WebhookController, ShopifyOAuthStartController, ShopifyOAuthCallbackController],
   providers: [
     IntegrationService,
     ProviderRegistry,
@@ -50,6 +52,7 @@ import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter'
     ReconciliationProcessorService,
     SyncProcessorService,
     ShopifyAdapter,
+    ShopifyOAuthService,
     WooCommerceAdapter,
   ],
   exports: [

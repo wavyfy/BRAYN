@@ -1,0 +1,229 @@
+import { createHmac } from 'node:crypto';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ConfigService } from '@nestjs/config';
+import { ShopifyOAuthService } from './shopify-oauth.service';
+import { ConflictError, ValidationError } from '../../../../common/errors/app-error';
+import type { Env } from '../../../../config/env.schema';
+import type { IntegrationService } from '../../integration.service';
+import type { ShopifyAdapter } from './shopify.adapter';
+import type { StructuredLoggerService } from '../../../../common/logging/structured-logger.service';
+
+const VALID_KEY = 'a'.repeat(64);
+const CLIENT_ID = 'test-client-id';
+const CLIENT_SECRET = 'test-client-secret';
+const SHOP = 'test-store.myshopify.com';
+
+function makeConfig(overrides: Partial<Env> = {}): ConfigService<Env, true> {
+  const env: Partial<Env> = {
+    BRAYN_CREDENTIAL_ENCRYPTION_KEY: VALID_KEY,
+    FRONTEND_URL: 'http://localhost:3000',
+    BACKEND_URL: 'http://localhost:3001',
+    SHOPIFY_APP_CLIENT_ID: CLIENT_ID,
+    SHOPIFY_APP_CLIENT_SECRET: CLIENT_SECRET,
+    ...overrides,
+  };
+  return { get: (key: keyof Env) => env[key] } as unknown as ConfigService<Env, true>;
+}
+
+function makeLogger(): StructuredLoggerService {
+  return { event: vi.fn() } as unknown as StructuredLoggerService;
+}
+
+function makeIntegrationService(overrides: Partial<IntegrationService> = {}): IntegrationService {
+  return {
+    connect: vi.fn(async () => ({})),
+    setCredentials: vi.fn(async () => undefined),
+    ...overrides,
+  } as unknown as IntegrationService;
+}
+
+function makeAdapter(overrides: Partial<ShopifyAdapter> = {}): ShopifyAdapter {
+  return { verifyConnection: vi.fn(async () => true), ...overrides } as unknown as ShopifyAdapter;
+}
+
+function signedQuery(overrides: Record<string, string | undefined> = {}) {
+  // Spread after the defaults so an explicit `undefined` override actually deletes that key.
+  const merged: Record<string, string | undefined> = { code: 'auth-code', shop: SHOP, timestamp: '1700000000', ...overrides };
+  const base = Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== undefined)) as Record<string, string>;
+
+  const message = Object.entries(base)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${v}`)
+    .join('&');
+  const hmac = createHmac('sha256', CLIENT_SECRET).update(message).digest('hex');
+  return { ...base, hmac };
+}
+
+describe('ShopifyOAuthService', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  describe('buildAuthorizeUrl()', () => {
+    it('builds an authorize URL with the exact required scopes, redirect_uri, and an opaque state, plus a session-binding cookie value', () => {
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+
+      const result = service.buildAuthorizeUrl('ws_1', SHOP);
+      const url = new URL(result.authorizeUrl);
+
+      expect(url.origin + url.pathname).toBe(`https://${SHOP}/admin/oauth/authorize`);
+      expect(url.searchParams.get('client_id')).toBe(CLIENT_ID);
+      expect(url.searchParams.get('scope')).toBe('read_customers,read_orders,read_products');
+      expect(url.searchParams.get('redirect_uri')).toBe('http://localhost:3001/api/v1/integrations/shopify/oauth/callback');
+      expect(url.searchParams.get('state')).toBeTruthy();
+      expect(result.cookieValue).toBeTruthy();
+      expect(result.cookieMaxAgeSeconds).toBeGreaterThan(0);
+    });
+
+    it('rejects a malformed shop domain without building a URL', () => {
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+
+      expect(() => service.buildAuthorizeUrl('ws_1', 'not-a-shop-domain')).toThrow(ValidationError);
+    });
+  });
+
+  describe('handleCallback()', () => {
+    function start(service: ShopifyOAuthService, workspaceId = 'ws_1') {
+      const { authorizeUrl, cookieValue } = service.buildAuthorizeUrl(workspaceId, SHOP);
+      const state = new URL(authorizeUrl).searchParams.get('state')!;
+      return { state, cookieValue };
+    }
+
+    async function startThenCallback(
+      service: ShopifyOAuthService,
+      queryOverrides: Record<string, string | undefined> = {},
+    ): Promise<string> {
+      const { state, cookieValue } = start(service);
+      return service.handleCallback(signedQuery({ state, ...queryOverrides }), cookieValue);
+    }
+
+    it('redirects to a generic error when state is missing or undecryptable', async () => {
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+
+      const redirect = await service.handleCallback(signedQuery({ state: 'garbage' }), 'irrelevant');
+
+      expect(redirect).toBe('http://localhost:3000?shopify=error');
+    });
+
+    it('redirects with reason=session_mismatch when the binding cookie is missing', async () => {
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+      const { state } = start(service);
+
+      const redirect = await service.handleCallback(signedQuery({ state }), undefined);
+
+      expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=session_mismatch');
+    });
+
+    it('redirects with reason=session_mismatch when the binding cookie does not match the state that was issued', async () => {
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+      const { state } = start(service);
+
+      const redirect = await service.handleCallback(signedQuery({ state }), 'someone-elses-cookie-value');
+
+      expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=session_mismatch');
+    });
+
+    it('rejects a state minted for a different workspace even with a technically-valid cookie value from that other flow', async () => {
+      // Simulates the CSRF this binding exists to stop: attacker mints a
+      // valid state+cookie for their own workspace, then drops the state
+      // into a link a victim clicks — the victim's browser never received
+      // the attacker's cookie, so the flow must fail closed.
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+      const attackerFlow = start(service, 'attacker-ws');
+      const victimBrowserCookie = 'victim-never-had-this-cookie';
+
+      const redirect = await service.handleCallback(signedQuery({ state: attackerFlow.state }), victimBrowserCookie);
+
+      expect(redirect).toBe('http://localhost:3000/workspace/attacker-ws/integrations?shopify=error&reason=session_mismatch');
+    });
+
+    it('redirects with reason=invalid_shop when shop fails the domain pattern', async () => {
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+
+      const redirect = await startThenCallback(service, { shop: 'evil.example.com' });
+
+      expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=invalid_shop');
+    });
+
+    it('redirects with reason=invalid_signature when the hmac does not match', async () => {
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+      const { state, cookieValue } = start(service);
+
+      const redirect = await service.handleCallback({ code: 'auth-code', shop: SHOP, state, hmac: 'deadbeef' }, cookieValue);
+
+      expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=invalid_signature');
+    });
+
+    it('redirects with reason=missing_code when Shopify omits the authorization code', async () => {
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+
+      const redirect = await startThenCallback(service, { code: undefined });
+
+      expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=missing_code');
+    });
+
+    it('redirects with reason=token_exchange_failed when Shopify rejects the code', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 401 })));
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+
+      const redirect = await startThenCallback(service);
+
+      expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=token_exchange_failed');
+    });
+
+    it('redirects with reason=verification_failed when the exchanged token does not verify', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpat_new' }), { status: 200 })));
+      const adapter = makeAdapter({ verifyConnection: vi.fn(async () => false) });
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), adapter, makeLogger());
+
+      const redirect = await startThenCallback(service);
+
+      expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=verification_failed');
+    });
+
+    it('stores the credentials through IntegrationService and redirects to connected on success', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpat_new' }), { status: 200 })));
+      const integrationService = makeIntegrationService();
+      const service = new ShopifyOAuthService(makeConfig(), integrationService, makeAdapter(), makeLogger());
+
+      const redirect = await startThenCallback(service);
+
+      expect(integrationService.connect).toHaveBeenCalledWith('ws_1', 'shopify');
+      expect(integrationService.setCredentials).toHaveBeenCalledWith('ws_1', 'shopify', {
+        shopDomain: SHOP,
+        accessToken: 'shpat_new',
+      });
+      expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=connected');
+    });
+
+    it('still stores fresh credentials when the workspace is already connected (re-authorization)', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpat_rotated' }), { status: 200 })));
+      const integrationService = makeIntegrationService({
+        connect: vi.fn(async () => {
+          throw new ConflictError('This provider is already connected.');
+        }),
+      });
+      const service = new ShopifyOAuthService(makeConfig(), integrationService, makeAdapter(), makeLogger());
+
+      const redirect = await startThenCallback(service);
+
+      expect(integrationService.setCredentials).toHaveBeenCalledWith('ws_1', 'shopify', {
+        shopDomain: SHOP,
+        accessToken: 'shpat_rotated',
+      });
+      expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=connected');
+    });
+
+    it('redirects with reason=expired when state is older than the allowed window', async () => {
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+      vi.spyOn(Date, 'now').mockReturnValueOnce(1_000_000_000_000);
+      const { state, cookieValue } = start(service);
+      vi.spyOn(Date, 'now').mockReturnValue(1_000_000_000_000 + 11 * 60 * 1000);
+
+      const redirect = await service.handleCallback(signedQuery({ state }), cookieValue);
+
+      expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=expired');
+    });
+  });
+});

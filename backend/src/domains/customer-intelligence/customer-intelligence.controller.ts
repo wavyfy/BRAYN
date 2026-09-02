@@ -1,4 +1,4 @@
-import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { WorkspaceMembershipGuard } from '../workspace/workspace-membership.guard';
 import { CustomerIntelligenceService } from './customer-intelligence.service';
 
@@ -12,6 +12,20 @@ import { CustomerIntelligenceService } from './customer-intelligence.service';
 @UseGuards(WorkspaceMembershipGuard)
 export class CustomerIntelligenceController {
   constructor(private readonly customerIntelligenceService: CustomerIntelligenceService) {}
+
+  @Get()
+  async list(
+    @Param('workspaceId') workspaceId: string,
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.customerIntelligenceService.listCustomers(workspaceId, {
+      search,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
 
   @Get(':canonicalCustomerId')
   async get(@Param('workspaceId') workspaceId: string, @Param('canonicalCustomerId') canonicalCustomerId: string) {

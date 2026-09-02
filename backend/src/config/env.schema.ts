@@ -44,6 +44,18 @@ export const envSchema = z.object({
 
   // Frontend origin allowed to call this API (CORS) — doc 29 §7 Next.js frontend
   FRONTEND_URL: z.string().url().default('http://localhost:3000'),
+
+  // This API's own public origin — used to build the Shopify OAuth
+  // redirect_uri, which must exactly match the URL registered as an
+  // Allowed redirection URL in the Shopify Dev Dashboard.
+  BACKEND_URL: z.string().url().default('http://localhost:3001'),
+
+  // Shopify OAuth app credentials (Dev Dashboard — doc 06/20 Shopify auth).
+  // Optional: absent in environments that don't need a real Shopify
+  // connection (e.g. most test runs); ShopifyOAuthService fails closed if
+  // an OAuth route is actually invoked without them configured.
+  SHOPIFY_APP_CLIENT_ID: z.string().optional(),
+  SHOPIFY_APP_CLIENT_SECRET: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

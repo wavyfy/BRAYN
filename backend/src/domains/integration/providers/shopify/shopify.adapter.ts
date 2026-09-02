@@ -24,8 +24,13 @@ const PRODUCTS_PAGE_SIZE = 250;
 const ORDERS_PAGE_SIZE = 250;
 const COLLECTIONS_PAGE_SIZE = 250;
 const COLLECTS_PAGE_SIZE = 250;
-/** Merchant-supplied at connect time — must be pinned to Shopify's own domain before it drives any fetch() (SSRF). */
-const SHOPIFY_DOMAIN_PATTERN = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i;
+/**
+ * Every Shopify store domain, whether merchant-typed (manual flow) or
+ * Shopify-supplied (`shop` param on an OAuth callback) — must be pinned to
+ * this pattern before it drives any fetch() or OAuth redirect (SSRF).
+ * Exported so ShopifyOAuthService validates against the exact same rule.
+ */
+export const SHOPIFY_DOMAIN_PATTERN = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i;
 
 interface ShopifyCustomer {
   id: number;
@@ -113,15 +118,15 @@ interface ShopifyOrder {
 }
 
 /**
- * Custom-app Admin API token connection (doc 20 — "Use Shopify-supported
- * application/API mechanisms"). This is a development/initial provider-
- * auth mechanism, not BRAYN's permanent merchant onboarding story: the
- * merchant pastes a token generated from their store's own Custom App
- * settings, rather than going through a full OAuth authorization-code
- * flow. Deliberately kept behind ProviderAdapter and the existing
- * encrypted-credential storage (Phase 3) so swapping to OAuth later only
- * means changing this file's verifyConnection() / a new authorize+
- * callback flow — nothing in the Integration domain model changes.
+ * Admin API access, independent of how the token was obtained (doc 20 —
+ * "Use Shopify-supported application/API mechanisms"). The merchant-facing
+ * connection path is now Shopify OAuth (see ShopifyOAuthService, same
+ * folder): the merchant authorizes BRAYN on Shopify's own consent screen,
+ * and the resulting `access_token` is stored through this same credential
+ * shape. `verifyConnection()` here is reused as OAuth's post-exchange
+ * sanity check — this adapter has no OAuth-specific code of its own,
+ * because the credential shape (`shopDomain` + `accessToken`) is identical
+ * either way.
  *
  * credentials shape: `{ shopDomain: "your-store.myshopify.com", accessToken: "shpat_..." }`.
  */
