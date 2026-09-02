@@ -1,9 +1,20 @@
 import { Injectable, type OnModuleInit } from '@nestjs/common';
 import { ProviderError } from '../../../../common/errors/app-error';
 import { ProviderRegistry } from '../../provider-registry.service';
-import type { ProviderAdapter } from '../../provider-adapter.interface';
+import type { CustomerPage, ProviderAdapter } from '../../provider-adapter.interface';
+import type { NormalizedCustomer } from '../../../commerce/customer.service';
 
 const WC_API_PATH = 'wp-json/wc/v3';
+const CUSTOMERS_PAGE_SIZE = 100;
+
+interface WooCommerceCustomer {
+  id: number;
+  email: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  date_modified_gmt: string | null;
+  billing?: { phone?: string | null };
+}
 
 /**
  * Consumer key/secret Basic Auth connection (doc 20 WooCommerce —
@@ -21,9 +32,6 @@ const WC_API_PATH = 'wp-json/wc/v3';
  * resolving + pinning the IP at fetch time if this becomes a real
  * threat-model concern; today's mitigation matches ShopifyAdapter's own
  * (hostname-string, not resolved-IP) SSRF guard.
- *
- * This part covers connection/authentication only — fetch-family and
- * webhook methods land in later parts (doc 19 Phase 4 per-provider checklist).
  *
  * credentials shape: `{ storeUrl: "https://merchant-store.com", consumerKey: "ck_...", consumerSecret: "cs_..." }`.
  */
@@ -49,24 +57,17 @@ export class WooCommerceAdapter implements ProviderAdapter, OnModuleInit {
       return false;
     }
 
-    let url: URL;
-    try {
-      url = new URL(storeUrl);
-    } catch {
-      // A malformed URL is the merchant having entered something wrong — an
-      // ordinary rejection, not a thrown error.
+    const url = parseStoreUrl(storeUrl);
+    if (!url) {
+      // A malformed URL, non-HTTPS scheme, or private/loopback host is the
+      // merchant having entered something wrong (or a blocked SSRF attempt)
+      // — an ordinary rejection, not a thrown error.
       return false;
     }
-    if (url.protocol !== 'https:' || isPrivateOrLoopbackHost(url.hostname)) {
-      return false;
-    }
-
-    const requestUrl = new URL(`${trimTrailingSlash(url.pathname)}/${WC_API_PATH}/customers?per_page=1`, url);
-    const basicAuth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
 
     let response: Response;
     try {
-      response = await fetch(requestUrl, { headers: { Authorization: `Basic ${basicAuth}` } });
+      response = await fetch(resolveWcUrl(url, 'customers?per_page=1'), { headers: authHeader(consumerKey, consumerSecret) });
     } catch (error) {
       // Network/DNS failure — unclassified, not an ordinary "bad credentials" outcome.
       throw new ProviderError(
@@ -85,6 +86,84 @@ export class WooCommerceAdapter implements ProviderAdapter, OnModuleInit {
 
     return true;
   }
+
+  /**
+   * One page of the merchant's customers (doc 20 — Initial Import:
+   * pagination). `cursor`, when present, is the exact next-page URL
+   * WooCommerce returned in its previous response's `Link` header — same
+   * "opaque provider-specific" cursor contract ShopifyAdapter uses.
+   *
+   * `options.updatedAtMin` isn't applied: WooCommerce's customers list has
+   * no modified-since filter (only `after`/`before`, which filter by
+   * registration date, not `date_modified`) — incremental sync for this
+   * resource is deferred to a later part.
+   */
+  async fetchCustomers(credentials: Record<string, string>, cursor?: string): Promise<CustomerPage> {
+    const { body, nextCursor } = await this.fetchPage(credentials, cursor, `customers?per_page=${CUSTOMERS_PAGE_SIZE}`);
+    const customers = body as WooCommerceCustomer[];
+
+    return { customers: customers.map(normalizeCustomer), nextCursor };
+  }
+
+  /**
+   * Shared fetch+pagination for every resource page (doc 20 — Initial
+   * Import: pagination). Unlike `verifyConnection`, a validation failure
+   * here throws rather than returning false — credentials/storeUrl were
+   * already verified at connect time, so a failure here means stored
+   * state was tampered with or corrupted, an infrastructure problem.
+   */
+  private async fetchPage(
+    credentials: Record<string, string>,
+    cursor: string | undefined,
+    defaultRelativePath: string,
+  ): Promise<{ body: unknown; nextCursor: string | null }> {
+    const { storeUrl, consumerKey, consumerSecret } = credentials;
+    const baseUrl = parseStoreUrl(storeUrl);
+    if (!baseUrl) {
+      throw new ProviderError('Stored WooCommerce store URL is invalid.');
+    }
+
+    const url = cursor ? assertCursorMatchesStore(cursor, baseUrl.hostname) : resolveWcUrl(baseUrl, defaultRelativePath);
+
+    let response: Response;
+    try {
+      response = await fetch(url, { headers: authHeader(consumerKey, consumerSecret) });
+    } catch (error) {
+      throw new ProviderError(
+        `Could not reach WooCommerce store: ${error instanceof Error ? error.message : 'unknown network error'}.`,
+      );
+    }
+    if (!response.ok) {
+      // Credentials were already verified at connect time — a failure here is
+      // an infrastructure/auth problem, not an ordinary rejection to swallow.
+      throw new ProviderError(`WooCommerce fetch failed with status ${response.status}.`);
+    }
+
+    return { body: await response.json(), nextCursor: parseNextCursor(response.headers.get('link')) };
+  }
+}
+
+/** Resolves and validates `storeUrl`; null on anything that should be treated as an ordinary rejection (see WooCommerceAdapter's doc comment). */
+function parseStoreUrl(storeUrl: string): URL | null {
+  let url: URL;
+  try {
+    url = new URL(storeUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' || isPrivateOrLoopbackHost(url.hostname)) {
+    return null;
+  }
+  return url;
+}
+
+/** Joins the WooCommerce REST API path onto `baseUrl`, preserving any subpath the merchant's store runs under (e.g. `https://example.com/shop`). */
+function resolveWcUrl(baseUrl: URL, relativePath: string): URL {
+  return new URL(`${trimTrailingSlash(baseUrl.pathname)}/${WC_API_PATH}/${relativePath}`, baseUrl);
+}
+
+function authHeader(consumerKey: string, consumerSecret: string): Record<string, string> {
+  return { Authorization: `Basic ${Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64')}` };
 }
 
 function trimTrailingSlash(pathname: string): string {
@@ -113,4 +192,52 @@ function isPrivateOrLoopbackHost(hostname: string): boolean {
 
   const normalized = host.replace(/^\[|\]$/g, '');
   return normalized === '::1' || normalized.startsWith('fe80:') || normalized.startsWith('fc') || normalized.startsWith('fd');
+}
+
+/**
+ * Same SSRF reasoning as ShopifyAdapter's `assertCursorMatchesShop`: a
+ * malicious or corrupted `Link` header could point off-store, taking the
+ * consumer key/secret with it — pin every cursor URL's host back to the
+ * verified store before it's fetched.
+ */
+function assertCursorMatchesStore(cursor: string, storeHostname: string): string {
+  let hostname: string;
+  try {
+    hostname = new URL(cursor).hostname;
+  } catch {
+    throw new ProviderError('Received an invalid pagination cursor from WooCommerce.');
+  }
+  if (hostname.toLowerCase() !== storeHostname.toLowerCase()) {
+    throw new ProviderError('Pagination cursor host does not match the connected store.');
+  }
+  return cursor;
+}
+
+/** Extracts the `rel="next"` URL from WooCommerce's `Link` pagination header, or null on the last page — same format as Shopify's. */
+function parseNextCursor(linkHeader: string | null): string | null {
+  if (!linkHeader) {
+    return null;
+  }
+  const next = linkHeader
+    .split(',')
+    .map((part) => part.trim())
+    .find((part) => part.endsWith('rel="next"'));
+
+  return next?.match(/^<(.+)>;/)?.[1] ?? null;
+}
+
+function normalizeCustomer(customer: WooCommerceCustomer): NormalizedCustomer {
+  return {
+    externalId: String(customer.id),
+    email: customer.email,
+    firstName: customer.first_name,
+    lastName: customer.last_name,
+    phone: customer.billing?.phone ?? null,
+    sourceUpdatedAt: customer.date_modified_gmt ? parseGmtDate(customer.date_modified_gmt) : null,
+  };
+}
+
+/** WooCommerce's `_gmt` fields are UTC by definition but come back without a timezone designator (e.g. "2026-01-01T12:00:00") — `Date` would otherwise parse that as local time. */
+function parseGmtDate(value: string): Date {
+  return new Date(/[Zz]|[+-]\d\d:?\d\d$/.test(value) ? value : `${value}Z`);
 }

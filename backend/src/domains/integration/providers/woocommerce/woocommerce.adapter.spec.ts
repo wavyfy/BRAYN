@@ -6,8 +6,8 @@ function makeRegistry(): ProviderRegistry {
   return { register: vi.fn() } as unknown as ProviderRegistry;
 }
 
-function jsonResponse(status: number, body: unknown = []) {
-  return new Response(JSON.stringify(body), { status });
+function jsonResponse(status: number, body: unknown = [], headers?: Record<string, string>) {
+  return new Response(JSON.stringify(body), { status, headers });
 }
 
 describe('WooCommerceAdapter', () => {
@@ -138,6 +138,102 @@ describe('WooCommerceAdapter', () => {
 
       await expect(
         adapter.verifyConnection({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' }),
+      ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+    });
+  });
+
+  describe('fetchCustomers()', () => {
+    it('requests the first page with Basic Auth and normalizes the customer shape', async () => {
+      const fetchMock = vi.fn<(url: string | URL, init?: RequestInit) => Promise<Response>>(async () =>
+        jsonResponse(200, [
+          {
+            id: 123,
+            email: 'a@example.com',
+            first_name: 'Ada',
+            last_name: 'Lovelace',
+            date_modified_gmt: '2026-01-01T00:00:00',
+            billing: { phone: '555-1234' },
+          },
+        ]),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      const page = await adapter.fetchCustomers({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' });
+
+      expect(page).toEqual({
+        customers: [
+          {
+            externalId: '123',
+            email: 'a@example.com',
+            firstName: 'Ada',
+            lastName: 'Lovelace',
+            phone: '555-1234',
+            sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
+          },
+        ],
+        nextCursor: null,
+      });
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(String(url)).toBe('https://merchant-store.com/wp-json/wc/v3/customers?per_page=100');
+      const expectedAuth = `Basic ${Buffer.from('ck_1:cs_1').toString('base64')}`;
+      expect((init?.headers as Record<string, string>).Authorization).toBe(expectedAuth);
+    });
+
+    it('normalizes a missing billing.phone and a missing date_modified_gmt to null', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => jsonResponse(200, [{ id: 1, email: null, first_name: null, last_name: null, date_modified_gmt: null }])),
+      );
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      const page = await adapter.fetchCustomers({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' });
+
+      expect(page.customers[0].phone).toBeNull();
+      expect(page.customers[0].sourceUpdatedAt).toBeNull();
+    });
+
+    it('extracts the next-page URL from the Link header', async () => {
+      const nextUrl = 'https://merchant-store.com/wp-json/wc/v3/customers?per_page=100&page=2';
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, [], { link: `<${nextUrl}>; rel="next"` })));
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      const page = await adapter.fetchCustomers({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' });
+
+      expect(page.nextCursor).toBe(nextUrl);
+    });
+
+    it('continues pagination using the exact cursor URL on the next call', async () => {
+      const fetchMock = vi.fn<(url: string | URL) => Promise<Response>>(async () => jsonResponse(200, []));
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new WooCommerceAdapter(makeRegistry());
+      const cursor = 'https://merchant-store.com/wp-json/wc/v3/customers?per_page=100&page=2';
+
+      await adapter.fetchCustomers({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' }, cursor);
+
+      expect(String(fetchMock.mock.calls[0][0])).toBe(cursor);
+    });
+
+    it('throws ProviderError and never calls fetch for a cursor host that does not match the connected store — SSRF guard', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      await expect(
+        adapter.fetchCustomers(
+          { storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' },
+          'https://evil.com/wp-json/wc/v3/customers?page=2',
+        ),
+      ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('throws ProviderError on a non-2xx response', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(500)));
+      const adapter = new WooCommerceAdapter(makeRegistry());
+
+      await expect(
+        adapter.fetchCustomers({ storeUrl: 'https://merchant-store.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' }),
       ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
     });
   });
