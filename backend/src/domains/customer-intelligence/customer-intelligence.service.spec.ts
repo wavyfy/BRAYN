@@ -52,7 +52,7 @@ describe('CustomerIntelligenceService', () => {
         canonicalCustomerId: 'canon_1',
         profile: { email: 'a@example.com', firstName: 'Ada', lastName: 'Lovelace', phone: '555-1234' },
         sourceCustomers: [{ provider: 'shopify', externalId: '900' }],
-        commerceContext: { ordersCount: 0, totalSpent: '0', lastOrderAt: null, recentOrders: [] },
+        commerceContext: { ordersCount: 0, totalSpent: '0', lastOrderAt: null, ordersLast90Days: 0, recentOrders: [] },
       });
     });
 
@@ -79,7 +79,7 @@ describe('CustomerIntelligenceService', () => {
       const select = makeSelectQueue([
         [{ id: 'canon_1', primaryEmail: 'a@example.com' }],
         [{ id: 'cc_1', provider: 'shopify', externalId: '900', firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
-        [{ ordersCount: 3, totalSpent: '149.97', lastOrderAt }],
+        [{ ordersCount: 3, totalSpent: '149.97', lastOrderAt, ordersLast90Days: 2 }],
         [{ provider: 'shopify', externalId: '900', totalPrice: '19.99', createdAt: lastOrderAt }],
       ]);
       const service = new CustomerIntelligenceService({ client: { select } } as unknown as DatabaseService);
@@ -90,6 +90,7 @@ describe('CustomerIntelligenceService', () => {
         ordersCount: 3,
         totalSpent: '149.97',
         lastOrderAt,
+        ordersLast90Days: 2,
         recentOrders: [{ provider: 'shopify', externalId: '900', totalPrice: '19.99', createdAt: lastOrderAt }],
       });
     });

@@ -141,6 +141,13 @@
       "when": 1788341951042,
       "tag": "0019_new_fenris",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1788343229656,
+      "tag": "0020_exotic_karma",
+      "breakpoints": true
     }
   ]
 }

@@ -27,6 +27,8 @@ export interface CommerceContext {
   ordersCount: number;
   totalSpent: string;
   lastOrderAt: Date | null;
+  /** Orders in the trailing 90 days — the purchase-frequency signal input (doc10 — Customer Risk & Engagement State). */
+  ordersLast90Days: number;
   recentOrders: RecentOrder[];
 }
 
@@ -188,7 +190,7 @@ export class CustomerIntelligenceService {
   /** `sourceCustomerIds` are `commerce_customers.id` rows — `commerce_orders.customerId` links to those, not to the canonical customer directly. */
   private async getCommerceContext(workspaceId: string, sourceCustomerIds: string[]): Promise<CommerceContext> {
     if (sourceCustomerIds.length === 0) {
-      return { ordersCount: 0, totalSpent: '0', lastOrderAt: null, recentOrders: [] };
+      return { ordersCount: 0, totalSpent: '0', lastOrderAt: null, ordersLast90Days: 0, recentOrders: [] };
     }
 
     const [summary] = await this.database.client
@@ -196,6 +198,7 @@ export class CustomerIntelligenceService {
         ordersCount: sql<number>`count(*)`,
         totalSpent: sql<string>`coalesce(sum(${commerceOrders.totalPrice}::numeric), 0)`,
         lastOrderAt: sql<Date | null>`max(${commerceOrders.sourceUpdatedAt})`,
+        ordersLast90Days: sql<number>`count(*) filter (where coalesce(${commerceOrders.sourceUpdatedAt}, ${commerceOrders.createdAt}) >= now() - interval '90 days')`,
       })
       .from(commerceOrders)
       .where(
@@ -222,6 +225,7 @@ export class CustomerIntelligenceService {
       ordersCount: Number(summary?.ordersCount ?? 0),
       totalSpent: summary?.totalSpent ?? '0',
       lastOrderAt: summary?.lastOrderAt ?? null,
+      ordersLast90Days: Number(summary?.ordersLast90Days ?? 0),
       recentOrders,
     };
   }
