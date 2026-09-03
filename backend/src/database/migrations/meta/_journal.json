@@ -176,6 +176,13 @@
       "when": 1788419171561,
       "tag": "0024_cold_satana",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1788422630489,
+      "tag": "0025_workable_blindfold",
+      "breakpoints": true
     }
   ]
 }
