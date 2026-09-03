@@ -169,6 +169,13 @@
       "when": 1788418482628,
       "tag": "0023_overjoyed_jack_power",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1788419171561,
+      "tag": "0024_cold_satana",
+      "breakpoints": true
     }
   ]
 }
