@@ -449,6 +449,120 @@ describe('IntegrationService', () => {
       });
     });
 
+    it('getCredentials() does not touch the adapter when the stored credentials have no expiresAt', async () => {
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected', credentials: null };
+      const setupChain = makeChain([existing]);
+      const setupService = new IntegrationService(
+        { client: { select: makeSelectQueue([[existing]]), update: vi.fn(() => setupChain) } } as unknown as DatabaseService,
+        makeConfig(),
+        makeRegistry(),
+        makeImportRunService(),
+        makeReconciliationRunService(),
+        makeEventBus(),
+      );
+      await setupService.setCredentials('ws_1', 'shopify', { shopDomain: 'shop.myshopify.com', accessToken: 'shpat_manual' });
+      const encrypted = (setupChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0].credentials as string;
+
+      const adapter = { refreshCredentials: vi.fn() };
+      const client = { select: makeSelectQueue([[{ ...existing, credentials: encrypted }]]) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(adapter), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
+
+      const result = await service.getCredentials('ws_1', 'shopify');
+
+      expect(adapter.refreshCredentials).not.toHaveBeenCalled();
+      expect(result).toEqual({ shopDomain: 'shop.myshopify.com', accessToken: 'shpat_manual' });
+    });
+
+    it('getCredentials() does not refresh when expiresAt is still comfortably in the future', async () => {
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected', credentials: null };
+      const setupChain = makeChain([existing]);
+      const setupService = new IntegrationService(
+        { client: { select: makeSelectQueue([[existing]]), update: vi.fn(() => setupChain) } } as unknown as DatabaseService,
+        makeConfig(),
+        makeRegistry(),
+        makeImportRunService(),
+        makeReconciliationRunService(),
+        makeEventBus(),
+      );
+      const fresh = {
+        shopDomain: 'shop.myshopify.com',
+        accessToken: 'shpca_fresh',
+        grantType: 'client_credentials',
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      };
+      await setupService.setCredentials('ws_1', 'shopify', fresh);
+      const encrypted = (setupChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0].credentials as string;
+
+      const adapter = { refreshCredentials: vi.fn() };
+      const client = { select: makeSelectQueue([[{ ...existing, credentials: encrypted }]]) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(adapter), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
+
+      const result = await service.getCredentials('ws_1', 'shopify');
+
+      expect(adapter.refreshCredentials).not.toHaveBeenCalled();
+      expect(result).toEqual(fresh);
+    });
+
+    it('getCredentials() refreshes and persists an expiring Shopify client-credentials token', async () => {
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected', credentials: null };
+      const setupChain = makeChain([existing]);
+      const setupService = new IntegrationService(
+        { client: { select: makeSelectQueue([[existing]]), update: vi.fn(() => setupChain) } } as unknown as DatabaseService,
+        makeConfig(),
+        makeRegistry(),
+        makeImportRunService(),
+        makeReconciliationRunService(),
+        makeEventBus(),
+      );
+      const stale = {
+        shopDomain: 'shop.myshopify.com',
+        accessToken: 'shpca_old',
+        grantType: 'client_credentials',
+        expiresAt: new Date(Date.now() - 1000).toISOString(),
+      };
+      await setupService.setCredentials('ws_1', 'shopify', stale);
+      const encrypted = (setupChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0].credentials as string;
+
+      const refreshed = {
+        shopDomain: 'shop.myshopify.com',
+        accessToken: 'shpca_new',
+        grantType: 'client_credentials',
+        expiresAt: new Date(Date.now() + 86_399_000).toISOString(),
+      };
+      const adapter = { refreshCredentials: vi.fn(async () => refreshed) };
+      const storedRow = { ...existing, credentials: encrypted };
+      const updateChain = makeChain([storedRow]);
+      const client = { select: makeSelectQueue([[storedRow], [storedRow]]), update: vi.fn(() => updateChain) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(adapter), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
+
+      const result = await service.getCredentials('ws_1', 'shopify');
+
+      expect(adapter.refreshCredentials).toHaveBeenCalledWith(stale);
+      expect(result).toEqual(refreshed);
+      expect(client.update).toHaveBeenCalled();
+    });
+
+    it('getCredentials() falls back to the stale credentials when the adapter has no refreshCredentials (e.g. WooCommerce)', async () => {
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'woocommerce', status: 'connected', credentials: null };
+      const setupChain = makeChain([existing]);
+      const setupService = new IntegrationService(
+        { client: { select: makeSelectQueue([[existing]]), update: vi.fn(() => setupChain) } } as unknown as DatabaseService,
+        makeConfig(),
+        makeRegistry(),
+        makeImportRunService(),
+        makeReconciliationRunService(),
+        makeEventBus(),
+      );
+      const stale = { consumerKey: 'ck_x', consumerSecret: 'cs_x', expiresAt: new Date(Date.now() - 1000).toISOString() };
+      await setupService.setCredentials('ws_1', 'woocommerce', stale);
+      const encrypted = (setupChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0].credentials as string;
+
+      const client = { select: makeSelectQueue([[{ ...existing, credentials: encrypted }]]) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry({}), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
+
+      await expect(service.getCredentials('ws_1', 'woocommerce')).resolves.toEqual(stale);
+    });
+
     it('getCredentials() returns null when no credentials have been stored yet', async () => {
       const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected', credentials: null };
       const client = { select: makeSelectQueue([[existing]]) };

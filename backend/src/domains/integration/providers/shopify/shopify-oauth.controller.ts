@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { ZodValidationPipe } from '../../../../common/api/zod-validation.pipe';
 import { Public } from '../../../../common/auth/public.decorator';
@@ -52,6 +52,22 @@ export class ShopifyOAuthStartController {
       `${STATE_COOKIE_NAME}=${encodeURIComponent(cookieValue)}; HttpOnly; Secure; SameSite=Lax; Max-Age=${cookieMaxAgeSeconds}; Path=${STATE_COOKIE_PATH}`,
     );
     return { authorizeUrl };
+  }
+
+  /**
+   * Client-credentials grant (doc — ShopifyOAuthService.connectViaClientCredentials):
+   * a direct, synchronous connect for a shop in BRAYN's own Shopify
+   * organization — no redirect, no cookie, so no `Res` handling needed
+   * here unlike `start`.
+   */
+  @Post('client-credentials')
+  @RequireWorkspaceRole('owner', 'admin')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async connectViaClientCredentials(
+    @Param('workspaceId') workspaceId: string,
+    @Body(new ZodValidationPipe(startShopifyOAuthSchema)) body: StartShopifyOAuthInput,
+  ) {
+    await this.shopifyOAuthService.connectViaClientCredentials(workspaceId, body.shopDomain);
   }
 }
 

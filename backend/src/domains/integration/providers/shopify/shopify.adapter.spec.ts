@@ -2,6 +2,8 @@ import { createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ShopifyAdapter } from './shopify.adapter';
 import type { ProviderRegistry } from '../../provider-registry.service';
+import type { ConfigService } from '@nestjs/config';
+import type { Env } from '../../../../config/env.schema';
 
 function sign(rawBody: string, secret: string) {
   return createHmac('sha256', secret).update(rawBody, 'utf8').digest('base64');
@@ -9,6 +11,11 @@ function sign(rawBody: string, secret: string) {
 
 function makeRegistry(): ProviderRegistry {
   return { register: vi.fn() } as unknown as ProviderRegistry;
+}
+
+function makeConfig(overrides: Partial<Env> = {}): ConfigService<Env, true> {
+  const env: Partial<Env> = { SHOPIFY_APP_CLIENT_ID: 'client_id', SHOPIFY_APP_CLIENT_SECRET: 'client_secret', ...overrides };
+  return { get: (key: keyof Env) => env[key] } as unknown as ConfigService<Env, true>;
 }
 
 function jsonResponse(status: number, body: unknown = {}, headers?: Record<string, string>) {
@@ -22,7 +29,7 @@ describe('ShopifyAdapter', () => {
 
   it('registers itself with the ProviderRegistry on module init', () => {
     const registry = makeRegistry();
-    const adapter = new ShopifyAdapter(registry);
+    const adapter = new ShopifyAdapter(registry, makeConfig());
 
     adapter.onModuleInit();
 
@@ -31,7 +38,7 @@ describe('ShopifyAdapter', () => {
 
   describe('verifyConnection()', () => {
     it('returns false when shopDomain or accessToken is missing', async () => {
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await expect(adapter.verifyConnection({})).resolves.toBe(false);
       await expect(adapter.verifyConnection({ shopDomain: 'x.myshopify.com' })).resolves.toBe(false);
@@ -43,7 +50,7 @@ describe('ShopifyAdapter', () => {
         jsonResponse(200, { shop: { name: 'Acme' } }),
       );
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       const result = await adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
 
@@ -55,7 +62,7 @@ describe('ShopifyAdapter', () => {
 
     it('returns false (not a throw) on 401 — an invalid token is an ordinary rejection', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401)));
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await expect(
         adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }),
@@ -64,7 +71,7 @@ describe('ShopifyAdapter', () => {
 
     it('returns false on 404 — an unknown shop domain is an ordinary rejection', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(404)));
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await expect(
         adapter.verifyConnection({ shopDomain: 'nonexistent.myshopify.com', accessToken: 'shpat_123' }),
@@ -74,7 +81,7 @@ describe('ShopifyAdapter', () => {
     it('returns false (not a throw, and never calls fetch) for a shopDomain outside myshopify.com — SSRF guard', async () => {
       const fetchMock = vi.fn();
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await expect(
         adapter.verifyConnection({ shopDomain: 'internal.local', accessToken: 'shpat_123' }),
@@ -90,7 +97,7 @@ describe('ShopifyAdapter', () => {
 
     it('throws ProviderError on a 5xx response — unexpected, not a credentials problem', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(503)));
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await expect(
         adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }),
@@ -104,7 +111,7 @@ describe('ShopifyAdapter', () => {
           throw new Error('getaddrinfo ENOTFOUND');
         }),
       );
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await expect(
         adapter.verifyConnection({ shopDomain: 'bad.myshopify.com', accessToken: 'shpat_123' }),
@@ -122,7 +129,7 @@ describe('ShopifyAdapter', () => {
         }),
       );
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       const page = await adapter.fetchCustomers({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
 
@@ -152,7 +159,7 @@ describe('ShopifyAdapter', () => {
           jsonResponse(200, { customers: [] }, { link: `<${nextUrl}>; rel="next"` }),
         ),
       );
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       const page = await adapter.fetchCustomers({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
 
@@ -162,7 +169,7 @@ describe('ShopifyAdapter', () => {
     it('fetches a subsequent page directly from the cursor URL', async () => {
       const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => jsonResponse(200, { customers: [] }));
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
       const cursor = 'https://acme.myshopify.com/admin/api/2024-10/customers.json?page_info=abc123';
 
       await adapter.fetchCustomers({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, cursor);
@@ -173,7 +180,7 @@ describe('ShopifyAdapter', () => {
     it('appends updated_at_min on the first page when options.updatedAtMin is given (doc 06/20 — Incremental Synchronization)', async () => {
       const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => jsonResponse(200, { customers: [] }));
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await adapter.fetchCustomers(
         { shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' },
@@ -189,7 +196,7 @@ describe('ShopifyAdapter', () => {
     it('ignores options.updatedAtMin on a subsequent page — the cursor URL already carries it forward', async () => {
       const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => jsonResponse(200, { customers: [] }));
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
       const cursor = 'https://acme.myshopify.com/admin/api/2024-10/customers.json?page_info=abc123&updated_at_min=2026-01-01T00%3A00%3A00.000Z';
 
       await adapter.fetchCustomers({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, cursor, {
@@ -201,7 +208,7 @@ describe('ShopifyAdapter', () => {
 
     it('throws ProviderError on a non-2xx response', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401)));
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await expect(
         adapter.fetchCustomers({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }),
@@ -215,7 +222,7 @@ describe('ShopifyAdapter', () => {
           throw new Error('getaddrinfo ENOTFOUND');
         }),
       );
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await expect(
         adapter.fetchCustomers({ shopDomain: 'bad.myshopify.com', accessToken: 'shpat_123' }),
@@ -225,7 +232,7 @@ describe('ShopifyAdapter', () => {
     it('throws ProviderError and never calls fetch for a stored shopDomain outside myshopify.com — SSRF guard', async () => {
       const fetchMock = vi.fn();
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await expect(
         adapter.fetchCustomers({ shopDomain: 'evil.com', accessToken: 'shpat_123' }),
@@ -236,7 +243,7 @@ describe('ShopifyAdapter', () => {
     it('throws ProviderError and never calls fetch when the cursor host does not match the shop — SSRF/exfil guard', async () => {
       const fetchMock = vi.fn();
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await expect(
         adapter.fetchCustomers(
@@ -265,7 +272,7 @@ describe('ShopifyAdapter', () => {
         }),
       );
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       const page = await adapter.fetchProducts({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
 
@@ -296,7 +303,7 @@ describe('ShopifyAdapter', () => {
     it('extracts the next-page URL from the Link header', async () => {
       const nextUrl = 'https://acme.myshopify.com/admin/api/2024-10/products.json?page_info=abc123';
       vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { products: [] }, { link: `<${nextUrl}>; rel="next"` })));
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       const page = await adapter.fetchProducts({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
 
@@ -306,7 +313,7 @@ describe('ShopifyAdapter', () => {
     it('appends updated_at_min on the first page when options.updatedAtMin is given', async () => {
       const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => jsonResponse(200, { products: [] }));
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await adapter.fetchProducts({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, undefined, {
         updatedAtMin: new Date('2026-01-01T00:00:00.000Z'),
@@ -319,7 +326,7 @@ describe('ShopifyAdapter', () => {
 
     it('throws ProviderError on a non-2xx response', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401)));
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await expect(
         adapter.fetchProducts({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }),
@@ -329,7 +336,7 @@ describe('ShopifyAdapter', () => {
     it('throws ProviderError and never calls fetch for a stored shopDomain outside myshopify.com — SSRF guard', async () => {
       const fetchMock = vi.fn();
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await expect(
         adapter.fetchProducts({ shopDomain: 'evil.com', accessToken: 'shpat_123' }),
@@ -354,7 +361,7 @@ describe('ShopifyAdapter', () => {
         }),
       );
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
 
@@ -379,7 +386,7 @@ describe('ShopifyAdapter', () => {
     it('appends updated_at_min after status=any on the first page when options.updatedAtMin is given', async () => {
       const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => jsonResponse(200, { orders: [] }));
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, undefined, {
         updatedAtMin: new Date('2026-01-01T00:00:00.000Z'),
@@ -407,7 +414,7 @@ describe('ShopifyAdapter', () => {
           }),
         ),
       );
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
 
@@ -418,7 +425,7 @@ describe('ShopifyAdapter', () => {
     it('extracts the next-page URL from the Link header', async () => {
       const nextUrl = 'https://acme.myshopify.com/admin/api/2024-10/orders.json?page_info=abc123';
       vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { orders: [] }, { link: `<${nextUrl}>; rel="next"` })));
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
 
@@ -427,7 +434,7 @@ describe('ShopifyAdapter', () => {
 
     it('throws ProviderError on a non-2xx response', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401)));
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await expect(
         adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }),
@@ -463,7 +470,7 @@ describe('ShopifyAdapter', () => {
           }),
         ),
       );
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
 
@@ -489,7 +496,7 @@ describe('ShopifyAdapter', () => {
           }),
         ),
       );
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
 
@@ -526,7 +533,7 @@ describe('ShopifyAdapter', () => {
           }),
         ),
       );
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
 
@@ -546,7 +553,7 @@ describe('ShopifyAdapter', () => {
     it('throws ProviderError and never calls fetch for a stored shopDomain outside myshopify.com — SSRF guard', async () => {
       const fetchMock = vi.fn();
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await expect(
         adapter.fetchOrders({ shopDomain: 'evil.com', accessToken: 'shpat_123' }),
@@ -557,7 +564,7 @@ describe('ShopifyAdapter', () => {
 
   describe('verifyWebhookSignature()', () => {
     it('returns true for a correctly signed body', () => {
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
       const rawBody = '{"id":1}';
       const signature = sign(rawBody, 'shhh');
 
@@ -565,7 +572,7 @@ describe('ShopifyAdapter', () => {
     });
 
     it('returns false when the signature does not match', () => {
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       expect(
         adapter.verifyWebhookSignature('{"id":1}', { 'x-shopify-hmac-sha256': 'bogus==' }, 'shhh'),
@@ -573,7 +580,7 @@ describe('ShopifyAdapter', () => {
     });
 
     it('returns false when the body was tampered with after signing', () => {
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
       const signature = sign('{"id":1}', 'shhh');
 
       expect(
@@ -582,7 +589,7 @@ describe('ShopifyAdapter', () => {
     });
 
     it('returns false when the signature header is missing', () => {
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       expect(adapter.verifyWebhookSignature('{"id":1}', {}, 'shhh')).toBe(false);
     });
@@ -598,7 +605,7 @@ describe('ShopifyAdapter', () => {
         ),
       );
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       const page = await adapter.fetchCollections({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
 
@@ -612,7 +619,7 @@ describe('ShopifyAdapter', () => {
     it('continues custom_collections pagination when the cursor carries the custom: phase prefix', async () => {
       const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => jsonResponse(200, { custom_collections: [] }));
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await adapter.fetchCollections(
         { shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' },
@@ -630,7 +637,7 @@ describe('ShopifyAdapter', () => {
           jsonResponse(200, { smart_collections: [{ id: 20, title: 'Best Sellers', updated_at: '2026-01-02T00:00:00Z' }] }),
         );
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       const page = await adapter.fetchCollections({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
 
@@ -646,7 +653,7 @@ describe('ShopifyAdapter', () => {
     it('continues smart_collections pagination when the cursor carries the smart: phase prefix', async () => {
       const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => jsonResponse(200, { smart_collections: [] }));
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       const page = await adapter.fetchCollections(
         { shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' },
@@ -660,7 +667,7 @@ describe('ShopifyAdapter', () => {
     it('appends updated_at_min to both custom and smart phase requests when options.updatedAtMin is given', async () => {
       const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => jsonResponse(200, { custom_collections: [], smart_collections: [] }));
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await adapter.fetchCollections({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, undefined, {
         updatedAtMin: new Date('2026-01-01T00:00:00.000Z'),
@@ -681,7 +688,7 @@ describe('ShopifyAdapter', () => {
         jsonResponse(200, { collects: [{ id: 500, collection_id: 10, product_id: 55 }] }),
       );
       vi.stubGlobal('fetch', fetchMock);
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       const page = await adapter.fetchCollects({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
 
@@ -695,7 +702,7 @@ describe('ShopifyAdapter', () => {
 
   describe('parseWebhookEvent()', () => {
     it('normalizes a customers/update delivery, using the X-Shopify-Webhook-Id header as the dedupe key', () => {
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
       const rawBody = JSON.stringify({
         id: 1,
         email: 'a@x.com',
@@ -728,7 +735,7 @@ describe('ShopifyAdapter', () => {
     });
 
     it('normalizes a products/create delivery with nested variants', () => {
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
       const rawBody = JSON.stringify({
         id: 55,
         title: 'Classic Tee',
@@ -748,7 +755,7 @@ describe('ShopifyAdapter', () => {
     });
 
     it('normalizes an orders/updated delivery with a guest customer as null', () => {
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
       const rawBody = JSON.stringify({
         id: 900,
         customer: null,
@@ -766,7 +773,7 @@ describe('ShopifyAdapter', () => {
     });
 
     it('normalizes a fulfillments/create delivery — bare fulfillment plus order_id, no nested order', () => {
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
       const rawBody = JSON.stringify({
         id: 7001,
         order_id: 900,
@@ -799,7 +806,7 @@ describe('ShopifyAdapter', () => {
     });
 
     it('recognizes fulfillments/update the same way as fulfillments/create', () => {
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
       const rawBody = JSON.stringify({
         id: 7002,
         order_id: 901,
@@ -820,7 +827,7 @@ describe('ShopifyAdapter', () => {
     });
 
     it('normalizes a collections/create delivery — same bare shape for custom and smart collections', () => {
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
       const rawBody = JSON.stringify({ id: 10, title: 'Summer Sale', updated_at: '2026-01-01T00:00:00Z' });
 
       const result = adapter.parseWebhookEvent(rawBody, {
@@ -835,7 +842,7 @@ describe('ShopifyAdapter', () => {
     });
 
     it('recognizes collections/update the same way as collections/create', () => {
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
       const rawBody = JSON.stringify({ id: 11, title: 'Best Sellers', updated_at: '2026-01-02T00:00:00Z' });
 
       const result = adapter.parseWebhookEvent(rawBody, {
@@ -847,7 +854,7 @@ describe('ShopifyAdapter', () => {
     });
 
     it('returns null for an unrecognized topic (e.g. a delete event) — doc 21 "process only relevant events"', () => {
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       const result = adapter.parseWebhookEvent('{}', { 'x-shopify-topic': 'customers/delete' });
 
@@ -855,19 +862,19 @@ describe('ShopifyAdapter', () => {
     });
 
     it('returns null when the topic header is missing entirely', () => {
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       expect(adapter.parseWebhookEvent('{}', {})).toBeNull();
     });
 
     it('returns null for unparseable JSON', () => {
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       expect(adapter.parseWebhookEvent('not json', { 'x-shopify-topic': 'customers/update' })).toBeNull();
     });
 
     it('derives a stable fallback event id when X-Shopify-Webhook-Id is absent', () => {
-      const adapter = new ShopifyAdapter(makeRegistry());
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
       const rawBody = JSON.stringify({ id: 1, email: null, first_name: null, last_name: null, phone: null, updated_at: '2026-01-01T00:00:00Z' });
 
       const first = adapter.parseWebhookEvent(rawBody, { 'x-shopify-topic': 'customers/update' });
@@ -875,6 +882,59 @@ describe('ShopifyAdapter', () => {
 
       expect(first?.externalEventId).toBeTruthy();
       expect(first?.externalEventId).toBe(second?.externalEventId);
+    });
+  });
+
+  describe('refreshCredentials()', () => {
+    it('returns null for credentials without the client_credentials grantType (e.g. authorization-code/manual tokens)', async () => {
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      const result = await adapter.refreshCredentials({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_x' });
+
+      expect(result).toBeNull();
+    });
+
+    it('re-mints a token and returns fresh credentials for a client_credentials grant', async () => {
+      const fetchMock = vi.fn(async () => jsonResponse(200, { access_token: 'shpca_new', expires_in: 86399 }));
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+      const before = Date.now();
+
+      const result = await adapter.refreshCredentials({
+        shopDomain: 'acme.myshopify.com',
+        accessToken: 'shpca_old',
+        grantType: 'client_credentials',
+        expiresAt: new Date(before - 1000).toISOString(),
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://acme.myshopify.com/admin/oauth/access_token',
+        expect.objectContaining({
+          method: 'POST',
+          body: 'grant_type=client_credentials&client_id=client_id&client_secret=client_secret',
+        }),
+      );
+      expect(result?.shopDomain).toBe('acme.myshopify.com');
+      expect(result?.accessToken).toBe('shpca_new');
+      expect(result?.grantType).toBe('client_credentials');
+      expect(new Date(result!.expiresAt).getTime()).toBeGreaterThanOrEqual(before + 86399 * 1000);
+    });
+
+    it('throws ProviderError when the app client id/secret are not configured', async () => {
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig({ SHOPIFY_APP_CLIENT_ID: undefined }));
+
+      await expect(
+        adapter.refreshCredentials({ shopDomain: 'acme.myshopify.com', accessToken: 'x', grantType: 'client_credentials', expiresAt: new Date().toISOString() }),
+      ).rejects.toThrow('Shopify client-credentials refresh is not configured.');
+    });
+
+    it('throws ProviderError when Shopify rejects the request', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401)));
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      await expect(
+        adapter.refreshCredentials({ shopDomain: 'acme.myshopify.com', accessToken: 'x', grantType: 'client_credentials', expiresAt: new Date().toISOString() }),
+      ).rejects.toThrow('Shopify rejected the client credentials request.');
     });
   });
 });

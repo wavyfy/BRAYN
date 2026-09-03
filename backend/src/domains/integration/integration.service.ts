@@ -21,6 +21,9 @@ import type { SyncRequestedPayload } from './sync-processor.service';
 import type { IntegrationProvider } from './dto/connect-integration.schema';
 import type { Env } from '../../config/env.schema';
 
+/** Refresh a bit before actual expiry (shopify.dev's own offline-token example refreshes ~60s early) rather than racing a request against the exact cutoff. */
+const CREDENTIAL_REFRESH_SKEW_MS = 60_000;
+
 /**
  * Columns safe to return from the API. Excludes `credentials` — the
  * encrypted payload must never leave the service layer (doc 18: provider
@@ -300,7 +303,11 @@ export class IntegrationService {
     await this.database.client.update(integrations).set({ credentials: encrypted }).where(eq(integrations.id, existing.id));
   }
 
-  /** Decrypts a provider's stored credential payload. Internal-only, same as setCredentials(). */
+  /**
+   * Decrypts a provider's stored credential payload. Internal-only, same
+   * as setCredentials(). Transparently re-mints it first if it's
+   * expiring — see refreshIfExpiring's doc comment.
+   */
   async getCredentials(workspaceId: string, provider: IntegrationProvider): Promise<Record<string, string> | null> {
     const existing = await this.findByProvider(workspaceId, provider);
     if (!existing?.credentials) {
@@ -308,7 +315,41 @@ export class IntegrationService {
     }
 
     const key = this.resolveEncryptionKey();
-    return JSON.parse(decryptCredential(existing.credentials, key)) as Record<string, string>;
+    const credentials = JSON.parse(decryptCredential(existing.credentials, key)) as Record<string, string>;
+
+    const refreshed = await this.refreshIfExpiring(workspaceId, provider, credentials);
+    return refreshed ?? credentials;
+  }
+
+  /**
+   * Provider-agnostic refresh-on-read: keys off `credentials.expiresAt`
+   * plus the adapter's own optional `refreshCredentials` (doc20 — some
+   * grant types, e.g. Shopify's client-credentials grant, issue
+   * short-lived tokens with no refresh_token). A credential shape that
+   * never expires (WooCommerce, Shopify's authorization-code token as
+   * BRAYN requests it today) has no `expiresAt` and never enters this
+   * branch. Called once per `getCredentials()`, matching every consumer's
+   * own pattern (import/sync/reconciliation/webhook processors each fetch
+   * credentials once at the start of a run, not per-request within it).
+   */
+  private async refreshIfExpiring(
+    workspaceId: string,
+    provider: IntegrationProvider,
+    credentials: Record<string, string>,
+  ): Promise<Record<string, string> | null> {
+    const expiresAt = credentials.expiresAt;
+    if (!expiresAt || new Date(expiresAt).getTime() > Date.now() + CREDENTIAL_REFRESH_SKEW_MS) {
+      return null;
+    }
+
+    const adapter = this.providerRegistry.get(provider);
+    const refreshed = await adapter.refreshCredentials?.(credentials);
+    if (!refreshed) {
+      return null;
+    }
+
+    await this.setCredentials(workspaceId, provider, refreshed);
+    return refreshed;
   }
 
   private resolveEncryptionKey() {

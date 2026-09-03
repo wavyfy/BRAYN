@@ -1,5 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { Injectable, type OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ProviderError } from '../../../../common/errors/app-error';
 import { ProviderRegistry } from '../../provider-registry.service';
 import type {
@@ -17,6 +18,7 @@ import type { NormalizedCustomer } from '../../../commerce/customer.service';
 import type { NormalizedFulfillment, NormalizedOrder, NormalizedRefund } from '../../../commerce/order.service';
 import type { NormalizedProduct } from '../../../commerce/product.service';
 import type { NormalizedCollect, NormalizedCollection } from '../../../commerce/collection.service';
+import type { Env } from '../../../../config/env.schema';
 
 const SHOPIFY_API_VERSION = '2024-10';
 const CUSTOMERS_PAGE_SIZE = 250;
@@ -31,6 +33,51 @@ const COLLECTS_PAGE_SIZE = 250;
  * Exported so ShopifyOAuthService validates against the exact same rule.
  */
 export const SHOPIFY_DOMAIN_PATTERN = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i;
+
+/** Tags a stored credential as having come from the client-credentials grant (shopify.dev — "Authenticate an app for stores in your organization") — see ShopifyOAuthService.connectViaClientCredentials and ShopifyAdapter.refreshCredentials. */
+export const SHOPIFY_CLIENT_CREDENTIALS_GRANT_TYPE = 'client_credentials';
+
+/**
+ * Shopify's client-credentials grant (shopify.dev): the app exchanges its
+ * own `client_id`/`client_secret` directly for a token — no `redirect_uri`,
+ * no merchant consent screen, no `state`. Only works for a shop in the
+ * same Shopify organization as this app; Shopify itself rejects the
+ * request otherwise (BRAYN adds no allowlist of its own here — that check
+ * belongs to Shopify, not duplicated in this codebase). The resulting
+ * token expires in ~24h (`expires_in`) with no refresh_token — the caller
+ * re-requests the same way when it's about to expire.
+ *
+ * Exported so both ShopifyOAuthService (initial connect) and
+ * ShopifyAdapter.refreshCredentials (re-mint on expiry) share one
+ * implementation rather than two copies of the same HTTP call.
+ */
+export async function requestShopifyClientCredentialsToken(
+  shopDomain: string,
+  clientId: string,
+  clientSecret: string,
+): Promise<{ accessToken: string; expiresIn: number }> {
+  const response = await fetch(`https://${shopDomain}/admin/oauth/access_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    body: new URLSearchParams({
+      grant_type: SHOPIFY_CLIENT_CREDENTIALS_GRANT_TYPE,
+      client_id: clientId,
+      client_secret: clientSecret,
+    }).toString(),
+  });
+
+  if (!response.ok) {
+    throw new ProviderError('Shopify rejected the client credentials request.');
+  }
+
+  const body = (await response.json()) as { access_token?: string; expires_in?: number };
+  if (!body.access_token) {
+    throw new ProviderError('Shopify client credentials response had no access token.');
+  }
+
+  // shopify.dev: "Always 86399" — falling back to it only if a future API response omits the field.
+  return { accessToken: body.access_token, expiresIn: body.expires_in ?? 86399 };
+}
 
 interface ShopifyCustomer {
   id: number;
@@ -128,16 +175,51 @@ interface ShopifyOrder {
  * because the credential shape (`shopDomain` + `accessToken`) is identical
  * either way.
  *
- * credentials shape: `{ shopDomain: "your-store.myshopify.com", accessToken: "shpat_..." }`.
+ * credentials shape: `{ shopDomain: "your-store.myshopify.com", accessToken: "shpat_..." }` for
+ * the authorization-code/manual paths (no expiry tracked); the client-credentials
+ * grant (BRAYN's own organization's stores only — see ShopifyOAuthService.
+ * connectViaClientCredentials) adds `grantType: "client_credentials"` and
+ * `expiresAt` (ISO string) alongside the same two fields.
  */
 @Injectable()
 export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
   readonly provider = 'shopify' as const;
 
-  constructor(private readonly registry: ProviderRegistry) {}
+  constructor(
+    private readonly registry: ProviderRegistry,
+    private readonly config: ConfigService<Env, true>,
+  ) {}
 
   onModuleInit(): void {
     this.registry.register(this);
+  }
+
+  /**
+   * Re-mints a client-credentials-grant token before it expires (doc07 —
+   * IntegrationService.getCredentials calls this generically off
+   * `credentials.expiresAt`). Returns `null` for any other credential
+   * shape — the authorization-code/manual token has no refresh mechanism
+   * here, same as WooCommerce; nothing to do.
+   */
+  async refreshCredentials(credentials: Record<string, string>): Promise<Record<string, string> | null> {
+    if (credentials.grantType !== SHOPIFY_CLIENT_CREDENTIALS_GRANT_TYPE) {
+      return null;
+    }
+
+    const { shopDomain } = credentials;
+    const clientId = this.config.get('SHOPIFY_APP_CLIENT_ID', { infer: true });
+    const clientSecret = this.config.get('SHOPIFY_APP_CLIENT_SECRET', { infer: true });
+    if (!shopDomain || !clientId || !clientSecret) {
+      throw new ProviderError('Shopify client-credentials refresh is not configured.');
+    }
+
+    const { accessToken, expiresIn } = await requestShopifyClientCredentialsToken(shopDomain, clientId, clientSecret);
+    return {
+      shopDomain,
+      accessToken,
+      grantType: SHOPIFY_CLIENT_CREDENTIALS_GRANT_TYPE,
+      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+    };
   }
 
   /**

@@ -10,7 +10,12 @@ import {
 } from '../../../../common/crypto/credential-cipher';
 import { StructuredLoggerService } from '../../../../common/logging/structured-logger.service';
 import { IntegrationService } from '../../integration.service';
-import { SHOPIFY_DOMAIN_PATTERN, ShopifyAdapter } from './shopify.adapter';
+import {
+  requestShopifyClientCredentialsToken,
+  SHOPIFY_CLIENT_CREDENTIALS_GRANT_TYPE,
+  SHOPIFY_DOMAIN_PATTERN,
+  ShopifyAdapter,
+} from './shopify.adapter';
 import type { Env } from '../../../../config/env.schema';
 
 /** Exactly what ShopifyAdapter's fetchCustomers/fetchProducts/fetchOrders read (doc 20 — request only what's used). */
@@ -87,6 +92,59 @@ export class ShopifyOAuthService {
     url.searchParams.set('redirect_uri', this.callbackUrl());
     url.searchParams.set('state', state);
     return { authorizeUrl: url.toString(), cookieValue: boundSecret, cookieMaxAgeSeconds: STATE_COOKIE_MAX_AGE_SECONDS };
+  }
+
+  /**
+   * Client-credentials grant (shopify.dev — "Authenticate an app for
+   * stores in your organization"): no browser redirect, no merchant
+   * consent screen, no `state`/HMAC/cookie dance — the app exchanges its
+   * own `client_id`/`client_secret` directly for a token. Only works for
+   * a shop in the same Shopify organization as this app; Shopify itself
+   * rejects the request otherwise (BRAYN adds no allowlist of its own —
+   * see requestShopifyClientCredentialsToken's doc comment). Unlike
+   * `handleCallback`, this is a normal authenticated request/response
+   * call (no browser mid-redirect to protect), so it throws on failure
+   * like any other synchronous connect path (doc 20).
+   *
+   * Tokens from this grant expire in ~24h with no refresh_token — unlike
+   * `buildAuthorizeUrl`/`handleCallback`'s token, which this file treats
+   * as non-expiring. `grantType`/`expiresAt` are stored alongside the
+   * credential so ShopifyAdapter.refreshCredentials can re-mint it later
+   * (see IntegrationService.getCredentials).
+   */
+  async connectViaClientCredentials(workspaceId: string, shopDomain: string): Promise<void> {
+    if (!SHOPIFY_DOMAIN_PATTERN.test(shopDomain)) {
+      throw new ValidationError('Enter a valid Shopify store domain (e.g. your-store.myshopify.com).');
+    }
+
+    const clientId = this.config.get('SHOPIFY_APP_CLIENT_ID', { infer: true });
+    const clientSecret = this.config.get('SHOPIFY_APP_CLIENT_SECRET', { infer: true });
+    if (!clientId || !clientSecret) {
+      throw new ProviderError('Shopify OAuth is not configured.');
+    }
+
+    const { accessToken, expiresIn } = await requestShopifyClientCredentialsToken(shopDomain, clientId, clientSecret);
+    const credentials = {
+      shopDomain,
+      accessToken,
+      grantType: SHOPIFY_CLIENT_CREDENTIALS_GRANT_TYPE,
+      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+    };
+
+    const verified = await this.shopifyAdapter.verifyConnection(credentials);
+    if (!verified) {
+      throw new ProviderError('Could not verify the client-credentials token with Shopify.');
+    }
+
+    try {
+      await this.integrationService.connect(workspaceId, 'shopify');
+    } catch (error) {
+      // Already connected (e.g. re-authorizing) — fine, credentials below still get updated to the fresh token.
+      if (!(error instanceof ConflictError)) {
+        throw error;
+      }
+    }
+    await this.integrationService.setCredentials(workspaceId, 'shopify', credentials);
   }
 
   /**

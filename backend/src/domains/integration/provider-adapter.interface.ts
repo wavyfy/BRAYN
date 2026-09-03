@@ -97,6 +97,18 @@ export interface ProviderAdapter {
   verifyConnection(credentials: Record<string, string>): Promise<boolean>;
 
   /**
+   * Re-mints credentials that carry their own expiry (some grant types —
+   * e.g. Shopify's client-credentials grant — issue short-lived tokens
+   * with no separate refresh_token, unlike an OAuth refresh_token flow).
+   * Optional: a provider/credential shape that never expires (WooCommerce,
+   * Shopify's authorization-code token as BRAYN requests it today)
+   * implements neither. Called by IntegrationService.getCredentials()
+   * generically off `credentials.expiresAt` — must return `null` for an
+   * ordinary "not applicable to this credential" case, not throw.
+   */
+  refreshCredentials?(credentials: Record<string, string>): Promise<Record<string, string> | null>;
+
+  /**
    * Webhook support (doc 21 — Webhook Contract). Optional: "supports
    * where applicable" — a provider without webhooks implements neither.
    */

@@ -32,6 +32,7 @@ describe('Shopify OAuth controllers (e2e)', () => {
       cookieMaxAgeSeconds: 600,
     })),
     handleCallback: vi.fn(async () => 'http://localhost:3000/workspace/ws_1/integrations?shopify=connected'),
+    connectViaClientCredentials: vi.fn(async () => undefined),
   };
   const userService = {
     findOrCreateByClerkId: vi.fn(async (clerkUserId: string) => ({ id: 'user_1', clerkUserId })),
@@ -72,6 +73,7 @@ describe('Shopify OAuth controllers (e2e)', () => {
   beforeEach(() => {
     shopifyOAuthService.buildAuthorizeUrl.mockClear();
     shopifyOAuthService.handleCallback.mockClear();
+    shopifyOAuthService.connectViaClientCredentials.mockClear();
   });
 
   describe('POST /workspaces/:workspaceId/integrations/shopify/oauth/start', () => {
@@ -142,6 +144,57 @@ describe('Shopify OAuth controllers (e2e)', () => {
 
       expect(res.statusCode).toBe(400);
       expect(shopifyOAuthService.buildAuthorizeUrl).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /workspaces/:workspaceId/integrations/shopify/oauth/client-credentials', () => {
+    it('rejects an unauthenticated request', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/workspaces/ws_1/integrations/shopify/oauth/client-credentials',
+        payload: { shopDomain: 'test-store.myshopify.com' },
+      });
+
+      expect(res.statusCode).toBe(401);
+      expect(shopifyOAuthService.connectViaClientCredentials).not.toHaveBeenCalled();
+    });
+
+    it('rejects a member without owner/admin role', async () => {
+      membershipService.findMembership.mockResolvedValueOnce({ id: 'mem_1', workspaceId: 'ws_1', userId: 'user_1', role: 'analyst' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/workspaces/ws_1/integrations/shopify/oauth/client-credentials',
+        headers: { authorization: 'Bearer valid-token' },
+        payload: { shopDomain: 'test-store.myshopify.com' },
+      });
+
+      expect(res.statusCode).toBe(403);
+      expect(shopifyOAuthService.connectViaClientCredentials).not.toHaveBeenCalled();
+    });
+
+    it('connects for an owner and returns 204', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/workspaces/ws_1/integrations/shopify/oauth/client-credentials',
+        headers: { authorization: 'Bearer valid-token' },
+        payload: { shopDomain: 'test-store.myshopify.com' },
+      });
+
+      expect(res.statusCode).toBe(204);
+      expect(shopifyOAuthService.connectViaClientCredentials).toHaveBeenCalledWith('ws_1', 'test-store.myshopify.com');
+    });
+
+    it('rejects a missing shopDomain', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/workspaces/ws_1/integrations/shopify/oauth/client-credentials',
+        headers: { authorization: 'Bearer valid-token' },
+        payload: {},
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(shopifyOAuthService.connectViaClientCredentials).not.toHaveBeenCalled();
     });
   });
 

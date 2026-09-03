@@ -226,4 +226,81 @@ describe('ShopifyOAuthService', () => {
       expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=expired');
     });
   });
+
+  describe('connectViaClientCredentials()', () => {
+    it('rejects a malformed shop domain', async () => {
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+
+      await expect(service.connectViaClientCredentials('ws_1', 'not-a-shop-domain')).rejects.toThrow(ValidationError);
+    });
+
+    it('throws when Shopify OAuth is not configured', async () => {
+      const service = new ShopifyOAuthService(
+        makeConfig({ SHOPIFY_APP_CLIENT_ID: undefined }),
+        makeIntegrationService(),
+        makeAdapter(),
+        makeLogger(),
+      );
+
+      await expect(service.connectViaClientCredentials('ws_1', SHOP)).rejects.toThrow('Shopify OAuth is not configured.');
+    });
+
+    it('mints a token, verifies it, and stores grantType/expiresAt through IntegrationService', async () => {
+      const fetchMock = vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpca_new', expires_in: 86399 }), { status: 200 }));
+      vi.stubGlobal('fetch', fetchMock);
+      const integrationService = makeIntegrationService();
+      const adapter = makeAdapter();
+      const service = new ShopifyOAuthService(makeConfig(), integrationService, adapter, makeLogger());
+      const before = Date.now();
+
+      await service.connectViaClientCredentials('ws_1', SHOP);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        `https://${SHOP}/admin/oauth/access_token`,
+        expect.objectContaining({ method: 'POST', body: `grant_type=client_credentials&client_id=${CLIENT_ID}&client_secret=${CLIENT_SECRET}` }),
+      );
+      expect(adapter.verifyConnection).toHaveBeenCalledWith(
+        expect.objectContaining({ shopDomain: SHOP, accessToken: 'shpca_new', grantType: 'client_credentials' }),
+      );
+      expect(integrationService.connect).toHaveBeenCalledWith('ws_1', 'shopify');
+      const stored = (integrationService.setCredentials as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(stored[0]).toBe('ws_1');
+      expect(stored[1]).toBe('shopify');
+      expect(stored[2]).toMatchObject({ shopDomain: SHOP, accessToken: 'shpca_new', grantType: 'client_credentials' });
+      expect(new Date(stored[2].expiresAt).getTime()).toBeGreaterThanOrEqual(before + 86399 * 1000);
+    });
+
+    it('still stores fresh credentials when the workspace is already connected (re-running for the same store)', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpca_rotated', expires_in: 86399 }), { status: 200 })));
+      const integrationService = makeIntegrationService({
+        connect: vi.fn(async () => {
+          throw new ConflictError('This provider is already connected.');
+        }),
+      });
+      const service = new ShopifyOAuthService(makeConfig(), integrationService, makeAdapter(), makeLogger());
+
+      await service.connectViaClientCredentials('ws_1', SHOP);
+
+      expect(integrationService.setCredentials).toHaveBeenCalledWith(
+        'ws_1',
+        'shopify',
+        expect.objectContaining({ accessToken: 'shpca_rotated' }),
+      );
+    });
+
+    it('throws when Shopify rejects the client-credentials request', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 401 })));
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+
+      await expect(service.connectViaClientCredentials('ws_1', SHOP)).rejects.toThrow('Shopify rejected the client credentials request.');
+    });
+
+    it('throws when the minted token fails post-exchange verification', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpca_new', expires_in: 86399 }), { status: 200 })));
+      const adapter = makeAdapter({ verifyConnection: vi.fn(async () => false) });
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), adapter, makeLogger());
+
+      await expect(service.connectViaClientCredentials('ws_1', SHOP)).rejects.toThrow('Could not verify the client-credentials token with Shopify.');
+    });
+  });
 });
