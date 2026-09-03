@@ -1,0 +1,152 @@
+import type { IntegrationProvider } from './dto/connect-integration.schema';
+import type { NormalizedCustomer } from '../commerce/customer.service';
+import type { NormalizedProduct } from '../commerce/product.service';
+import type { NormalizedFulfillment, NormalizedOrder } from '../commerce/order.service';
+import type { NormalizedCollect, NormalizedCollection } from '../commerce/collection.service';
+
+/** A webhook payload the adapter recognized and normalized (doc 21 — External → Internal Conversion). */
+export interface ParsedWebhookEvent {
+  /** Provider-supplied event/delivery id, used for webhook deduplication (doc 21 — Webhook Idempotency). */
+  externalEventId: string;
+  eventType: string;
+  payload: unknown;
+}
+
+/**
+ * The normalized shape a `parseWebhookEvent` implementation puts in
+ * `ParsedWebhookEvent.payload` when the delivery is a commerce record
+ * change — the same BRAYN domain model `fetchCustomers`/`fetchProducts`/
+ * `fetchOrders` produce, so a single record from a webhook and a page from
+ * an import both flow through the same commerce-service upsert.
+ */
+export type WebhookResourceEvent =
+  | { resource: 'customer'; data: NormalizedCustomer }
+  | { resource: 'product'; data: NormalizedProduct }
+  | { resource: 'order'; data: NormalizedOrder }
+  | { resource: 'fulfillment'; data: NormalizedFulfillment & { orderExternalId: string } }
+  | { resource: 'collection'; data: NormalizedCollection };
+
+export function isWebhookResourceEvent(value: unknown): value is WebhookResourceEvent {
+  return typeof value === 'object' && value !== null && 'resource' in value && 'data' in value;
+}
+
+/** One page of a paginated initial-import fetch (doc 20 — Initial Import: pagination). */
+export interface CustomerPage {
+  customers: NormalizedCustomer[];
+  /** Opaque provider cursor for the next page, or null when this was the last page. */
+  nextCursor: string | null;
+}
+
+/** One page of a paginated product-import fetch (doc 20 — Initial Import: pagination). */
+export interface ProductPage {
+  products: NormalizedProduct[];
+  /** Opaque provider cursor for the next page, or null when this was the last page. */
+  nextCursor: string | null;
+}
+
+/** One page of a paginated order-import fetch (doc 20 — Initial Import: pagination). */
+export interface OrderPage {
+  orders: NormalizedOrder[];
+  /** Opaque provider cursor for the next page, or null when this was the last page. */
+  nextCursor: string | null;
+}
+
+/** One page of a paginated collection-import fetch (doc 20 — Initial Import: pagination). */
+export interface CollectionPage {
+  collections: NormalizedCollection[];
+  /** Opaque provider cursor for the next page, or null when this was the last page. */
+  nextCursor: string | null;
+}
+
+/** One page of a paginated product-collection membership fetch (doc 20 — Initial Import: pagination). */
+export interface CollectPage {
+  collects: NormalizedCollect[];
+  /** Opaque provider cursor for the next page, or null when this was the last page. */
+  nextCursor: string | null;
+}
+
+/**
+ * Scopes a fetch to records changed since a point in time (doc 06/20 —
+ * Incremental Synchronization: after initial import, poll for what a
+ * provider says changed rather than re-walking every record). Omitted
+ * entirely by initial-import and reconciliation callers, who want
+ * everything.
+ */
+export interface FetchOptions {
+  updatedAtMin?: Date;
+}
+
+/**
+ * Contract every provider integration implements (doc 20 — Common
+ * Integration Contract). Provider-specific API clients, payload shapes and
+ * quirks stay behind this boundary so core BRAYN domains never depend on
+ * them directly (doc 06 — Provider Isolation, doc 03 rule 11).
+ *
+ * Phase 3 defines and tests this contract in isolation. Concrete adapters
+ * (Shopify, WooCommerce, …) that implement it land in Phase 4 — see doc 19.
+ */
+export interface ProviderAdapter {
+  readonly provider: IntegrationProvider;
+
+  /**
+   * Verifies that `credentials` still authenticate against the provider
+   * (doc 20 — Connection verification). Must not throw for an ordinary
+   * "credentials rejected" outcome — that is a `false` result, not an
+   * exception; reserve throwing for unexpected/unclassified failures.
+   */
+  verifyConnection(credentials: Record<string, string>): Promise<boolean>;
+
+  /**
+   * Re-mints credentials that carry their own expiry (some grant types —
+   * e.g. Shopify's client-credentials grant — issue short-lived tokens
+   * with no separate refresh_token, unlike an OAuth refresh_token flow).
+   * Optional: a provider/credential shape that never expires (WooCommerce,
+   * Shopify's authorization-code token as BRAYN requests it today)
+   * implements neither. Called by IntegrationService.getCredentials()
+   * generically off `credentials.expiresAt` — must return `null` for an
+   * ordinary "not applicable to this credential" case, not throw.
+   */
+  refreshCredentials?(credentials: Record<string, string>): Promise<Record<string, string> | null>;
+
+  /**
+   * Webhook support (doc 21 — Webhook Contract). Optional: "supports
+   * where applicable" — a provider without webhooks implements neither.
+   */
+
+  /** Verifies the delivery's authenticity (e.g. an HMAC signature header) using this integration's stored secret. */
+  verifyWebhookSignature?(rawBody: string, headers: Record<string, string>, secret: string): boolean;
+
+  /**
+   * Parses and normalizes a verified payload. `headers` carries whatever
+   * the provider only puts in headers, not the body (e.g. Shopify's event
+   * topic and delivery id). Returns null for a delivery type BRAYN
+   * doesn't act on (doc 21 — "process only relevant events").
+   */
+  parseWebhookEvent?(rawBody: string, headers: Record<string, string>): ParsedWebhookEvent | null;
+
+  /**
+   * Initial-import support (doc 20 — Initial Import). Optional: a provider
+   * without commerce customer data (e.g. Website Tracking, WhatsApp)
+   * implements neither. Fetches one page starting at `cursor` (undefined
+   * for the first page); must throw `ProviderError` for infrastructure
+   * failures, same convention as `verifyConnection`.
+   */
+  fetchCustomers?(credentials: Record<string, string>, cursor?: string, options?: FetchOptions): Promise<CustomerPage>;
+
+  /** Same contract as `fetchCustomers`, for product/variant data. */
+  fetchProducts?(credentials: Record<string, string>, cursor?: string, options?: FetchOptions): Promise<ProductPage>;
+
+  /** Same contract as `fetchCustomers`, for order/line-item data. */
+  fetchOrders?(credentials: Record<string, string>, cursor?: string, options?: FetchOptions): Promise<OrderPage>;
+
+  /** Same contract as `fetchCustomers`, for collection data. */
+  fetchCollections?(credentials: Record<string, string>, cursor?: string, options?: FetchOptions): Promise<CollectionPage>;
+
+  /**
+   * Same contract as `fetchCustomers`, for product-collection membership
+   * links — its own top-level fetch, not embedded in `fetchCollections`'
+   * pages (doc 20 — "Required customer/order relationships" extends to
+   * this: collection membership needs both sides already imported).
+   */
+  fetchCollects?(credentials: Record<string, string>, cursor?: string, options?: FetchOptions): Promise<CollectPage>;
+}
