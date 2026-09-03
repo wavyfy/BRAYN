@@ -1,17 +1,23 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
 import { ZodValidationPipe } from '../../common/api/zod-validation.pipe';
 import { WorkspaceMembershipGuard } from '../workspace/workspace-membership.guard';
+import { RequireWorkspaceRole } from '../workspace/require-workspace-role.decorator';
 import { ConversationService } from './conversation.service';
 import { startConversationSchema, type StartConversationInput } from './dto/start-conversation.schema';
 import { sendMessageSchema, type SendMessageInput } from './dto/send-message.schema';
 
 /**
  * Reuses the workspace domain's authorization boundary rather than
- * duplicating it (doc 03 rule 9 — business logic has one home): any
- * workspace member can view or send on a customer's conversations.
+ * duplicating it (doc 03 rule 9 — business logic has one home).
+ *
+ * Owner/admin only — conversation messages are free-text customer
+ * communication and can carry personal data. Class-level
+ * `@RequireWorkspaceRole` applies to all four handlers, declared once
+ * rather than repeated per method.
  */
 @Controller('workspaces/:workspaceId/customers/:canonicalCustomerId/conversations')
 @UseGuards(WorkspaceMembershipGuard)
+@RequireWorkspaceRole('owner', 'admin')
 export class ConversationController {
   constructor(private readonly conversationService: ConversationService) {}
 
