@@ -44,6 +44,18 @@ export async function detectRevenueOpportunities(workspaceId: string, canonicalC
   });
 }
 
+export async function generateRecommendations(workspaceId: string, canonicalCustomerId: string) {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/customers/${canonicalCustomerId}/recommendations/generate`, {
+    method: 'POST',
+  });
+}
+
+export async function dismissRecommendation(workspaceId: string, canonicalCustomerId: string, recommendationId: string) {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/customers/${canonicalCustomerId}/recommendations/${recommendationId}/dismiss`, {
+    method: 'POST',
+  });
+}
+
 export async function connectIntegration(workspaceId: string, provider: string) {
   return apiFetch(`/api/v1/workspaces/${workspaceId}/integrations`, {
     method: 'POST',

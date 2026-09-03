@@ -4,6 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ApiErrorState } from '@/components/api-error-state';
 import { RecalculateHealthButton } from './recalculate-health-button';
 import { DetectOpportunitiesButton } from './detect-opportunities-button';
+import { GenerateRecommendationsButton } from './generate-recommendations-button';
+import { DismissRecommendationButton } from './dismiss-recommendation-button';
 
 type CustomerRecord = {
   canonicalCustomerId: string;
@@ -44,6 +46,14 @@ type RevenueOpportunity = {
   createdAt: string;
 };
 
+type Recommendation = {
+  id: string;
+  text: string;
+  state: 'active' | 'dismissed' | 'completed';
+  supportingSignals: { opportunityType?: string; confidence?: number; priority?: string; reason?: string };
+  createdAt: string;
+};
+
 const priorityStyles: Record<string, string> = {
   critical: 'bg-red-50 text-red-700 ring-red-600/20',
   high: 'bg-amber-50 text-amber-700 ring-amber-600/20',
@@ -69,12 +79,13 @@ export default async function CustomerDetailPage({
   const { workspaceId, canonicalCustomerId } = params;
   const base = `/api/v1/workspaces/${workspaceId}/customers/${canonicalCustomerId}`;
 
-  let customer: CustomerRecord, activity: ActivityEntry[], opportunities: RevenueOpportunity[];
+  let customer: CustomerRecord, activity: ActivityEntry[], opportunities: RevenueOpportunity[], recommendations: Recommendation[];
   try {
-    [customer, activity, opportunities] = await Promise.all([
+    [customer, activity, opportunities, recommendations] = await Promise.all([
       apiFetch(base),
       apiFetch(`${base}/activity`),
       apiFetch(`${base}/opportunities`),
+      apiFetch(`${base}/recommendations`),
     ]);
   } catch (error) {
     if (error instanceof ApiError) {
@@ -235,6 +246,37 @@ export default async function CustomerDetailPage({
                     </div>
                     <p className="mt-1 text-sm text-slate-600">{opportunity.reason}</p>
                     <p className="mt-1 text-sm text-slate-900">{opportunity.recommendedAction}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Recommendations</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {recommendations.length === 0 ? (
+            <div className="flex flex-col items-start gap-3">
+              <p className="text-sm text-slate-500">No active recommendations.</p>
+              <GenerateRecommendationsButton workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} />
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <GenerateRecommendationsButton workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} />
+              <ul className="divide-y divide-slate-200">
+                {recommendations.map((recommendation) => (
+                  <li key={recommendation.id} className="flex items-start justify-between gap-3 py-3">
+                    <div>
+                      <p className="text-sm text-slate-900">{recommendation.text}</p>
+                      {recommendation.supportingSignals.reason && (
+                        <p className="mt-1 text-sm text-slate-600">{recommendation.supportingSignals.reason}</p>
+                      )}
+                    </div>
+                    <DismissRecommendationButton workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} recommendationId={recommendation.id} />
                   </li>
                 ))}
               </ul>
