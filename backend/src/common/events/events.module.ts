@@ -12,7 +12,10 @@ import { EventBus } from './event-bus.service';
  *
  * That handler runs in-process, asynchronously, off the request that
  * triggered emit() — no separate worker deployment exists or is needed
- * yet. No handler exists today because no domain publishes events yet.
+ * yet. Publishers exist today (integration sync/import/reconciliation/
+ * webhook, `customer_health.recalculated`, `revenue_opportunity.created`)
+ * but no handler exists yet — nothing consumes them until Business Action
+ * Automation (doc19 Phase 15) is built.
  */
 @Global()
 @Module({

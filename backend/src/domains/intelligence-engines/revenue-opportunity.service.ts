@@ -2,7 +2,19 @@ import { Injectable } from '@nestjs/common';
 import { and, desc, eq, notInArray, sql } from 'drizzle-orm';
 import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
 import { DatabaseService } from '../../database/database.service';
+import { createEvent } from '../../common/events/domain-event';
+import { EventBus } from '../../common/events/event-bus.service';
 import { CustomerIntelligenceService, type CustomerRecord } from '../customer-intelligence/customer-intelligence.service';
+
+/** Doc10 opportunity lifecycle: "Merchant / System Notification" after detection (doc16 trigger: "Revenue opportunities"). */
+export interface RevenueOpportunityCreatedPayload {
+  opportunityId: string;
+  canonicalCustomerId: string;
+  type: OpportunityType;
+  priority: OpportunityPriority;
+  estimatedRevenue: string | null;
+  confidence: number;
+}
 
 const WIN_BACK_THRESHOLD_DAYS = 120;
 const VIP_ORDER_THRESHOLD = 10;
@@ -56,12 +68,18 @@ interface OpportunityCandidate {
  * Duplicate prevention (doc10 — "Duplicate opportunities must be
  * prevented"): before creating a candidate, skip it if a non-terminal
  * (open) opportunity of the same type already exists for this customer.
+ *
+ * Each newly created opportunity emits `revenue_opportunity.created`
+ * (doc10 lifecycle — "Merchant / System Notification"; doc16 trigger
+ * "Revenue opportunities"), so Business Action Automation has a real
+ * trigger once one is built. No handler exists yet.
  */
 @Injectable()
 export class RevenueOpportunityService {
   constructor(
     private readonly database: DatabaseService,
     private readonly customerIntelligenceService: CustomerIntelligenceService,
+    private readonly eventBus: EventBus,
   ) {}
 
   async detect(workspaceId: string, canonicalCustomerId: string) {
@@ -77,19 +95,40 @@ export class RevenueOpportunityService {
 
     if (newCandidates.length > 0) {
       const avgOrderValue = averageOrderValue(customer);
-      await this.database.client.insert(revenueOpportunities).values(
-        newCandidates.map((candidate) => ({
-          workspaceId,
-          canonicalCustomerId,
-          type: candidate.type,
-          status: 'new' as const,
-          priority: computePriority(candidate.confidence, candidate.estimatedRevenue, avgOrderValue),
-          estimatedRevenue: candidate.estimatedRevenue,
-          confidence: candidate.confidence,
-          reason: candidate.reason,
-          recommendedAction: candidate.recommendedAction,
-        })),
-      );
+      const created = await this.database.client
+        .insert(revenueOpportunities)
+        .values(
+          newCandidates.map((candidate) => ({
+            workspaceId,
+            canonicalCustomerId,
+            type: candidate.type,
+            status: 'new' as const,
+            priority: computePriority(candidate.confidence, candidate.estimatedRevenue, avgOrderValue),
+            estimatedRevenue: candidate.estimatedRevenue,
+            confidence: candidate.confidence,
+            reason: candidate.reason,
+            recommendedAction: candidate.recommendedAction,
+          })),
+        )
+        .returning();
+
+      for (const opportunity of created) {
+        this.eventBus.emit(
+          createEvent<RevenueOpportunityCreatedPayload>({
+            type: 'revenue_opportunity.created',
+            workspaceId,
+            entityId: opportunity.id,
+            payload: {
+              opportunityId: opportunity.id,
+              canonicalCustomerId,
+              type: opportunity.type as OpportunityType,
+              priority: opportunity.priority as OpportunityPriority,
+              estimatedRevenue: opportunity.estimatedRevenue,
+              confidence: opportunity.confidence,
+            },
+          }),
+        );
+      }
     }
 
     return this.list(workspaceId, canonicalCustomerId);

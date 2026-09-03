@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RevenueOpportunityService } from './revenue-opportunity.service';
 import type { DatabaseService } from '../../database/database.service';
+import type { EventBus } from '../../common/events/event-bus.service';
 import type { CustomerIntelligenceService, CustomerRecord } from '../customer-intelligence/customer-intelligence.service';
 
 function makeSelectChain(result: unknown) {
@@ -18,9 +19,12 @@ function makeSelectQueue(results: unknown[]) {
   return vi.fn(() => makeSelectChain(results[i++]));
 }
 
-function makeInsertChain() {
-  const chain: Record<string, unknown> = { values: vi.fn(async () => undefined) };
-  return chain;
+function makeInsertChain(returning: unknown[] = []) {
+  return { values: vi.fn(() => ({ returning: vi.fn(async () => returning) })) };
+}
+
+function makeEventBus() {
+  return { emit: vi.fn() } as unknown as EventBus;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -42,7 +46,7 @@ describe('RevenueOpportunityService', () => {
       const insert = vi.fn();
       const select = makeSelectQueue([[], []]); // getOpenTypes, then list()
       const client = { select, insert };
-      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, makeCustomer({}));
+      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, makeCustomer({}), makeEventBus());
 
       const result = await service.detect('ws_1', 'canon_1');
 
@@ -67,7 +71,7 @@ describe('RevenueOpportunityService', () => {
       const insert = vi.fn(() => insertChain);
       const select = makeSelectQueue([[], []]);
       const client = { select, insert };
-      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, customer);
+      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, customer, makeEventBus());
 
       await service.detect('ws_1', 'canon_1');
 
@@ -79,7 +83,7 @@ describe('RevenueOpportunityService', () => {
       const insert = vi.fn();
       const select = makeSelectQueue([[], []]);
       const client = { select, insert };
-      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, customer);
+      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, customer, makeEventBus());
 
       await service.detect('ws_1', 'canon_1');
 
@@ -93,7 +97,7 @@ describe('RevenueOpportunityService', () => {
       const insert = vi.fn(() => insertChain);
       const select = makeSelectQueue([[], []]);
       const client = { select, insert };
-      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, customer);
+      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, customer, makeEventBus());
 
       await service.detect('ws_1', 'canon_1');
 
@@ -106,7 +110,7 @@ describe('RevenueOpportunityService', () => {
       const insert = vi.fn(() => insertChain);
       const select = makeSelectQueue([[], []]);
       const client = { select, insert };
-      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, customer);
+      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, customer, makeEventBus());
 
       await service.detect('ws_1', 'canon_1');
 
@@ -120,11 +124,32 @@ describe('RevenueOpportunityService', () => {
       const insert = vi.fn();
       const select = makeSelectQueue([[{ type: 'vip_recognition' }], []]); // getOpenTypes already has it, then list()
       const client = { select, insert };
-      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, customer);
+      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, customer, makeEventBus());
 
       await service.detect('ws_1', 'canon_1');
 
       expect(insert).not.toHaveBeenCalled();
+    });
+
+    it('emits revenue_opportunity.created for each newly inserted opportunity', async () => {
+      const customer = makeCustomer({ ordersCount: 10 });
+      const createdRow = { id: 'opp_1', type: 'vip_recognition', priority: 'high', estimatedRevenue: null, confidence: 100 };
+      const insert = vi.fn(() => makeInsertChain([createdRow]));
+      const select = makeSelectQueue([[], []]);
+      const client = { select, insert };
+      const eventBus = makeEventBus();
+      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, customer, eventBus);
+
+      await service.detect('ws_1', 'canon_1');
+
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'revenue_opportunity.created',
+          workspaceId: 'ws_1',
+          entityId: 'opp_1',
+          payload: expect.objectContaining({ opportunityId: 'opp_1', canonicalCustomerId: 'canon_1', type: 'vip_recognition' }),
+        }),
+      );
     });
   });
 
@@ -133,7 +158,7 @@ describe('RevenueOpportunityService', () => {
       const rows = [{ id: 'opp_1', type: 'vip_recognition', status: 'new' }];
       const select = vi.fn(() => makeSelectChain(rows));
       const client = { select };
-      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, {} as CustomerIntelligenceService);
+      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, {} as CustomerIntelligenceService, makeEventBus());
 
       const result = await service.list('ws_1', 'canon_1');
 
@@ -153,7 +178,7 @@ describe('RevenueOpportunityService', () => {
         return chain;
       });
       const client = { select };
-      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, {} as CustomerIntelligenceService);
+      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, {} as CustomerIntelligenceService, makeEventBus());
 
       const result = await service.countOpenByWorkspace('ws_1');
 

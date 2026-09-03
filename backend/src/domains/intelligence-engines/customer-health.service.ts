@@ -4,7 +4,18 @@ import { customerHealthStates } from '../../database/schema/customer-health-stat
 import { customerHealthStateHistory } from '../../database/schema/customer-health-state-history';
 import { DatabaseService } from '../../database/database.service';
 import { NotFoundError } from '../../common/errors/app-error';
+import { createEvent } from '../../common/events/domain-event';
+import { EventBus } from '../../common/events/event-bus.service';
 import { CustomerIntelligenceService } from '../customer-intelligence/customer-intelligence.service';
+
+/** Doc10 — "Health changes should publish events for dependent intelligence and automation" (doc16 trigger: "Customer Risk & Engagement State changes"). */
+export interface CustomerHealthRecalculatedPayload {
+  canonicalCustomerId: string;
+  score: number | null;
+  healthCategory: string | null;
+  trend: string | null;
+  reasonCodes: string[];
+}
 
 /** How many days of no purchase brings the recency signal to 0 — a first-pass heuristic, not a product-specified curve. */
 const RECENCY_DECAY_DAYS = 90;
@@ -55,13 +66,19 @@ export interface CustomerHealthState {
  * driven recalculation" (wiring this into every order/customer-change
  * touchpoint) and "daily recalculation" (a scheduler) are real
  * additional scope, deliberately deferred rather than built speculatively
- * (doc18 — "Do not introduce... Schedulers... speculatively").
+ * (doc18 — "Do not introduce... Schedulers... speculatively"). That
+ * deferral is about what *triggers* a recalculation — separately, every
+ * completed recalculation now emits `customer_health.recalculated` (doc10
+ * — "Health changes should publish events for dependent intelligence and
+ * automation"), so downstream consumers (Business Action Automation) have
+ * a real trigger once one is built. No handler exists yet.
  */
 @Injectable()
 export class CustomerHealthService {
   constructor(
     private readonly database: DatabaseService,
     private readonly customerIntelligenceService: CustomerIntelligenceService,
+    private readonly eventBus: EventBus,
   ) {}
 
   async recalculate(workspaceId: string, canonicalCustomerId: string): Promise<CustomerHealthState> {
@@ -108,6 +125,15 @@ export class CustomerHealthService {
         set: { score: state.score, healthCategory: state.healthCategory, signals, reasonCodes, trend: state.trend, lastCalculatedAt: now, updatedAt: now },
       });
     await this.database.client.insert(customerHealthStateHistory).values({ ...state, calculatedAt: now });
+
+    this.eventBus.emit(
+      createEvent<CustomerHealthRecalculatedPayload>({
+        type: 'customer_health.recalculated',
+        workspaceId,
+        entityId: canonicalCustomerId,
+        payload: { canonicalCustomerId, score: state.score, healthCategory: state.healthCategory, trend: state.trend, reasonCodes: state.reasonCodes },
+      }),
+    );
 
     return state;
   }
