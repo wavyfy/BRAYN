@@ -1,8 +1,23 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, or, sql } from 'drizzle-orm';
 import { DatabaseService } from '../../database/database.service';
 import { integrations } from '../../database/schema/integrations';
+import { commerceCustomers } from '../../database/schema/commerce-customers';
+import { commerceOrders } from '../../database/schema/commerce-orders';
+import { commerceOrderLineItems } from '../../database/schema/commerce-order-line-items';
+import { commerceFulfillments } from '../../database/schema/commerce-fulfillments';
+import { commerceRefunds } from '../../database/schema/commerce-refunds';
+import { commerceRefundLineItems } from '../../database/schema/commerce-refund-line-items';
+import { canonicalCustomers } from '../../database/schema/canonical-customers';
+import { canonicalCustomerDuplicates } from '../../database/schema/canonical-customer-duplicates';
+import { conversations } from '../../database/schema/conversations';
+import { conversationMessages } from '../../database/schema/conversation-messages';
+import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
+import { recommendations } from '../../database/schema/recommendations';
+import { customerHealthStates } from '../../database/schema/customer-health-states';
+import { customerHealthStateHistory } from '../../database/schema/customer-health-state-history';
+import { automationRuns } from '../../database/schema/automation-runs';
 import { ConflictError, NotFoundError, ProviderError, UnauthenticatedError } from '../../common/errors/app-error';
 import {
   decryptCredential,
@@ -23,6 +38,19 @@ import type { Env } from '../../config/env.schema';
 
 /** Refresh a bit before actual expiry (shopify.dev's own offline-token example refreshes ~60s early) rather than racing a request against the exact cutoff. */
 const CREDENTIAL_REFRESH_SKEW_MS = 60_000;
+
+/**
+ * How long a disconnected integration's customer data is retained before
+ * it becomes eligible for purge (Shopify Protected Customer Data —
+ * "retention periods that make sure personal data isn't kept longer than
+ * needed"). 90 days: long enough that a merchant who disconnects and
+ * reconnects within a normal cycle doesn't lose their import history and
+ * force a full re-import; short enough that data isn't kept indefinitely
+ * once BRAYN no longer has an active relationship with the store. A
+ * single fixed constant, not a configurable policy — see
+ * `purgeCustomerData`'s doc comment for why.
+ */
+const CUSTOMER_DATA_RETENTION_DAYS = 90;
 
 /**
  * Columns safe to return from the API. Excludes `credentials` — the
@@ -107,6 +135,141 @@ export class IntegrationService {
       .returning(integrationPublicColumns);
 
     return updated;
+  }
+
+  /**
+   * Purges a disconnected integration's customer data once
+   * `CUSTOMER_DATA_RETENTION_DAYS` has elapsed since it was disconnected
+   * (doc18 Security/PII — data minimization; Shopify Protected Customer
+   * Data). Manual/on-demand only — no scheduler exists or is introduced
+   * here (doc29 — no speculative queue/worker infrastructure); this is
+   * the same "on-demand for now" posture already used for reconciliation.
+   *
+   * `IntegrationService` is the lifecycle owner (it already owns
+   * connect/disconnect and `updatedAt` is the retention anchor), but the
+   * actual delete touches Commerce/Identity Resolution/Customer
+   * Intelligence Engines/Conversation/Automation tables directly within
+   * one transaction — the same "read another domain's schema directly for
+   * a tightly-scoped cross-cutting operation" precedent already used by
+   * `CustomerIntelligenceService` (which reads `commerceCustomers`/
+   * `commerceOrders` directly rather than through a Commerce service
+   * class). Adding a "delete customer data" method to five separate
+   * domain services for one narrow operation would be more machinery, not
+   * less (doc18 — keep this simple).
+   *
+   * Deletion is strictly scoped to rows carrying this integration's own
+   * `integrationId` (commerce data) or, for canonical customers, only
+   * those left with zero remaining `commerce_customers` rows from *any*
+   * integration after this one's are removed — a canonical customer with
+   * data from another still-connected integration is never touched. Every
+   * delete is a plain `WHERE`-scoped delete, so a repeat run (nothing left
+   * to match) is a no-op, not an error — idempotent by construction, no
+   * special-casing needed.
+   */
+  async purgeCustomerData(workspaceId: string, provider: IntegrationProvider) {
+    const integration = await this.findByProvider(workspaceId, provider);
+    if (!integration) {
+      throw new NotFoundError('This workspace has no connection for that provider.');
+    }
+    if (integration.status !== 'disconnected') {
+      throw new ConflictError('Only a disconnected integration can have its customer data purged.');
+    }
+
+    const retentionMs = CUSTOMER_DATA_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    const eligibleAt = new Date(integration.updatedAt.getTime() + retentionMs);
+    if (Date.now() < eligibleAt.getTime()) {
+      throw new ConflictError(
+        `This integration's ${CUSTOMER_DATA_RETENTION_DAYS}-day retention period has not elapsed yet (eligible ${eligibleAt.toISOString()}).`,
+      );
+    }
+
+    return this.database.transaction(async (tx) => {
+      // Capture which canonical customers this integration's commerce_customers
+      // rows point to *before* deleting them — needed to check afterward whether
+      // each one is now orphaned (doc09 — a canonical customer may span providers).
+      const linked = await tx
+        .select({ canonicalCustomerId: commerceCustomers.canonicalCustomerId })
+        .from(commerceCustomers)
+        .where(
+          and(
+            eq(commerceCustomers.workspaceId, workspaceId),
+            eq(commerceCustomers.integrationId, integration.id),
+            isNotNull(commerceCustomers.canonicalCustomerId),
+          ),
+        );
+      const candidateCanonicalIds = [...new Set(linked.map((row) => row.canonicalCustomerId as string))];
+
+      // Order-scoped tables first (FK-safe order), all directly integration-scoped.
+      await tx
+        .delete(commerceOrderLineItems)
+        .where(and(eq(commerceOrderLineItems.workspaceId, workspaceId), eq(commerceOrderLineItems.integrationId, integration.id)));
+      await tx
+        .delete(commerceRefundLineItems)
+        .where(and(eq(commerceRefundLineItems.workspaceId, workspaceId), eq(commerceRefundLineItems.integrationId, integration.id)));
+      await tx
+        .delete(commerceFulfillments)
+        .where(and(eq(commerceFulfillments.workspaceId, workspaceId), eq(commerceFulfillments.integrationId, integration.id)));
+      await tx
+        .delete(commerceRefunds)
+        .where(and(eq(commerceRefunds.workspaceId, workspaceId), eq(commerceRefunds.integrationId, integration.id)));
+      await tx
+        .delete(commerceOrders)
+        .where(and(eq(commerceOrders.workspaceId, workspaceId), eq(commerceOrders.integrationId, integration.id)));
+
+      const removedCommerceCustomers = await tx
+        .delete(commerceCustomers)
+        .where(and(eq(commerceCustomers.workspaceId, workspaceId), eq(commerceCustomers.integrationId, integration.id)))
+        .returning({ id: commerceCustomers.id });
+
+      // A canonical customer is only removed once nothing else in the workspace
+      // still references it — never on the strength of this integration alone.
+      let canonicalCustomersRemoved = 0;
+      for (const canonicalCustomerId of candidateCanonicalIds) {
+        const [remaining] = await tx
+          .select({ count: sql<number>`count(*)` })
+          .from(commerceCustomers)
+          .where(and(eq(commerceCustomers.workspaceId, workspaceId), eq(commerceCustomers.canonicalCustomerId, canonicalCustomerId)));
+        if (Number(remaining?.count ?? 0) > 0) {
+          continue;
+        }
+
+        await tx.delete(recommendations).where(and(eq(recommendations.workspaceId, workspaceId), eq(recommendations.canonicalCustomerId, canonicalCustomerId)));
+        await tx.delete(revenueOpportunities).where(and(eq(revenueOpportunities.workspaceId, workspaceId), eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId)));
+        await tx.delete(customerHealthStateHistory).where(and(eq(customerHealthStateHistory.workspaceId, workspaceId), eq(customerHealthStateHistory.canonicalCustomerId, canonicalCustomerId)));
+        await tx.delete(customerHealthStates).where(and(eq(customerHealthStates.workspaceId, workspaceId), eq(customerHealthStates.canonicalCustomerId, canonicalCustomerId)));
+        await tx.delete(automationRuns).where(and(eq(automationRuns.workspaceId, workspaceId), eq(automationRuns.canonicalCustomerId, canonicalCustomerId)));
+        await tx
+          .delete(canonicalCustomerDuplicates)
+          .where(
+            and(
+              eq(canonicalCustomerDuplicates.workspaceId, workspaceId),
+              or(
+                eq(canonicalCustomerDuplicates.canonicalCustomerAId, canonicalCustomerId),
+                eq(canonicalCustomerDuplicates.canonicalCustomerBId, canonicalCustomerId),
+              ),
+            ),
+          );
+
+        const conversationRows = await tx
+          .select({ id: conversations.id })
+          .from(conversations)
+          .where(and(eq(conversations.workspaceId, workspaceId), eq(conversations.canonicalCustomerId, canonicalCustomerId)));
+        const conversationIds = conversationRows.map((row) => row.id);
+        if (conversationIds.length > 0) {
+          await tx.delete(conversationMessages).where(and(eq(conversationMessages.workspaceId, workspaceId), inArray(conversationMessages.conversationId, conversationIds)));
+        }
+        await tx.delete(conversations).where(and(eq(conversations.workspaceId, workspaceId), eq(conversations.canonicalCustomerId, canonicalCustomerId)));
+
+        await tx.delete(canonicalCustomers).where(and(eq(canonicalCustomers.workspaceId, workspaceId), eq(canonicalCustomers.id, canonicalCustomerId)));
+        canonicalCustomersRemoved++;
+      }
+
+      return {
+        integrationId: integration.id,
+        commerceCustomersRemoved: removedCommerceCustomers.length,
+        canonicalCustomersRemoved,
+      };
+    });
   }
 
   /**

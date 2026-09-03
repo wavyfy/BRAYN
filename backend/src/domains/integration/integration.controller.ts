@@ -137,4 +137,14 @@ export class IntegrationController {
   ) {
     await this.integrationService.disconnect(workspaceId, provider);
   }
+
+  /** Manual/on-demand purge of a disconnected integration's customer data once its retention period has elapsed (doc18 — data minimization). */
+  @Delete(':provider/customer-data')
+  @RequireWorkspaceRole('owner', 'admin')
+  async purgeCustomerData(
+    @Param('workspaceId') workspaceId: string,
+    @Param('provider') provider: ConnectIntegrationInput['provider'],
+  ) {
+    return this.integrationService.purgeCustomerData(workspaceId, provider);
+  }
 }

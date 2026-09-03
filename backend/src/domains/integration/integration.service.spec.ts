@@ -8,6 +8,8 @@ import type { ProviderAdapter } from './provider-adapter.interface';
 import type { ImportRunService } from './import-run.service';
 import type { ReconciliationRunService } from './reconciliation-run.service';
 import type { EventBus } from '../../common/events/event-bus.service';
+import { commerceCustomers } from '../../database/schema/commerce-customers';
+import { canonicalCustomers } from '../../database/schema/canonical-customers';
 
 const VALID_KEY = 'a'.repeat(64);
 
@@ -635,6 +637,147 @@ describe('IntegrationService', () => {
         unknown
       >;
       expect(returningArg).not.toHaveProperty('credentials');
+    });
+  });
+
+  describe('purgeCustomerData()', () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+
+    /**
+     * Mocks the transaction-scoped `tx` the method receives. Only the
+     * `commerce_customers` delete ever calls `.returning()` in the real
+     * code, so that's the only delete result worth injecting; every
+     * select is distinguished by the field name it selects (matches the
+     * real query shapes: `canonicalCustomerId`, `count`, or `id`).
+     */
+    function makeTx(options: {
+      linkedRows?: { canonicalCustomerId: string | null }[];
+      remainingCounts?: number[];
+      conversationRows?: { id: string }[][];
+      commerceCustomersDeleted?: { id: string }[];
+    } = {}) {
+      const { linkedRows = [], remainingCounts = [], conversationRows = [], commerceCustomersDeleted = [] } = options;
+      let remainingIdx = 0;
+      let conversationIdx = 0;
+      const deleteCalls: unknown[] = [];
+
+      function chain(result: unknown) {
+        const c: Record<string, unknown> = {
+          from: vi.fn(() => c),
+          where: vi.fn(() => c),
+          returning: vi.fn(async () => result ?? []),
+          then: (resolve: (v: unknown) => void) => resolve(result ?? []),
+        };
+        return c;
+      }
+
+      const select = vi.fn((fields: Record<string, unknown>) => {
+        if ('canonicalCustomerId' in fields) return chain(linkedRows);
+        if ('count' in fields) return chain([{ count: remainingCounts[remainingIdx++] ?? 0 }]);
+        return chain(conversationRows[conversationIdx++] ?? []);
+      });
+
+      const del = vi.fn((table: unknown) => {
+        deleteCalls.push(table);
+        return chain(table === commerceCustomers ? commerceCustomersDeleted : []);
+      });
+
+      return { select, delete: del, deleteCalls };
+    }
+
+    function makeService(existingIntegration: Record<string, unknown> | null, tx: ReturnType<typeof makeTx>) {
+      const client = { select: makeSelectQueue([existingIntegration ? [existingIntegration] : []]) };
+      const database = {
+        client,
+        transaction: vi.fn((fn: (tx: unknown) => unknown) => fn({ select: tx.select, delete: tx.delete })),
+      };
+      return new IntegrationService(
+        database as unknown as DatabaseService,
+        makeConfig(),
+        makeRegistry(),
+        makeImportRunService(),
+        makeReconciliationRunService(),
+        makeEventBus(),
+      );
+    }
+
+    it('throws NotFoundError when the workspace has no connection for that provider', async () => {
+      const tx = makeTx();
+      const service = makeService(null, tx);
+
+      await expect(service.purgeCustomerData('ws_1', 'shopify')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    });
+
+    it('throws ConflictError when the integration is still connected', async () => {
+      const integration = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected', updatedAt: new Date(Date.now() - 200 * DAY_MS) };
+      const tx = makeTx();
+      const service = makeService(integration, tx);
+
+      await expect(service.purgeCustomerData('ws_1', 'shopify')).rejects.toThrow('Only a disconnected integration can have its customer data purged.');
+      expect(tx.select).not.toHaveBeenCalled();
+    });
+
+    it('throws ConflictError when disconnected but the retention period has not elapsed', async () => {
+      const integration = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'disconnected', updatedAt: new Date(Date.now() - 5 * DAY_MS) };
+      const tx = makeTx();
+      const service = makeService(integration, tx);
+
+      await expect(service.purgeCustomerData('ws_1', 'shopify')).rejects.toThrow(/retention period has not elapsed yet/);
+      expect(tx.select).not.toHaveBeenCalled();
+    });
+
+    it('purges commerce data for a disconnected integration past its retention period', async () => {
+      const integration = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'disconnected', updatedAt: new Date(Date.now() - 91 * DAY_MS) };
+      const tx = makeTx({ linkedRows: [], commerceCustomersDeleted: [] });
+      const service = makeService(integration, tx);
+
+      const result = await service.purgeCustomerData('ws_1', 'shopify');
+
+      expect(result).toEqual({ integrationId: 'int_1', commerceCustomersRemoved: 0, canonicalCustomersRemoved: 0 });
+      expect(tx.deleteCalls).toContain(commerceCustomers);
+    });
+
+    it('preserves a canonical customer that still has commerce_customers rows from another integration', async () => {
+      const integration = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'disconnected', updatedAt: new Date(Date.now() - 91 * DAY_MS) };
+      const tx = makeTx({
+        linkedRows: [{ canonicalCustomerId: 'canon_1' }],
+        remainingCounts: [1], // still referenced by a commerce_customers row from a different (still-connected) integration
+        commerceCustomersDeleted: [{ id: 'cc_1' }],
+      });
+      const service = makeService(integration, tx);
+
+      const result = await service.purgeCustomerData('ws_1', 'shopify');
+
+      expect(result).toEqual({ integrationId: 'int_1', commerceCustomersRemoved: 1, canonicalCustomersRemoved: 0 });
+      expect(tx.deleteCalls).not.toContain(canonicalCustomers);
+    });
+
+    it('removes a canonical customer left with no remaining source records after the purge', async () => {
+      const integration = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'disconnected', updatedAt: new Date(Date.now() - 91 * DAY_MS) };
+      const tx = makeTx({
+        linkedRows: [{ canonicalCustomerId: 'canon_1' }],
+        remainingCounts: [0], // no other integration's commerce_customers references it anymore
+        conversationRows: [[]],
+        commerceCustomersDeleted: [{ id: 'cc_1' }],
+      });
+      const service = makeService(integration, tx);
+
+      const result = await service.purgeCustomerData('ws_1', 'shopify');
+
+      expect(result).toEqual({ integrationId: 'int_1', commerceCustomersRemoved: 1, canonicalCustomersRemoved: 1 });
+      expect(tx.deleteCalls).toContain(canonicalCustomers);
+    });
+
+    it('running the purge twice is safe — the second run finds nothing left and is a no-op', async () => {
+      const integration = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'disconnected', updatedAt: new Date(Date.now() - 91 * DAY_MS) };
+      const tx = makeTx({ linkedRows: [], commerceCustomersDeleted: [] });
+      const service = makeService(integration, tx);
+
+      await expect(service.purgeCustomerData('ws_1', 'shopify')).resolves.toEqual({
+        integrationId: 'int_1',
+        commerceCustomersRemoved: 0,
+        canonicalCustomersRemoved: 0,
+      });
     });
   });
 });
