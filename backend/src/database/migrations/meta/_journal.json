@@ -162,6 +162,13 @@
       "when": 1788416245231,
       "tag": "0022_cynical_vin_gonzales",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1788418482628,
+      "tag": "0023_overjoyed_jack_power",
+      "breakpoints": true
     }
   ]
 }
