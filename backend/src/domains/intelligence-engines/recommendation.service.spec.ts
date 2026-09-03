@@ -130,4 +130,16 @@ describe('RecommendationService', () => {
       expect(result).toEqual(updated);
     });
   });
+
+  describe('countActiveByWorkspace()', () => {
+    it('returns the active count for the workspace', async () => {
+      const select = makeSelectQueue([[{ count: 7 }]]);
+      const client = { select };
+      const service = new RecommendationService({ client } as unknown as DatabaseService, {} as RevenueOpportunityService);
+
+      const result = await service.countActiveByWorkspace('ws_1');
+
+      expect(result).toBe(7);
+    });
+  });
 });

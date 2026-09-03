@@ -47,6 +47,12 @@ export interface CommerceContext {
   recentOrders: RecentOrder[];
 }
 
+export interface WorkspaceCommerceSummary {
+  customersCount: number;
+  ordersCount: number;
+  totalSpent: string;
+}
+
 export interface CustomerRecord {
   canonicalCustomerId: string;
   profile: CustomerProfile;
@@ -234,6 +240,28 @@ export class CustomerIntelligenceService {
     ];
 
     return entries.sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime()).slice(0, ACTIVITY_LIMIT);
+  }
+
+  /** Workspace-wide commerce totals (doc11 Merchant Dashboard — "Customer activity", not per-customer). */
+  async getWorkspaceSummary(workspaceId: string): Promise<WorkspaceCommerceSummary> {
+    const [customerCount] = await this.database.client
+      .select({ count: sql<number>`count(*)` })
+      .from(canonicalCustomers)
+      .where(eq(canonicalCustomers.workspaceId, workspaceId));
+
+    const [orderSummary] = await this.database.client
+      .select({
+        ordersCount: sql<number>`count(*)`,
+        totalSpent: sql<string>`coalesce(sum(${commerceOrders.totalPrice}::numeric), 0)`,
+      })
+      .from(commerceOrders)
+      .where(eq(commerceOrders.workspaceId, workspaceId));
+
+    return {
+      customersCount: Number(customerCount?.count ?? 0),
+      ordersCount: Number(orderSummary?.ordersCount ?? 0),
+      totalSpent: orderSummary?.totalSpent ?? '0',
+    };
   }
 
   private async requireCanonical(

@@ -140,4 +140,24 @@ describe('RevenueOpportunityService', () => {
       expect(result).toEqual(rows);
     });
   });
+
+  describe('countOpenByWorkspace()', () => {
+    it('groups open opportunity counts by priority, defaulting missing priorities to zero', async () => {
+      const rows = [{ priority: 'high', count: 3 }, { priority: 'low', count: 1 }];
+      const select = vi.fn(() => {
+        const chain: Record<string, unknown> = {
+          from: vi.fn(() => chain),
+          where: vi.fn(() => chain),
+          groupBy: vi.fn(async () => rows),
+        };
+        return chain;
+      });
+      const client = { select };
+      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, {} as CustomerIntelligenceService);
+
+      const result = await service.countOpenByWorkspace('ws_1');
+
+      expect(result).toEqual({ total: 4, byPriority: { critical: 0, high: 3, medium: 0, low: 1 } });
+    });
+  });
 });

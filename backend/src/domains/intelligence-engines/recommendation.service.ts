@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { recommendations } from '../../database/schema/recommendations';
 import { DatabaseService } from '../../database/database.service';
 import { ConflictError, NotFoundError } from '../../common/errors/app-error';
@@ -74,6 +74,16 @@ export class RecommendationService {
 
   async complete(workspaceId: string, canonicalCustomerId: string, recommendationId: string) {
     return this.closeState(workspaceId, canonicalCustomerId, recommendationId, 'completed', null);
+  }
+
+  /** Workspace-wide active count (doc11 Merchant Dashboard). */
+  async countActiveByWorkspace(workspaceId: string): Promise<number> {
+    const [row] = await this.database.client
+      .select({ count: sql<number>`count(*)` })
+      .from(recommendations)
+      .where(and(eq(recommendations.workspaceId, workspaceId), eq(recommendations.state, 'active')));
+
+    return Number(row?.count ?? 0);
   }
 
   private async closeState(

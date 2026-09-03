@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, desc, eq, notInArray } from 'drizzle-orm';
+import { and, desc, eq, notInArray, sql } from 'drizzle-orm';
 import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
 import { DatabaseService } from '../../database/database.service';
 import { CustomerIntelligenceService, type CustomerRecord } from '../customer-intelligence/customer-intelligence.service';
@@ -108,6 +108,25 @@ export class RevenueOpportunityService {
         ),
       )
       .orderBy(desc(revenueOpportunities.createdAt));
+  }
+
+  /** Workspace-wide open-opportunity counts by priority (doc11 Merchant Dashboard — "Revenue opportunities"). */
+  async countOpenByWorkspace(workspaceId: string): Promise<{ total: number; byPriority: Record<OpportunityPriority, number> }> {
+    const rows = await this.database.client
+      .select({ priority: revenueOpportunities.priority, count: sql<number>`count(*)` })
+      .from(revenueOpportunities)
+      .where(and(eq(revenueOpportunities.workspaceId, workspaceId), notInArray(revenueOpportunities.status, [...TERMINAL_STATUSES])))
+      .groupBy(revenueOpportunities.priority);
+
+    const byPriority: Record<OpportunityPriority, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+    let total = 0;
+    for (const row of rows) {
+      const count = Number(row.count);
+      byPriority[row.priority as OpportunityPriority] = count;
+      total += count;
+    }
+
+    return { total, byPriority };
   }
 
   private async getOpenTypes(workspaceId: string, canonicalCustomerId: string): Promise<Set<OpportunityType>> {

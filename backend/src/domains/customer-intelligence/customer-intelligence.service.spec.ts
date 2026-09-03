@@ -213,4 +213,27 @@ describe('CustomerIntelligenceService', () => {
       expect(select).toHaveBeenCalledTimes(2);
     });
   });
+
+  describe('getWorkspaceSummary()', () => {
+    it('returns customer/order totals for the whole workspace', async () => {
+      const select = makeSelectQueue([
+        [{ count: 5 }],
+        [{ ordersCount: 12, totalSpent: '450.00' }],
+      ]);
+      const service = new CustomerIntelligenceService({ client: { select } } as unknown as DatabaseService);
+
+      const result = await service.getWorkspaceSummary('ws_1');
+
+      expect(result).toEqual({ customersCount: 5, ordersCount: 12, totalSpent: '450.00' });
+    });
+
+    it('defaults to zero when there is no data yet', async () => {
+      const select = makeSelectQueue([[{ count: 0 }], [{ ordersCount: 0, totalSpent: '0' }]]);
+      const service = new CustomerIntelligenceService({ client: { select } } as unknown as DatabaseService);
+
+      const result = await service.getWorkspaceSummary('ws_1');
+
+      expect(result).toEqual({ customersCount: 0, ordersCount: 0, totalSpent: '0' });
+    });
+  });
 });
