@@ -56,6 +56,20 @@ export async function dismissRecommendation(workspaceId: string, canonicalCustom
   });
 }
 
+export async function createKnowledgeEntry(workspaceId: string, type: 'knowledge' | 'policy', title: string, content: string) {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/knowledge`, {
+    method: 'POST',
+    body: JSON.stringify({ type, title, content }),
+  });
+}
+
+export async function updateKnowledgeEntry(workspaceId: string, entryId: string, input: { title?: string; content?: string }) {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/knowledge/${entryId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
 export async function connectIntegration(workspaceId: string, provider: string) {
   return apiFetch(`/api/v1/workspaces/${workspaceId}/integrations`, {
     method: 'POST',
