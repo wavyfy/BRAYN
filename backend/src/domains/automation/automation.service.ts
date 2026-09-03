@@ -71,6 +71,10 @@ export class AutomationService {
       .orderBy(desc(automationDefinitions.createdAt));
   }
 
+  async get(workspaceId: string, automationId: string) {
+    return this.requireAutomation(workspaceId, automationId);
+  }
+
   async update(workspaceId: string, automationId: string, input: UpdateAutomationInput) {
     const current = await this.requireAutomation(workspaceId, automationId);
 

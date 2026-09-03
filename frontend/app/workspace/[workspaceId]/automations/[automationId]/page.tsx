@@ -4,7 +4,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ApiErrorState } from '@/components/api-error-state';
 import { ToggleAutomationButton } from './toggle-automation-button';
 
-type Automation = { id: string; name: string; triggerType: string; actionType: string; enabled: boolean };
+type Automation = {
+  id: string;
+  name: string;
+  triggerType: string;
+  actionType: string;
+  enabled: boolean;
+  conditions: { priorityIn?: string[]; typeIn?: string[] } | null;
+};
 type AutomationRun = { id: string; status: 'skipped' | 'succeeded' | 'failed'; reason: string | null; result: { recommendationsCount?: number } | null; createdAt: string };
 type WorkspaceSummary = { id: string; name: string; role: string };
 
@@ -22,11 +29,7 @@ export default async function AutomationDetailPage({ params }: { params: { works
   let automation: Automation, runs: AutomationRun[], memberships: WorkspaceSummary[];
   try {
     [automation, runs, memberships] = await Promise.all([
-      apiFetch(`/api/v1/workspaces/${workspaceId}/automations`).then((all: Automation[]) => {
-        const found = all.find((a) => a.id === automationId);
-        if (!found) throw new ApiError(404, 'NOT_FOUND', 'No automation with that id exists in this workspace.');
-        return found;
-      }),
+      apiFetch(base),
       apiFetch(`${base}/runs`),
       apiFetch('/api/v1/users/me/workspaces'),
     ]);
@@ -53,6 +56,13 @@ export default async function AutomationDetailPage({ params }: { params: { works
       <p className="mt-1 text-sm capitalize text-slate-500">
         {automation.triggerType.replace('.', ' ')} → {automation.actionType.replace(/_/g, ' ')}
       </p>
+      {automation.conditions && (automation.conditions.priorityIn?.length || automation.conditions.typeIn?.length) ? (
+        <p className="mt-1 text-sm capitalize text-slate-500">
+          {automation.conditions.priorityIn && `Priority: ${automation.conditions.priorityIn.join(', ')}`}
+          {automation.conditions.priorityIn && automation.conditions.typeIn && ' · '}
+          {automation.conditions.typeIn && `Type: ${automation.conditions.typeIn.join(', ').replace(/_/g, ' ')}`}
+        </p>
+      ) : null}
 
       <Card className="mt-6">
         <CardHeader>

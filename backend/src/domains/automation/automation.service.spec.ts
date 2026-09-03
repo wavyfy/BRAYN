@@ -105,6 +105,33 @@ describe('AutomationService', () => {
     });
   });
 
+  describe('get()', () => {
+    it('throws NotFoundError when the automation does not exist in this workspace', async () => {
+      const select = makeSelectQueue([[]]);
+      const service = new AutomationService(
+        { client: { select } } as unknown as DatabaseService,
+        {} as RecommendationService,
+        makeLogger(),
+      );
+
+      await expect(service.get('ws_1', 'auto_missing')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    });
+
+    it('returns the automation', async () => {
+      const automation = { id: 'auto_1', name: 'X' };
+      const select = makeSelectQueue([[automation]]);
+      const service = new AutomationService(
+        { client: { select } } as unknown as DatabaseService,
+        {} as RecommendationService,
+        makeLogger(),
+      );
+
+      const result = await service.get('ws_1', 'auto_1');
+
+      expect(result).toEqual(automation);
+    });
+  });
+
   describe('list() / listRuns()', () => {
     it('list() returns whatever the query yields', async () => {
       const rows = [{ id: 'auto_1' }];

@@ -23,6 +23,12 @@ export class AutomationController {
     return this.automationService.list(workspaceId);
   }
 
+  @Get(':automationId')
+  @RequireWorkspaceRole('owner', 'admin', 'marketing', 'analyst')
+  async get(@Param('workspaceId') workspaceId: string, @Param('automationId') automationId: string) {
+    return this.automationService.get(workspaceId, automationId);
+  }
+
   @Post()
   @RequireWorkspaceRole('owner', 'admin', 'marketing')
   async create(
