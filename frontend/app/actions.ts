@@ -70,6 +70,20 @@ export async function updateKnowledgeEntry(workspaceId: string, entryId: string,
   });
 }
 
+export async function createAutomation(workspaceId: string, name: string) {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/automations`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function setAutomationEnabled(workspaceId: string, automationId: string, enabled: boolean) {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/automations/${automationId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ enabled }),
+  });
+}
+
 export async function connectIntegration(workspaceId: string, provider: string) {
   return apiFetch(`/api/v1/workspaces/${workspaceId}/integrations`, {
     method: 'POST',

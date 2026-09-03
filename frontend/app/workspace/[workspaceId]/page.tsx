@@ -70,6 +70,9 @@ export default async function WorkspacePage({ params }: { params: { workspaceId:
         <Link href={`/workspace/${workspace.id}/knowledge`} className="font-medium text-slate-600 hover:text-slate-900">
           Knowledge
         </Link>
+        <Link href={`/workspace/${workspace.id}/automations`} className="font-medium text-slate-600 hover:text-slate-900">
+          Automations
+        </Link>
       </nav>
 
       <Card className="mt-6">
