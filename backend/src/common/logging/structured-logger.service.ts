@@ -1,5 +1,6 @@
 import { Injectable, type LoggerService } from '@nestjs/common';
 import { RequestContext } from './request-context';
+import { scrubSensitive } from './scrub-sensitive';
 
 type Level = 'debug' | 'verbose' | 'log' | 'warn' | 'error' | 'fatal';
 
@@ -22,8 +23,13 @@ interface LogLine {
  *
  * Fields follow "18. BRAYN Security, Observability & Reliability" (Logging):
  * timestamp, correlation id, context/service, operation, result, duration,
- * error information. Never log secrets — call sites are responsible for
- * not passing them in `meta`.
+ * error information.
+ *
+ * `message` and every string field in `meta` are run through
+ * `scrubSensitive` before being written — a fixed-pattern DLP backstop
+ * (emails, bearer/Shopify tokens, long token-like strings) for the rare
+ * case a call site accidentally passes one through, not a substitute for
+ * call sites staying disciplined about what they log.
  */
 @Injectable()
 export class StructuredLoggerService implements LoggerService {
@@ -63,18 +69,31 @@ export class StructuredLoggerService implements LoggerService {
     meta?: Record<string, unknown>,
   ): void {
     const store = RequestContext.get();
+    const rawMessage = typeof message === 'string' ? message : JSON.stringify(message);
     const line: LogLine = {
       timestamp: new Date().toISOString(),
       level,
       context,
-      message: typeof message === 'string' ? message : JSON.stringify(message),
+      message: scrubSensitive(rawMessage),
       correlationId: store?.correlationId,
       userId: store?.userId,
       workspaceId: store?.workspaceId,
-      ...meta,
+      ...scrubMeta(meta),
     };
 
     const target = level === 'error' || level === 'fatal' ? console.error : console.log;
     target(JSON.stringify(line));
   }
+}
+
+/** Shallow — every current call site passes a flat record of primitives/arrays, never nested objects. */
+function scrubMeta(meta: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!meta) {
+    return meta;
+  }
+  const scrubbed: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(meta)) {
+    scrubbed[key] = typeof value === 'string' ? scrubSensitive(value) : value;
+  }
+  return scrubbed;
 }

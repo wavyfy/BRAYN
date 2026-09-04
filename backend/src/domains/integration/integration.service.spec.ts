@@ -8,8 +8,10 @@ import type { ProviderAdapter } from './provider-adapter.interface';
 import type { ImportRunService } from './import-run.service';
 import type { ReconciliationRunService } from './reconciliation-run.service';
 import type { EventBus } from '../../common/events/event-bus.service';
+import { and, eq } from 'drizzle-orm';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
+import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
 
 const VALID_KEY = 'a'.repeat(64);
 
@@ -660,11 +662,18 @@ describe('IntegrationService', () => {
       let remainingIdx = 0;
       let conversationIdx = 0;
       const deleteCalls: unknown[] = [];
+      // Which `.where(...)` args each table's delete call used — additive to
+      // deleteCalls above, so existing `toContain`/`not.toContain` assertions
+      // on deleteCalls are untouched by this.
+      const deleteWhereArgsByTable = new Map<unknown, unknown[][]>();
 
-      function chain(result: unknown) {
+      function chain(result: unknown, whereArgsSink?: unknown[][]) {
         const c: Record<string, unknown> = {
           from: vi.fn(() => c),
-          where: vi.fn(() => c),
+          where: vi.fn((...args: unknown[]) => {
+            whereArgsSink?.push(args);
+            return c;
+          }),
           returning: vi.fn(async () => result ?? []),
           then: (resolve: (v: unknown) => void) => resolve(result ?? []),
         };
@@ -679,10 +688,12 @@ describe('IntegrationService', () => {
 
       const del = vi.fn((table: unknown) => {
         deleteCalls.push(table);
-        return chain(table === commerceCustomers ? commerceCustomersDeleted : []);
+        const whereArgsSink: unknown[][] = [];
+        deleteWhereArgsByTable.set(table, whereArgsSink);
+        return chain(table === commerceCustomers ? commerceCustomersDeleted : [], whereArgsSink);
       });
 
-      return { select, delete: del, deleteCalls };
+      return { select, delete: del, deleteCalls, deleteWhereArgsByTable };
     }
 
     function makeService(existingIntegration: Record<string, unknown> | null, tx: ReturnType<typeof makeTx>) {
@@ -778,6 +789,28 @@ describe('IntegrationService', () => {
         commerceCustomersRemoved: 0,
         canonicalCustomersRemoved: 0,
       });
+    });
+
+    it('removes integration_webhook_events belonging to the purged integration (DLP — raw webhook payloads carry customer PII)', async () => {
+      const integration = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'disconnected', updatedAt: new Date(Date.now() - 91 * DAY_MS) };
+      const tx = makeTx({ linkedRows: [], commerceCustomersDeleted: [] });
+      const service = makeService(integration, tx);
+
+      await service.purgeCustomerData('ws_1', 'shopify');
+
+      expect(tx.deleteCalls).toContain(integrationWebhookEvents);
+    });
+
+    it('scopes the integration_webhook_events delete to this workspace + this integration only, leaving other integrations\' events untouched', async () => {
+      const integration = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'disconnected', updatedAt: new Date(Date.now() - 91 * DAY_MS) };
+      const tx = makeTx({ linkedRows: [], commerceCustomersDeleted: [] });
+      const service = makeService(integration, tx);
+
+      await service.purgeCustomerData('ws_1', 'shopify');
+
+      const whereArgs = tx.deleteWhereArgsByTable.get(integrationWebhookEvents);
+      expect(whereArgs).toHaveLength(1);
+      expect(whereArgs?.[0][0]).toEqual(and(eq(integrationWebhookEvents.workspaceId, 'ws_1'), eq(integrationWebhookEvents.integrationId, 'int_1')));
     });
   });
 });

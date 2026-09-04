@@ -46,4 +46,25 @@ describe('StructuredLoggerService', () => {
     expect(parsed.level).toBe('error');
     expect(parsed.trace).toBe('some stack');
   });
+
+  it('scrubs an email address out of the message', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const logger = new StructuredLoggerService();
+
+    logger.log('Customer lookup failed for jane@example.com', 'TestContext');
+
+    const parsed = JSON.parse(spy.mock.calls[0]?.[0] as string);
+    expect(parsed.message).toBe('Customer lookup failed for [redacted-email]');
+  });
+
+  it('scrubs a Bearer token out of the trace field in meta', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const logger = new StructuredLoggerService();
+
+    logger.error('boom', 'Authorization: Bearer abcDEF123.token-value', 'TestContext');
+
+    const parsed = JSON.parse(spy.mock.calls[0]?.[0] as string);
+    expect(parsed.trace).toBe('Authorization: Bearer [redacted-token]');
+    expect(JSON.stringify(parsed)).not.toContain('abcDEF123.token-value');
+  });
 });

@@ -4,6 +4,7 @@ import { DatabaseService } from '../../database/database.service';
 import { integrations } from '../../database/schema/integrations';
 import { integrationReconciliationRuns } from '../../database/schema/integration-reconciliation-runs';
 import { ConflictError, NotFoundError } from '../../common/errors/app-error';
+import { scrubSensitive } from '../../common/logging/scrub-sensitive';
 import type { IntegrationProvider } from './dto/connect-integration.schema';
 
 export type ReconciliationTrigger = 'scheduled' | 'sync_completion' | 'detected_inconsistency' | 'manual';
@@ -127,7 +128,7 @@ export class ReconciliationRunService {
 
     const [updated] = await this.database.client
       .update(integrationReconciliationRuns)
-      .set({ status: 'failed', error, completedAt: new Date() })
+      .set({ status: 'failed', error: scrubSensitive(error), completedAt: new Date() })
       .where(eq(integrationReconciliationRuns.id, runId))
       .returning();
 

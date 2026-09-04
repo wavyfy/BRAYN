@@ -18,6 +18,7 @@ import { recommendations } from '../../database/schema/recommendations';
 import { customerHealthStates } from '../../database/schema/customer-health-states';
 import { customerHealthStateHistory } from '../../database/schema/customer-health-state-history';
 import { automationRuns } from '../../database/schema/automation-runs';
+import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
 import { ConflictError, NotFoundError, ProviderError, UnauthenticatedError } from '../../common/errors/app-error';
 import {
   decryptCredential,
@@ -198,6 +199,15 @@ export class IntegrationService {
           ),
         );
       const candidateCanonicalIds = [...new Set(linked.map((row) => row.canonicalCustomerId as string))];
+
+      // Raw webhook deliveries for this integration can carry the same
+      // customer PII as the commerce tables below (a customer/order
+      // webhook's payload is the provider's raw record) — nothing else
+      // references this table, so it's safe to remove outright rather than
+      // leaving a second, ungoverned copy behind after the purge (DLP).
+      await tx
+        .delete(integrationWebhookEvents)
+        .where(and(eq(integrationWebhookEvents.workspaceId, workspaceId), eq(integrationWebhookEvents.integrationId, integration.id)));
 
       // Order-scoped tables first (FK-safe order), all directly integration-scoped.
       await tx

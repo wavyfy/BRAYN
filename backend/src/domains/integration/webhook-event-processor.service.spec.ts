@@ -166,4 +166,17 @@ describe('WebhookEventProcessorService', () => {
     expect(logger.error).toHaveBeenCalledTimes(1);
     expect(updateChain.set).toHaveBeenCalledWith({ status: 'dead_letter', error: 'db down', retryCount: 3 });
   });
+
+  it('scrubs sensitive text out of the persisted error column before writing it', async () => {
+    const { processor, customerService, updateChain } = makeProcessor();
+    vi.mocked(customerService.upsertMany).mockRejectedValue(
+      new Error('upstream call for jane@example.com failed using Bearer sometoken1234567890'),
+    );
+
+    const customer = { externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: new Date() };
+    await processor.handleWebhookReceived(makeReceivedEvent({ resource: 'customer', data: customer }, { webhookEventId: 'wh_dead' }));
+
+    const setArg = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(setArg.error).toBe('upstream call for [redacted-email] failed using Bearer [redacted-token]');
+  });
 });
