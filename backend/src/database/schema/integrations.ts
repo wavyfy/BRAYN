@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { index, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { id, timestamps } from './columns';
 import { workspaces } from './workspaces';
 
@@ -41,11 +41,27 @@ export const integrations = pgTable(
      * by list/connect/disconnect — see integrationPublicColumns.
      */
     credentials: text('credentials'),
+    /**
+     * Plaintext shop domain (e.g. `{shop}.myshopify.com`) — not a secret
+     * on its own (unlike `credentials`), and Shopify's app-level mandatory
+     * compliance webhooks (`customers/data_request`, `customers/redact`,
+     * `shop/redact`) arrive at one fixed URL for every shop with no
+     * workspace id to key off, only `shop_domain` in the payload — this
+     * column is what lets that lookup happen without decrypting every
+     * Shopify integration's credentials on every compliance delivery.
+     * Written by `IntegrationService.setCredentials()` whenever the
+     * credential payload carries a `shopDomain`; null for providers that
+     * don't have one.
+     */
+    shopDomain: text('shop_domain'),
     /** Set when a sync completes successfully (doc 06 — state must be observable). Null until the first sync. */
     lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
     /** Set when a sync fails; cleared on connect/reconnect/successful sync. */
     lastSyncError: text('last_sync_error'),
     ...timestamps(),
   },
-  (table) => [uniqueIndex('integrations_workspace_provider_unique').on(table.workspaceId, table.provider)],
+  (table) => [
+    uniqueIndex('integrations_workspace_provider_unique').on(table.workspaceId, table.provider),
+    index('integrations_shop_domain_idx').on(table.shopDomain),
+  ],
 );

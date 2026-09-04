@@ -18,10 +18,6 @@ function stubLocation() {
   return { setHref, restore: () => Object.defineProperty(window, 'location', { configurable: true, value: original }) };
 }
 
-function jsonResponse(status: number, body: unknown) {
-  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
-}
-
 describe('ShopifyConnect', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -39,32 +35,31 @@ describe('ShopifyConnect', () => {
     expect(screen.getByRole('button', { name: 'Connect Shopify' })).toBeTruthy();
   });
 
-  it('calls the backend directly, credentialed, with the caller\'s own bearer token, and navigates to the authorize URL', async () => {
+  it('navigates the browser directly to the backend start endpoint with shopDomain and the caller\'s token as query params, without a fetch round-trip', async () => {
     const { setHref, restore } = stubLocation();
-    const fetchMock = vi.fn(async () => jsonResponse(201, { authorizeUrl: 'https://test-store.myshopify.com/admin/oauth/authorize?state=abc' }));
+    const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
     render(<ShopifyConnect workspaceId="ws_1" />);
     fireEvent.change(screen.getByLabelText('Shop domain'), { target: { value: 'test-store.myshopify.com' } });
     fireEvent.click(screen.getByRole('button', { name: 'Connect Shopify' }));
 
-    await vi.waitFor(() => expect(setHref).toHaveBeenCalledWith('https://test-store.myshopify.com/admin/oauth/authorize?state=abc'));
+    await vi.waitFor(() => expect(setHref).toHaveBeenCalled());
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe('http://api.test/api/v1/workspaces/ws_1/integrations/shopify/oauth/start');
-    expect(init.credentials).toBe('include');
-    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer test-token');
-    expect(JSON.parse(init.body as string)).toEqual({ shopDomain: 'test-store.myshopify.com' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    const url = new URL(setHref.mock.calls[0][0] as string);
+    expect(url.origin + url.pathname).toBe('http://api.test/api/v1/workspaces/ws_1/integrations/shopify/oauth/start');
+    expect(url.searchParams.get('shopDomain')).toBe('test-store.myshopify.com');
+    expect(url.searchParams.get('token')).toBe('test-token');
     restore();
   });
 
-  it('shows an inline error instead of navigating when the backend rejects the request', async () => {
+  it('shows an inline error instead of navigating when no Clerk token is available', async () => {
     const { setHref, restore } = stubLocation();
-    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(400, { error: { code: 'VALIDATION_ERROR', message: 'bad domain' } })));
+    getToken.mockResolvedValueOnce(null);
 
     render(<ShopifyConnect workspaceId="ws_1" />);
-    fireEvent.change(screen.getByLabelText('Shop domain'), { target: { value: 'not-a-shop' } });
+    fireEvent.change(screen.getByLabelText('Shop domain'), { target: { value: 'test-store.myshopify.com' } });
     fireEvent.click(screen.getByRole('button', { name: 'Connect Shopify' }));
 
     const alert = await screen.findByRole('alert');

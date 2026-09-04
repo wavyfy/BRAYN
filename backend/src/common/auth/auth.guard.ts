@@ -6,6 +6,7 @@ import type { FastifyRequest } from 'fastify';
 import { ProviderError, UnauthenticatedError } from '../errors/app-error';
 import { RequestContext } from '../logging/request-context';
 import { IS_PUBLIC_KEY } from './public.decorator';
+import { ALLOW_QUERY_TOKEN_KEY } from './allow-query-token.decorator';
 import type { Env } from '../../config/env.schema';
 
 /**
@@ -38,7 +39,11 @@ export class AuthGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<FastifyRequest>();
-    const token = this.extractBearerToken(request);
+    const allowQueryToken = this.reflector.getAllAndOverride<boolean>(ALLOW_QUERY_TOKEN_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    const token = this.extractBearerToken(request) ?? (allowQueryToken ? this.extractQueryToken(request) : undefined);
 
     if (!token) {
       throw new UnauthenticatedError('A bearer token is required.');
@@ -70,5 +75,11 @@ export class AuthGuard implements CanActivate {
       return undefined;
     }
     return header.slice('Bearer '.length).trim() || undefined;
+  }
+
+  /** Only consulted when the route opts in via @AllowQueryToken() — see that decorator's doc comment. */
+  private extractQueryToken(request: FastifyRequest): string | undefined {
+    const value = (request.query as Record<string, unknown> | undefined)?.token;
+    return typeof value === 'string' && value.length > 0 ? value : undefined;
   }
 }

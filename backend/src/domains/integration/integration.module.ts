@@ -17,6 +17,8 @@ import { SyncProcessorService } from './sync-processor.service';
 import { ShopifyAdapter } from './providers/shopify/shopify.adapter';
 import { ShopifyOAuthService } from './providers/shopify/shopify-oauth.service';
 import { ShopifyOAuthStartController, ShopifyOAuthCallbackController } from './providers/shopify/shopify-oauth.controller';
+import { ShopifyComplianceService } from './providers/shopify/shopify-compliance.service';
+import { ShopifyComplianceController } from './providers/shopify/shopify-compliance.controller';
 import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter';
 
 /**
@@ -39,7 +41,13 @@ import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter'
  */
 @Module({
   imports: [WorkspaceModule, CommerceModule, IdentityResolutionModule],
-  controllers: [IntegrationController, WebhookController, ShopifyOAuthStartController, ShopifyOAuthCallbackController],
+  controllers: [
+    IntegrationController,
+    WebhookController,
+    ShopifyOAuthStartController,
+    ShopifyOAuthCallbackController,
+    ShopifyComplianceController,
+  ],
   providers: [
     IntegrationService,
     ProviderRegistry,
@@ -53,6 +61,7 @@ import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter'
     SyncProcessorService,
     ShopifyAdapter,
     ShopifyOAuthService,
+    ShopifyComplianceService,
     WooCommerceAdapter,
   ],
   exports: [

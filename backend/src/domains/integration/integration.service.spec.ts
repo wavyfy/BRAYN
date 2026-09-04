@@ -12,6 +12,13 @@ import { and, eq } from 'drizzle-orm';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
+import { integrations } from '../../database/schema/integrations';
+import { commerceOrders } from '../../database/schema/commerce-orders';
+import { commerceProducts } from '../../database/schema/commerce-products';
+import { commerceOrderLineItems } from '../../database/schema/commerce-order-line-items';
+import { commerceRefundLineItems } from '../../database/schema/commerce-refund-line-items';
+import { commerceFulfillments } from '../../database/schema/commerce-fulfillments';
+import { commerceRefunds } from '../../database/schema/commerce-refunds';
 
 const VALID_KEY = 'a'.repeat(64);
 
@@ -46,6 +53,7 @@ function makeChain(finalResult: unknown) {
     returning: vi.fn(async () => finalResult),
     from: vi.fn(() => chain),
     where: vi.fn(() => chain),
+    orderBy: vi.fn(() => chain),
     limit: vi.fn(async () => finalResult),
     then: (resolve: (value: unknown) => void) => resolve(finalResult),
   };
@@ -123,27 +131,102 @@ describe('IntegrationService', () => {
     await expect(service.connect('ws_1', 'shopify')).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 
-  it('disconnect() marks a connected integration as disconnected', async () => {
-    const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected' };
-    const disconnected = { ...existing, status: 'disconnected' };
-    const updateChain = makeChain([disconnected]);
-    const client = {
-      select: makeSelectQueue([[existing]]),
-      update: vi.fn(() => updateChain),
-    };
-    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
+  describe('disconnect()', () => {
+    it('marks a connected integration as disconnected', async () => {
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected' };
+      const disconnected = { ...existing, status: 'disconnected' };
+      const updateChain = makeChain([disconnected]);
+      const client = {
+        select: makeSelectQueue([[existing]]),
+        update: vi.fn(() => updateChain),
+      };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
-    const result = await service.disconnect('ws_1', 'shopify');
+      const result = await service.disconnect('ws_1', 'shopify');
 
-    expect(result).toEqual(disconnected);
-    expect(updateChain.set).toHaveBeenCalledWith({ status: 'disconnected', lastSyncError: null });
-  });
+      expect(result).toEqual(disconnected);
+      expect(updateChain.set).toHaveBeenCalledWith({ status: 'disconnected', lastSyncError: null, credentials: null });
+    });
 
-  it('disconnect() throws NotFoundError when the workspace has no connection for that provider', async () => {
-    const client = { select: makeSelectQueue([[]]) };
-    const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
+    it('throws NotFoundError when the workspace has no connection for that provider', async () => {
+      const client = { select: makeSelectQueue([[]]) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
-    await expect(service.disconnect('ws_1', 'shopify')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      await expect(service.disconnect('ws_1', 'shopify')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    });
+
+    it('clears the stored provider credentials (Part 5B — DLP/incident response: a disconnect must not leave the old credential behind)', async () => {
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected', credentials: 'encrypted-blob' };
+      const updateChain = makeChain([{ ...existing, status: 'disconnected', credentials: null }]);
+      const client = { select: makeSelectQueue([[existing]]), update: vi.fn(() => updateChain) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
+
+      await service.disconnect('ws_1', 'shopify');
+
+      const setArg = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      expect(setArg.credentials).toBeNull();
+    });
+
+    it('clears the status and the credentials in a single atomic update — not two separate writes', async () => {
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected', credentials: 'encrypted-blob' };
+      const updateChain = makeChain([{ ...existing, status: 'disconnected', credentials: null }]);
+      const client = { select: makeSelectQueue([[existing]]), update: vi.fn(() => updateChain) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
+
+      await service.disconnect('ws_1', 'shopify');
+
+      expect(client.update).toHaveBeenCalledTimes(1);
+      expect(updateChain.set).toHaveBeenCalledTimes(1);
+      expect(updateChain.set).toHaveBeenCalledWith(expect.objectContaining({ status: 'disconnected', credentials: null }));
+    });
+
+    it('scopes the update to only the target integration, by id', async () => {
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected' };
+      const updateChain = makeChain([{ ...existing, status: 'disconnected', credentials: null }]);
+      const client = { select: makeSelectQueue([[existing]]), update: vi.fn(() => updateChain) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
+
+      await service.disconnect('ws_1', 'shopify');
+
+      expect(updateChain.where).toHaveBeenCalledWith(eq(integrations.id, 'int_1'));
+    });
+
+    it('a still-connected integration is never touched by another integration\'s disconnect (no cross-row effect at the query level)', async () => {
+      // The update's WHERE clause is scoped to this integration's id alone (verified above) — a second,
+      // still-connected integration row is never part of the query this call issues, so it cannot be affected.
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected' };
+      const otherIntegrationId = 'int_2';
+      const updateChain = makeChain([{ ...existing, status: 'disconnected', credentials: null }]);
+      const client = { select: makeSelectQueue([[existing]]), update: vi.fn(() => updateChain) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
+
+      await service.disconnect('ws_1', 'shopify');
+
+      const whereArg = (updateChain.where as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(whereArg).not.toEqual(eq(integrations.id, otherIntegrationId));
+    });
+
+    it('reconnecting after a disconnect can store fresh credentials (setCredentials always writes a new value, regardless of the cleared prior one)', async () => {
+      const adapter = { verifyConnection: vi.fn(async () => true) };
+      const disconnectedIntegration = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected', credentials: null };
+      const updateChain = makeChain([{ ...disconnectedIntegration, credentials: 'new-encrypted-blob' }]);
+      const client = { select: makeSelectQueue([[disconnectedIntegration]]), update: vi.fn(() => updateChain) };
+      const service = new IntegrationService(
+        { client } as unknown as DatabaseService,
+        makeConfig(),
+        makeRegistry(adapter),
+        makeImportRunService(),
+        makeReconciliationRunService(),
+        makeEventBus(),
+      );
+
+      await service.connectCredentials('ws_1', 'shopify', { accessToken: 'fresh-token' });
+
+      expect(adapter.verifyConnection).toHaveBeenCalled();
+      const setArg = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      expect(typeof setArg.credentials).toBe('string');
+      expect(setArg.credentials).not.toBeNull();
+    });
   });
 
   describe('connectCredentials()', () => {
@@ -811,6 +894,172 @@ describe('IntegrationService', () => {
       const whereArgs = tx.deleteWhereArgsByTable.get(integrationWebhookEvents);
       expect(whereArgs).toHaveLength(1);
       expect(whereArgs?.[0][0]).toEqual(and(eq(integrationWebhookEvents.workspaceId, 'ws_1'), eq(integrationWebhookEvents.integrationId, 'int_1')));
+    });
+  });
+
+  describe('findByShopDomain()', () => {
+    it('resolves the most recently updated integration for that shop domain', async () => {
+      const row = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', shopDomain: 'wavyfyy.myshopify.com' };
+      const chain = makeChain([row]);
+      const client = { select: vi.fn(() => chain) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
+
+      const result = await service.findByShopDomain('wavyfyy.myshopify.com');
+
+      expect(result).toEqual(row);
+    });
+
+    it('returns null when no integration has that shop domain', async () => {
+      const chain = makeChain([]);
+      const client = { select: vi.fn(() => chain) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
+
+      await expect(service.findByShopDomain('unknown.myshopify.com')).resolves.toBeNull();
+    });
+  });
+
+  describe('purgeCommerceCustomer() — Shopify customers/redact', () => {
+    /** Sequential select results (call order: customerRow, orderRows, [refundRows], [canonical remaining count], [conversationRows]); deletes are tracked by table identity, matching purgeCustomerData()'s test style above. */
+    function makeTx(selectResults: unknown[]) {
+      const select = makeSelectQueue(selectResults);
+      const deleteCalls: unknown[] = [];
+      const del = vi.fn((table: unknown) => {
+        deleteCalls.push(table);
+        return makeChain([]);
+      });
+      return { select, delete: del, deleteCalls };
+    }
+
+    function makeService(tx: ReturnType<typeof makeTx>) {
+      const database = { transaction: vi.fn((fn: (tx: unknown) => unknown) => fn({ select: tx.select, delete: tx.delete })) };
+      return new IntegrationService(database as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
+    }
+
+    it('returns found: false and deletes nothing when the externalId does not exist in this integration', async () => {
+      const tx = makeTx([[]]); // customerRow lookup -> not found
+      const service = makeService(tx);
+
+      const result = await service.purgeCommerceCustomer('ws_1', 'int_1', 'shopify_customer_999');
+
+      expect(result).toEqual({ found: false, canonicalCustomerRemoved: false });
+      expect(tx.deleteCalls).toHaveLength(0);
+    });
+
+    it('erases the customer\'s orders/commerce profile and preserves a canonical customer still referenced elsewhere', async () => {
+      const tx = makeTx([
+        [{ id: 'cc_1', canonicalCustomerId: 'canon_1' }], // customerRow
+        [{ id: 'order_1' }], // orderRows
+        [{ id: 'refund_1' }], // refundRows
+        [{ count: 1 }], // canonical orphan check — still referenced by another commerce_customers row
+      ]);
+      const service = makeService(tx);
+
+      const result = await service.purgeCommerceCustomer('ws_1', 'int_1', 'shopify_customer_1');
+
+      expect(result).toEqual({ found: true, canonicalCustomerRemoved: false });
+      expect(tx.deleteCalls).toEqual(
+        expect.arrayContaining([commerceOrderLineItems, commerceRefundLineItems, commerceFulfillments, commerceRefunds, commerceOrders, commerceCustomers]),
+      );
+      expect(tx.deleteCalls).not.toContain(canonicalCustomers);
+    });
+
+    it('removes the canonical customer once it is left orphaned', async () => {
+      const tx = makeTx([
+        [{ id: 'cc_1', canonicalCustomerId: 'canon_1' }], // customerRow
+        [], // orderRows — no orders for this customer
+        [{ count: 0 }], // canonical orphan check — nothing else references it
+        [], // conversationRows
+      ]);
+      const service = makeService(tx);
+
+      const result = await service.purgeCommerceCustomer('ws_1', 'int_1', 'shopify_customer_1');
+
+      expect(result).toEqual({ found: true, canonicalCustomerRemoved: true });
+      expect(tx.deleteCalls).toContain(commerceCustomers);
+      expect(tx.deleteCalls).toContain(canonicalCustomers);
+    });
+
+    it('does not touch the canonical-customer cascade when the commerce customer has no canonical link yet', async () => {
+      const tx = makeTx([
+        [{ id: 'cc_1', canonicalCustomerId: null }], // customerRow, not yet identity-resolved
+        [], // orderRows
+      ]);
+      const service = makeService(tx);
+
+      const result = await service.purgeCommerceCustomer('ws_1', 'int_1', 'shopify_customer_1');
+
+      expect(result).toEqual({ found: true, canonicalCustomerRemoved: false });
+      expect(tx.deleteCalls).not.toContain(canonicalCustomers);
+    });
+  });
+
+  describe('eraseIntegrationForShopRedact() — Shopify shop/redact', () => {
+    function makeTx(integrationRow: Record<string, unknown> | null, extraSelectResults: unknown[] = []) {
+      const select = makeSelectQueue([integrationRow ? [integrationRow] : [], ...extraSelectResults]);
+      const deleteCalls: unknown[] = [];
+      const del = vi.fn((table: unknown) => {
+        deleteCalls.push(table);
+        return makeChain([]);
+      });
+      const updateChain = makeChain([{ ...integrationRow, status: 'disconnected', credentials: null, shopDomain: null }]);
+      const update = vi.fn(() => updateChain);
+      return { select, delete: del, update, deleteCalls, updateChain };
+    }
+
+    function makeService(tx: ReturnType<typeof makeTx>) {
+      const database = { transaction: vi.fn((fn: (tx: unknown) => unknown) => fn({ select: tx.select, delete: tx.delete, update: tx.update })) };
+      return new IntegrationService(database as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
+    }
+
+    it('returns found: false and touches nothing for a nonexistent integration id', async () => {
+      const tx = makeTx(null);
+      const service = makeService(tx);
+
+      const result = await service.eraseIntegrationForShopRedact('int_missing');
+
+      expect(result).toEqual({ found: false });
+      expect(tx.deleteCalls).toHaveLength(0);
+      expect(tx.update).not.toHaveBeenCalled();
+    });
+
+    it('erases commerce data, catalog data, and disconnects + clears credentials and shopDomain', async () => {
+      const integration = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected', credentials: 'encrypted-blob', shopDomain: 'wavyfyy.myshopify.com' };
+      // purgeIntegrationCommerceData's own selects: linked (canonicalCustomerId) rows, then none candidate → no further selects.
+      const tx = makeTx(integration, [[]]);
+      const service = makeService(tx);
+
+      const result = await service.eraseIntegrationForShopRedact('int_1');
+
+      expect(result).toEqual({ found: true });
+      expect(tx.deleteCalls).toContain(commerceProducts);
+      expect(tx.update).toHaveBeenCalledWith(integrations);
+      expect(tx.updateChain.set).toHaveBeenCalledWith({ status: 'disconnected', lastSyncError: null, credentials: null, shopDomain: null });
+    });
+  });
+
+  describe('setCredentials() — shopDomain plaintext column', () => {
+    it('writes shopDomain alongside the encrypted credentials when the payload carries one', async () => {
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', status: 'connected' };
+      const updateChain = makeChain([existing]);
+      const client = { select: makeSelectQueue([[existing]]), update: vi.fn(() => updateChain) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
+
+      await service.setCredentials('ws_1', 'shopify', { shopDomain: 'wavyfyy.myshopify.com', accessToken: 'shpat_secret' });
+
+      const setArg = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      expect(setArg.shopDomain).toBe('wavyfyy.myshopify.com');
+    });
+
+    it('does not touch shopDomain when the credential payload has none', async () => {
+      const existing = { id: 'int_1', workspaceId: 'ws_1', provider: 'woocommerce', status: 'connected' };
+      const updateChain = makeChain([existing]);
+      const client = { select: makeSelectQueue([[existing]]), update: vi.fn(() => updateChain) };
+      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
+
+      await service.setCredentials('ws_1', 'woocommerce', { siteUrl: 'https://example.com', consumerKey: 'ck_1', consumerSecret: 'cs_1' });
+
+      const setArg = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      expect(Object.keys(setArg)).not.toContain('shopDomain');
     });
   });
 });

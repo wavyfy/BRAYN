@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, eq, inArray, isNotNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, or, sql } from 'drizzle-orm';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DatabaseService } from '../../database/database.service';
 import { integrations } from '../../database/schema/integrations';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
@@ -9,6 +10,10 @@ import { commerceOrderLineItems } from '../../database/schema/commerce-order-lin
 import { commerceFulfillments } from '../../database/schema/commerce-fulfillments';
 import { commerceRefunds } from '../../database/schema/commerce-refunds';
 import { commerceRefundLineItems } from '../../database/schema/commerce-refund-line-items';
+import { commerceProducts } from '../../database/schema/commerce-products';
+import { commerceProductVariants } from '../../database/schema/commerce-product-variants';
+import { commerceCollections } from '../../database/schema/commerce-collections';
+import { commerceCollectionProducts } from '../../database/schema/commerce-collection-products';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { canonicalCustomerDuplicates } from '../../database/schema/canonical-customer-duplicates';
 import { conversations } from '../../database/schema/conversations';
@@ -123,6 +128,13 @@ export class IntegrationService {
     return created;
   }
 
+  /**
+   * Clears the stored (encrypted) provider credential in the same update as
+   * the status flip — not a separate step — so a disconnect can never leave
+   * the old credential behind (doc18 Secrets/Security Operations: credential
+   * revocation). Reconnecting goes through connect()/setCredentials() again,
+   * which always writes a fresh value, so this never blocks reconnection.
+   */
   async disconnect(workspaceId: string, provider: IntegrationProvider) {
     const existing = await this.findByProvider(workspaceId, provider);
     if (!existing) {
@@ -131,7 +143,7 @@ export class IntegrationService {
 
     const [updated] = await this.database.client
       .update(integrations)
-      .set({ status: 'disconnected', lastSyncError: null })
+      .set({ status: 'disconnected', lastSyncError: null, credentials: null })
       .where(eq(integrations.id, existing.id))
       .returning(integrationPublicColumns);
 
@@ -185,101 +197,251 @@ export class IntegrationService {
     }
 
     return this.database.transaction(async (tx) => {
-      // Capture which canonical customers this integration's commerce_customers
-      // rows point to *before* deleting them — needed to check afterward whether
-      // each one is now orphaned (doc09 — a canonical customer may span providers).
-      const linked = await tx
-        .select({ canonicalCustomerId: commerceCustomers.canonicalCustomerId })
+      const result = await this.purgeIntegrationCommerceData(tx, workspaceId, integration.id);
+      return { integrationId: integration.id, ...result };
+    });
+  }
+
+  /**
+   * Finds the integration a Shopify app-level compliance webhook
+   * (`customers/data_request`/`customers/redact`/`shop/redact`) belongs
+   * to. Those webhooks arrive at one fixed URL for every shop the app is
+   * installed on — no workspace id to key off, only `shop_domain` in the
+   * payload — so this resolves the other direction `findByProvider` does.
+   * Ordered by most-recently-updated: a shop can theoretically appear on
+   * more than one (historical, disconnected) integration row across
+   * workspaces if it was moved; the most recent one is the live one.
+   */
+  async findByShopDomain(shopDomain: string) {
+    const [integration] = await this.database.client
+      .select()
+      .from(integrations)
+      .where(eq(integrations.shopDomain, shopDomain))
+      .orderBy(desc(integrations.updatedAt))
+      .limit(1);
+
+    return integration ?? null;
+  }
+
+  /**
+   * Shopify `customers/redact` — resolves the commerce customer by the
+   * provider's own external id (Shopify `customer.id`) within one
+   * integration, and erases just that customer's data. Narrower than
+   * `purgeCustomerData` (whole-integration) and, unlike it, never gated
+   * on `CUSTOMER_DATA_RETENTION_DAYS` or on the integration being
+   * `disconnected`: a mandatory compliance erasure must be honored
+   * immediately regardless of BRAYN's own voluntary-disconnect retention
+   * policy. Resolution and deletion share one transaction so there is no
+   * gap between "found" and "deleted". Shares the exact
+   * canonical-customer orphan check `purgeIntegrationCommerceData`'s loop
+   * uses, so a canonical customer still referenced by another
+   * integration's `commerce_customers` row is preserved here the same
+   * way it already is there.
+   */
+  async purgeCommerceCustomer(
+    workspaceId: string,
+    integrationId: string,
+    externalId: string,
+  ): Promise<{ found: boolean; canonicalCustomerRemoved: boolean }> {
+    return this.database.transaction(async (tx) => {
+      const [customerRow] = await tx
+        .select({ id: commerceCustomers.id, canonicalCustomerId: commerceCustomers.canonicalCustomerId })
         .from(commerceCustomers)
         .where(
           and(
             eq(commerceCustomers.workspaceId, workspaceId),
-            eq(commerceCustomers.integrationId, integration.id),
-            isNotNull(commerceCustomers.canonicalCustomerId),
+            eq(commerceCustomers.integrationId, integrationId),
+            eq(commerceCustomers.externalId, externalId),
           ),
-        );
-      const candidateCanonicalIds = [...new Set(linked.map((row) => row.canonicalCustomerId as string))];
-
-      // Raw webhook deliveries for this integration can carry the same
-      // customer PII as the commerce tables below (a customer/order
-      // webhook's payload is the provider's raw record) — nothing else
-      // references this table, so it's safe to remove outright rather than
-      // leaving a second, ungoverned copy behind after the purge (DLP).
-      await tx
-        .delete(integrationWebhookEvents)
-        .where(and(eq(integrationWebhookEvents.workspaceId, workspaceId), eq(integrationWebhookEvents.integrationId, integration.id)));
-
-      // Order-scoped tables first (FK-safe order), all directly integration-scoped.
-      await tx
-        .delete(commerceOrderLineItems)
-        .where(and(eq(commerceOrderLineItems.workspaceId, workspaceId), eq(commerceOrderLineItems.integrationId, integration.id)));
-      await tx
-        .delete(commerceRefundLineItems)
-        .where(and(eq(commerceRefundLineItems.workspaceId, workspaceId), eq(commerceRefundLineItems.integrationId, integration.id)));
-      await tx
-        .delete(commerceFulfillments)
-        .where(and(eq(commerceFulfillments.workspaceId, workspaceId), eq(commerceFulfillments.integrationId, integration.id)));
-      await tx
-        .delete(commerceRefunds)
-        .where(and(eq(commerceRefunds.workspaceId, workspaceId), eq(commerceRefunds.integrationId, integration.id)));
-      await tx
-        .delete(commerceOrders)
-        .where(and(eq(commerceOrders.workspaceId, workspaceId), eq(commerceOrders.integrationId, integration.id)));
-
-      const removedCommerceCustomers = await tx
-        .delete(commerceCustomers)
-        .where(and(eq(commerceCustomers.workspaceId, workspaceId), eq(commerceCustomers.integrationId, integration.id)))
-        .returning({ id: commerceCustomers.id });
-
-      // A canonical customer is only removed once nothing else in the workspace
-      // still references it — never on the strength of this integration alone.
-      let canonicalCustomersRemoved = 0;
-      for (const canonicalCustomerId of candidateCanonicalIds) {
-        const [remaining] = await tx
-          .select({ count: sql<number>`count(*)` })
-          .from(commerceCustomers)
-          .where(and(eq(commerceCustomers.workspaceId, workspaceId), eq(commerceCustomers.canonicalCustomerId, canonicalCustomerId)));
-        if (Number(remaining?.count ?? 0) > 0) {
-          continue;
-        }
-
-        await tx.delete(recommendations).where(and(eq(recommendations.workspaceId, workspaceId), eq(recommendations.canonicalCustomerId, canonicalCustomerId)));
-        await tx.delete(revenueOpportunities).where(and(eq(revenueOpportunities.workspaceId, workspaceId), eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId)));
-        await tx.delete(customerHealthStateHistory).where(and(eq(customerHealthStateHistory.workspaceId, workspaceId), eq(customerHealthStateHistory.canonicalCustomerId, canonicalCustomerId)));
-        await tx.delete(customerHealthStates).where(and(eq(customerHealthStates.workspaceId, workspaceId), eq(customerHealthStates.canonicalCustomerId, canonicalCustomerId)));
-        await tx.delete(automationRuns).where(and(eq(automationRuns.workspaceId, workspaceId), eq(automationRuns.canonicalCustomerId, canonicalCustomerId)));
-        await tx
-          .delete(canonicalCustomerDuplicates)
-          .where(
-            and(
-              eq(canonicalCustomerDuplicates.workspaceId, workspaceId),
-              or(
-                eq(canonicalCustomerDuplicates.canonicalCustomerAId, canonicalCustomerId),
-                eq(canonicalCustomerDuplicates.canonicalCustomerBId, canonicalCustomerId),
-              ),
-            ),
-          );
-
-        const conversationRows = await tx
-          .select({ id: conversations.id })
-          .from(conversations)
-          .where(and(eq(conversations.workspaceId, workspaceId), eq(conversations.canonicalCustomerId, canonicalCustomerId)));
-        const conversationIds = conversationRows.map((row) => row.id);
-        if (conversationIds.length > 0) {
-          await tx.delete(conversationMessages).where(and(eq(conversationMessages.workspaceId, workspaceId), inArray(conversationMessages.conversationId, conversationIds)));
-        }
-        await tx.delete(conversations).where(and(eq(conversations.workspaceId, workspaceId), eq(conversations.canonicalCustomerId, canonicalCustomerId)));
-
-        await tx.delete(canonicalCustomers).where(and(eq(canonicalCustomers.workspaceId, workspaceId), eq(canonicalCustomers.id, canonicalCustomerId)));
-        canonicalCustomersRemoved++;
+        )
+        .limit(1);
+      if (!customerRow) {
+        return { found: false, canonicalCustomerRemoved: false };
       }
 
-      return {
-        integrationId: integration.id,
-        commerceCustomersRemoved: removedCommerceCustomers.length,
-        canonicalCustomersRemoved,
-      };
+      const orderRows = await tx
+        .select({ id: commerceOrders.id })
+        .from(commerceOrders)
+        .where(and(eq(commerceOrders.workspaceId, workspaceId), eq(commerceOrders.customerId, customerRow.id)));
+      const orderIds = orderRows.map((row) => row.id);
+
+      if (orderIds.length > 0) {
+        const refundRows = await tx
+          .select({ id: commerceRefunds.id })
+          .from(commerceRefunds)
+          .where(and(eq(commerceRefunds.workspaceId, workspaceId), inArray(commerceRefunds.orderId, orderIds)));
+        const refundIds = refundRows.map((row) => row.id);
+
+        // Same relative order as purgeIntegrationCommerceData's order-scoped block, just scoped by this customer's order ids instead of the whole integration.
+        await tx.delete(commerceOrderLineItems).where(and(eq(commerceOrderLineItems.workspaceId, workspaceId), inArray(commerceOrderLineItems.orderId, orderIds)));
+        if (refundIds.length > 0) {
+          await tx.delete(commerceRefundLineItems).where(and(eq(commerceRefundLineItems.workspaceId, workspaceId), inArray(commerceRefundLineItems.refundId, refundIds)));
+        }
+        await tx.delete(commerceFulfillments).where(and(eq(commerceFulfillments.workspaceId, workspaceId), inArray(commerceFulfillments.orderId, orderIds)));
+        await tx.delete(commerceRefunds).where(and(eq(commerceRefunds.workspaceId, workspaceId), inArray(commerceRefunds.orderId, orderIds)));
+        await tx.delete(commerceOrders).where(and(eq(commerceOrders.workspaceId, workspaceId), inArray(commerceOrders.id, orderIds)));
+      }
+
+      await tx.delete(commerceCustomers).where(and(eq(commerceCustomers.workspaceId, workspaceId), eq(commerceCustomers.id, customerRow.id)));
+
+      const canonicalCustomerRemoved = customerRow.canonicalCustomerId
+        ? await this.purgeCanonicalCustomerIfOrphaned(tx, workspaceId, customerRow.canonicalCustomerId)
+        : false;
+
+      return { found: true, canonicalCustomerRemoved };
     });
+  }
+
+  /**
+   * Shopify `shop/redact` — immediate, ungated erasure of everything this
+   * integration owns, plus disconnecting it. Unlike `purgeCustomerData`,
+   * never waits on `CUSTOMER_DATA_RETENTION_DAYS` or requires the
+   * integration to already be `disconnected`: Shopify's mandatory
+   * compliance webhook must be honored regardless of BRAYN's own
+   * voluntary-disconnect retention policy (see doc30's note on this exact
+   * tension). Also erases the integration's own catalog
+   * (products/variants/collections) — the *shop's* data, not customer
+   * PII, but still integration-owned data Shopify expects gone on
+   * `shop/redact` — which `purgeCustomerData`/`customers/redact` never
+   * touch, since neither of those implies the shop itself is gone.
+   *
+   * Deliberately leaves the `integrations` row itself in place —
+   * disconnected, credential-less, `shopDomain` cleared — the same shape
+   * a voluntary `disconnect()` leaves behind, rather than hard-deleting
+   * the row, which would additionally require clearing its (non-PII)
+   * import/reconciliation run history purely to satisfy their own FK
+   * references — a bigger blast radius than this compliance requirement
+   * calls for. A no-op (returns `found: false`) if the id doesn't exist —
+   * a repeat delivery for an already-erased shop is safe.
+   */
+  async eraseIntegrationForShopRedact(integrationId: string): Promise<{ found: boolean }> {
+    return this.database.transaction(async (tx) => {
+      const [integration] = await tx.select().from(integrations).where(eq(integrations.id, integrationId)).limit(1);
+      if (!integration) {
+        return { found: false };
+      }
+
+      await this.purgeIntegrationCommerceData(tx, integration.workspaceId, integration.id);
+
+      // Catalog data — integration-scoped, not customer-scoped, so out of purgeIntegrationCommerceData's remit.
+      await tx
+        .delete(commerceCollectionProducts)
+        .where(and(eq(commerceCollectionProducts.workspaceId, integration.workspaceId), eq(commerceCollectionProducts.integrationId, integration.id)));
+      await tx
+        .delete(commerceProductVariants)
+        .where(and(eq(commerceProductVariants.workspaceId, integration.workspaceId), eq(commerceProductVariants.integrationId, integration.id)));
+      await tx
+        .delete(commerceCollections)
+        .where(and(eq(commerceCollections.workspaceId, integration.workspaceId), eq(commerceCollections.integrationId, integration.id)));
+      await tx.delete(commerceProducts).where(and(eq(commerceProducts.workspaceId, integration.workspaceId), eq(commerceProducts.integrationId, integration.id)));
+
+      await tx
+        .update(integrations)
+        .set({ status: 'disconnected', lastSyncError: null, credentials: null, shopDomain: null })
+        .where(eq(integrations.id, integration.id));
+
+      return { found: true };
+    });
+  }
+
+  /**
+   * The shared body of `purgeCustomerData()` (Part 1) — extracted so
+   * `shop/redact` (`eraseIntegrationForShopRedact`) can run the exact same
+   * cascade without `purgeCustomerData`'s disconnected/retention gate.
+   * Whole-integration scoped: every commerce_customers row this
+   * integration owns, and the same canonical-customer orphan check
+   * `purgeCommerceCustomer` also uses for its single-customer case.
+   */
+  private async purgeIntegrationCommerceData(
+    tx: NodePgDatabase,
+    workspaceId: string,
+    integrationId: string,
+  ): Promise<{ commerceCustomersRemoved: number; canonicalCustomersRemoved: number }> {
+    // Capture which canonical customers this integration's commerce_customers
+    // rows point to *before* deleting them — needed to check afterward whether
+    // each one is now orphaned (doc09 — a canonical customer may span providers).
+    const linked = await tx
+      .select({ canonicalCustomerId: commerceCustomers.canonicalCustomerId })
+      .from(commerceCustomers)
+      .where(and(eq(commerceCustomers.workspaceId, workspaceId), eq(commerceCustomers.integrationId, integrationId), isNotNull(commerceCustomers.canonicalCustomerId)));
+    const candidateCanonicalIds = [...new Set(linked.map((row) => row.canonicalCustomerId as string))];
+
+    // Raw webhook deliveries for this integration can carry the same
+    // customer PII as the commerce tables below (a customer/order
+    // webhook's payload is the provider's raw record) — nothing else
+    // references this table, so it's safe to remove outright rather than
+    // leaving a second, ungoverned copy behind after the purge (DLP).
+    await tx.delete(integrationWebhookEvents).where(and(eq(integrationWebhookEvents.workspaceId, workspaceId), eq(integrationWebhookEvents.integrationId, integrationId)));
+
+    // Order-scoped tables first (FK-safe order), all directly integration-scoped.
+    await tx.delete(commerceOrderLineItems).where(and(eq(commerceOrderLineItems.workspaceId, workspaceId), eq(commerceOrderLineItems.integrationId, integrationId)));
+    await tx.delete(commerceRefundLineItems).where(and(eq(commerceRefundLineItems.workspaceId, workspaceId), eq(commerceRefundLineItems.integrationId, integrationId)));
+    await tx.delete(commerceFulfillments).where(and(eq(commerceFulfillments.workspaceId, workspaceId), eq(commerceFulfillments.integrationId, integrationId)));
+    await tx.delete(commerceRefunds).where(and(eq(commerceRefunds.workspaceId, workspaceId), eq(commerceRefunds.integrationId, integrationId)));
+    await tx.delete(commerceOrders).where(and(eq(commerceOrders.workspaceId, workspaceId), eq(commerceOrders.integrationId, integrationId)));
+
+    const removedCommerceCustomers = await tx
+      .delete(commerceCustomers)
+      .where(and(eq(commerceCustomers.workspaceId, workspaceId), eq(commerceCustomers.integrationId, integrationId)))
+      .returning({ id: commerceCustomers.id });
+
+    // A canonical customer is only removed once nothing else in the workspace
+    // still references it — never on the strength of this integration alone.
+    let canonicalCustomersRemoved = 0;
+    for (const canonicalCustomerId of candidateCanonicalIds) {
+      const removed = await this.purgeCanonicalCustomerIfOrphaned(tx, workspaceId, canonicalCustomerId);
+      if (removed) {
+        canonicalCustomersRemoved++;
+      }
+    }
+
+    return { commerceCustomersRemoved: removedCommerceCustomers.length, canonicalCustomersRemoved };
+  }
+
+  /**
+   * Deletes a canonical customer and everything keyed off it — but only
+   * if no `commerce_customers` row anywhere in the workspace still points
+   * to it (a canonical customer may span providers/integrations — doc09).
+   * Shared by `purgeIntegrationCommerceData`'s per-integration loop and
+   * `purgeCommerceCustomer`'s single-customer case, so both erasure paths
+   * preserve shared canonical data identically. Returns whether it was
+   * actually removed.
+   */
+  private async purgeCanonicalCustomerIfOrphaned(tx: NodePgDatabase, workspaceId: string, canonicalCustomerId: string): Promise<boolean> {
+    const [remaining] = await tx
+      .select({ count: sql<number>`count(*)` })
+      .from(commerceCustomers)
+      .where(and(eq(commerceCustomers.workspaceId, workspaceId), eq(commerceCustomers.canonicalCustomerId, canonicalCustomerId)));
+    if (Number(remaining?.count ?? 0) > 0) {
+      return false;
+    }
+
+    await tx.delete(recommendations).where(and(eq(recommendations.workspaceId, workspaceId), eq(recommendations.canonicalCustomerId, canonicalCustomerId)));
+    await tx.delete(revenueOpportunities).where(and(eq(revenueOpportunities.workspaceId, workspaceId), eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId)));
+    await tx.delete(customerHealthStateHistory).where(and(eq(customerHealthStateHistory.workspaceId, workspaceId), eq(customerHealthStateHistory.canonicalCustomerId, canonicalCustomerId)));
+    await tx.delete(customerHealthStates).where(and(eq(customerHealthStates.workspaceId, workspaceId), eq(customerHealthStates.canonicalCustomerId, canonicalCustomerId)));
+    await tx.delete(automationRuns).where(and(eq(automationRuns.workspaceId, workspaceId), eq(automationRuns.canonicalCustomerId, canonicalCustomerId)));
+    await tx
+      .delete(canonicalCustomerDuplicates)
+      .where(
+        and(
+          eq(canonicalCustomerDuplicates.workspaceId, workspaceId),
+          or(eq(canonicalCustomerDuplicates.canonicalCustomerAId, canonicalCustomerId), eq(canonicalCustomerDuplicates.canonicalCustomerBId, canonicalCustomerId)),
+        ),
+      );
+
+    const conversationRows = await tx
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(and(eq(conversations.workspaceId, workspaceId), eq(conversations.canonicalCustomerId, canonicalCustomerId)));
+    const conversationIds = conversationRows.map((row) => row.id);
+    if (conversationIds.length > 0) {
+      await tx.delete(conversationMessages).where(and(eq(conversationMessages.workspaceId, workspaceId), inArray(conversationMessages.conversationId, conversationIds)));
+    }
+    await tx.delete(conversations).where(and(eq(conversations.workspaceId, workspaceId), eq(conversations.canonicalCustomerId, canonicalCustomerId)));
+
+    await tx.delete(canonicalCustomers).where(and(eq(canonicalCustomers.workspaceId, workspaceId), eq(canonicalCustomers.id, canonicalCustomerId)));
+    return true;
   }
 
   /**
@@ -473,7 +635,14 @@ export class IntegrationService {
     const key = this.resolveEncryptionKey();
     const encrypted = encryptCredential(JSON.stringify(credentials), key);
 
-    await this.database.client.update(integrations).set({ credentials: encrypted }).where(eq(integrations.id, existing.id));
+    // shopDomain is plaintext (unlike the rest of `credentials`) precisely so
+    // a Shopify app-level compliance webhook can resolve this row by shop —
+    // see findByShopDomain(). Only ever set from what the credential payload
+    // itself carries, never guessed.
+    await this.database.client
+      .update(integrations)
+      .set({ credentials: encrypted, ...(credentials.shopDomain ? { shopDomain: credentials.shopDomain } : {}) })
+      .where(eq(integrations.id, existing.id));
   }
 
   /**

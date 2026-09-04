@@ -76,12 +76,11 @@ describe('Shopify OAuth controllers (e2e)', () => {
     shopifyOAuthService.connectViaClientCredentials.mockClear();
   });
 
-  describe('POST /workspaces/:workspaceId/integrations/shopify/oauth/start', () => {
-    it('rejects an unauthenticated request', async () => {
+  describe('GET /workspaces/:workspaceId/integrations/shopify/oauth/start', () => {
+    it('rejects an unauthenticated request (no header, no ?token=)', async () => {
       const res = await app.inject({
-        method: 'POST',
-        url: '/workspaces/ws_1/integrations/shopify/oauth/start',
-        payload: { shopDomain: 'test-store.myshopify.com' },
+        method: 'GET',
+        url: '/workspaces/ws_1/integrations/shopify/oauth/start?shopDomain=test-store.myshopify.com',
       });
 
       expect(res.statusCode).toBe(401);
@@ -90,10 +89,8 @@ describe('Shopify OAuth controllers (e2e)', () => {
 
     it('rejects a caller who is not a workspace member', async () => {
       const res = await app.inject({
-        method: 'POST',
-        url: '/workspaces/ws_2/integrations/shopify/oauth/start',
-        headers: { authorization: 'Bearer valid-token' },
-        payload: { shopDomain: 'test-store.myshopify.com' },
+        method: 'GET',
+        url: '/workspaces/ws_2/integrations/shopify/oauth/start?shopDomain=test-store.myshopify.com&token=valid-token',
       });
 
       expect(res.statusCode).toBe(403);
@@ -104,26 +101,22 @@ describe('Shopify OAuth controllers (e2e)', () => {
       membershipService.findMembership.mockResolvedValueOnce({ id: 'mem_1', workspaceId: 'ws_1', userId: 'user_1', role: 'analyst' });
 
       const res = await app.inject({
-        method: 'POST',
-        url: '/workspaces/ws_1/integrations/shopify/oauth/start',
-        headers: { authorization: 'Bearer valid-token' },
-        payload: { shopDomain: 'test-store.myshopify.com' },
+        method: 'GET',
+        url: '/workspaces/ws_1/integrations/shopify/oauth/start?shopDomain=test-store.myshopify.com&token=valid-token',
       });
 
       expect(res.statusCode).toBe(403);
       expect(shopifyOAuthService.buildAuthorizeUrl).not.toHaveBeenCalled();
     });
 
-    it('returns the authorize URL for an owner and sets the session-binding cookie', async () => {
+    it('redirects to the authorize URL for an owner authenticated via ?token=, and sets the session-binding cookie', async () => {
       const res = await app.inject({
-        method: 'POST',
-        url: '/workspaces/ws_1/integrations/shopify/oauth/start',
-        headers: { authorization: 'Bearer valid-token' },
-        payload: { shopDomain: 'test-store.myshopify.com' },
+        method: 'GET',
+        url: '/workspaces/ws_1/integrations/shopify/oauth/start?shopDomain=test-store.myshopify.com&token=valid-token',
       });
 
-      expect(res.statusCode).toBe(201);
-      expect(res.json()).toEqual({ authorizeUrl: 'https://test-store.myshopify.com/admin/oauth/authorize?state=fake&workspace=ws_1' });
+      expect(res.statusCode).toBe(302);
+      expect(res.headers.location).toBe('https://test-store.myshopify.com/admin/oauth/authorize?state=fake&workspace=ws_1');
       expect(shopifyOAuthService.buildAuthorizeUrl).toHaveBeenCalledWith('ws_1', 'test-store.myshopify.com');
 
       const cookie = res.headers['set-cookie'] as string;
@@ -134,12 +127,21 @@ describe('Shopify OAuth controllers (e2e)', () => {
       expect(cookie).toContain('Path=/api/v1/integrations/shopify/oauth');
     });
 
+    it('also accepts the Clerk token via the Authorization header (top-level navigation is not the only caller)', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/workspaces/ws_1/integrations/shopify/oauth/start?shopDomain=test-store.myshopify.com',
+        headers: { authorization: 'Bearer valid-token' },
+      });
+
+      expect(res.statusCode).toBe(302);
+      expect(shopifyOAuthService.buildAuthorizeUrl).toHaveBeenCalledWith('ws_1', 'test-store.myshopify.com');
+    });
+
     it('rejects a missing shopDomain', async () => {
       const res = await app.inject({
-        method: 'POST',
-        url: '/workspaces/ws_1/integrations/shopify/oauth/start',
-        headers: { authorization: 'Bearer valid-token' },
-        payload: {},
+        method: 'GET',
+        url: '/workspaces/ws_1/integrations/shopify/oauth/start?token=valid-token',
       });
 
       expect(res.statusCode).toBe(400);

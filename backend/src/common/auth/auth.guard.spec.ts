@@ -5,6 +5,7 @@ import { Test } from '@nestjs/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AuthGuard } from './auth.guard';
 import { Public } from './public.decorator';
+import { AllowQueryToken } from './allow-query-token.decorator';
 import { AllExceptionsFilter } from '../errors/all-exceptions.filter';
 import { StructuredLoggerService } from '../logging/structured-logger.service';
 
@@ -29,6 +30,13 @@ class ProtectedController {
   @UseGuards(AuthGuard)
   @Public()
   open() {
+    return { ok: true };
+  }
+
+  @Get('secure-query')
+  @UseGuards(AuthGuard)
+  @AllowQueryToken()
+  secureQuery() {
     return { ok: true };
   }
 }
@@ -98,6 +106,31 @@ describe('AuthGuard (e2e) — Clerk configured', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ ok: true });
+  });
+
+  it('rejects a ?token= query param on a route without @AllowQueryToken()', async () => {
+    const res = await app.inject({ method: 'GET', url: '/test/secure?token=valid-token' });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('accepts a valid token via ?token= on a route with @AllowQueryToken()', async () => {
+    const res = await app.inject({ method: 'GET', url: '/test/secure-query?token=valid-token' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+  });
+
+  it('rejects an invalid token via ?token= even with @AllowQueryToken()', async () => {
+    const res = await app.inject({ method: 'GET', url: '/test/secure-query?token=not-a-real-token' });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('still prefers the Authorization header over ?token= when both are present on an @AllowQueryToken() route', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/test/secure-query?token=not-a-real-token',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+    expect(res.statusCode).toBe(200);
   });
 });
 
