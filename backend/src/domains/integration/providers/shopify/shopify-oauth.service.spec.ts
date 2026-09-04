@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
-import { ShopifyOAuthService, decodeShopifyCallbackQuery } from './shopify-oauth.service';
+import { ShopifyOAuthService, decodeShopifyCallbackQuery, fingerprint } from './shopify-oauth.service';
 import { ConflictError, ValidationError } from '../../../../common/errors/app-error';
 import type { Env } from '../../../../config/env.schema';
 import type { IntegrationService } from '../../integration.service';
@@ -89,6 +89,30 @@ describe('ShopifyOAuthService', () => {
       const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
 
       expect(() => service.buildAuthorizeUrl('ws_1', 'not-a-shop-domain')).toThrow(ValidationError);
+    });
+  });
+
+  describe('fingerprint()', () => {
+    it('returns the length and a 64-char hex SHA-256 digest, never the value itself', () => {
+      const result = fingerprint('super-secret-value');
+
+      expect(result.length).toBe('super-secret-value'.length);
+      expect(result.sha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(JSON.stringify(result)).not.toContain('super-secret-value');
+    });
+
+    it('is deterministic — the same input always fingerprints the same', () => {
+      expect(fingerprint('abc')).toEqual(fingerprint('abc'));
+    });
+
+    it('produces different fingerprints for different inputs', () => {
+      expect(fingerprint('abc').sha256).not.toBe(fingerprint('abd').sha256);
+    });
+
+    it('fingerprints an empty string consistently (length 0, still a real digest)', () => {
+      const result = fingerprint('');
+      expect(result).toEqual({ length: 0, sha256: fingerprint('').sha256 });
+      expect(result.sha256).toMatch(/^[0-9a-f]{64}$/);
     });
   });
 
@@ -182,7 +206,7 @@ describe('ShopifyOAuthService', () => {
       expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=invalid_shop');
     });
 
-    it('redirects with reason=invalid_signature when the hmac does not match, and logs only param names + workspaceId + whether the secret is configured', async () => {
+    it('redirects with reason=invalid_signature when the hmac does not match, and logs only fingerprints — never a raw value', async () => {
       const logger = makeLogger();
       const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), logger);
       const { state, cookieValue } = start(service);
@@ -191,19 +215,48 @@ describe('ShopifyOAuthService', () => {
       const redirect = await service.handleCallback(query, cookieValue, toRawQueryString(query));
 
       expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=invalid_signature');
-      expect(logger.event).toHaveBeenCalledWith(
-        'warn',
-        'Shopify OAuth callback: HMAC verification failed',
-        'ShopifyOAuth',
-        { workspaceId: 'ws_1', receivedParamKeys: ['code', 'hmac', 'shop', 'state', 'timestamp'], clientSecretConfigured: true },
-      );
+      const [, , , payload] = (logger.event as ReturnType<typeof vi.fn>).mock.calls.find(
+        (call) => call[1] === 'Shopify OAuth callback: HMAC verification failed',
+      ) as [unknown, unknown, unknown, Record<string, unknown>];
+
+      expect(payload.workspaceId).toBe('ws_1');
+      expect(Object.keys(payload.parsed as object).sort()).toEqual(['code', 'hmac', 'shop', 'state', 'timestamp']);
+      expect(Object.keys(payload.rawDecoded as object).sort()).toEqual(['code', 'hmac', 'shop', 'state', 'timestamp']);
+      for (const entry of Object.values(payload.parsed as Record<string, { length: number; sha256: string }>)) {
+        expect(typeof entry.length).toBe('number');
+        expect(entry.sha256).toMatch(/^[0-9a-f]{64}$/);
+      }
+      // Every param decodes identically both ways here (no literal '+' in this fixture) — all 'same'.
+      expect(payload.comparison).toEqual({ code: 'same', hmac: 'same', shop: 'same', state: 'same', timestamp: 'same' });
+      expect(payload.signedMessage).toMatchObject({ length: expect.any(Number), sha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
+      expect(payload.receivedHmac).toMatchObject({ length: 'deadbeef'.length, sha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
+      expect(payload.expectedHmac).toMatchObject({ length: 64, sha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
+      expect(payload.clientSecret).toMatchObject({ configured: true, sha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
     });
 
-    it('never logs the actual hmac/code/state/shop/timestamp values or the raw query on HMAC failure — only param names', async () => {
+    it('reports comparison: "different" for a param that Fastify\'s parser decodes differently than the raw-query decoder (literal "+")', async () => {
       const logger = makeLogger();
       const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), logger);
       const { state, cookieValue } = start(service);
-      const query = { code: 'super-secret-auth-code', shop: SHOP, state, hmac: 'deadbeef', timestamp: '1700000000' };
+      // Simulates what Fastify's @Query() would actually hand the controller for a raw
+      // literal '+' in the query — form-decoded to a space — versus the true raw-decoded value.
+      const query = { code: 'auth-code', shop: SHOP, state, hmac: 'deadbeef', host: 'admin store' };
+      const rawQuery = `code=auth-code&shop=${SHOP}&state=${encodeURIComponent(state)}&hmac=deadbeef&host=admin+store`;
+
+      await service.handleCallback(query, cookieValue, rawQuery);
+
+      const [, , , payload] = (logger.event as ReturnType<typeof vi.fn>).mock.calls.find(
+        (call) => call[1] === 'Shopify OAuth callback: HMAC verification failed',
+      ) as [unknown, unknown, unknown, Record<string, unknown>];
+      expect((payload.comparison as Record<string, string>).host).toBe('different');
+      expect((payload.comparison as Record<string, string>).code).toBe('same');
+    });
+
+    it('never logs the actual hmac/code/state/shop/timestamp/host values or the raw query on HMAC failure — only fingerprints', async () => {
+      const logger = makeLogger();
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), logger);
+      const { state, cookieValue } = start(service);
+      const query = { code: 'super-secret-auth-code', shop: SHOP, state, hmac: 'deadbeef', timestamp: '1700000000', host: 'admin+store' };
       const rawQuery = toRawQueryString(query);
 
       await service.handleCallback(query, cookieValue, rawQuery);
@@ -213,10 +266,12 @@ describe('ShopifyOAuthService', () => {
       expect(serialized).not.toContain('super-secret-auth-code');
       expect(serialized).not.toContain('deadbeef');
       expect(serialized).not.toContain(state);
+      expect(serialized).not.toContain('admin+store');
       expect(serialized).not.toContain(rawQuery);
+      expect(serialized).not.toContain(CLIENT_SECRET);
     });
 
-    it('reports clientSecretConfigured: false when SHOPIFY_APP_CLIENT_SECRET is not set', async () => {
+    it('reports clientSecret.configured: false and no sha256 when SHOPIFY_APP_CLIENT_SECRET is not set', async () => {
       const logger = makeLogger();
       const service = new ShopifyOAuthService(
         makeConfig({ SHOPIFY_APP_CLIENT_SECRET: undefined }),
@@ -229,12 +284,11 @@ describe('ShopifyOAuthService', () => {
 
       await service.handleCallback(query, cookieValue, toRawQueryString(query));
 
-      expect(logger.event).toHaveBeenCalledWith(
-        'warn',
-        'Shopify OAuth callback: HMAC verification failed',
-        'ShopifyOAuth',
-        expect.objectContaining({ clientSecretConfigured: false }),
-      );
+      const [, , , payload] = (logger.event as ReturnType<typeof vi.fn>).mock.calls.find(
+        (call) => call[1] === 'Shopify OAuth callback: HMAC verification failed',
+      ) as [unknown, unknown, unknown, Record<string, unknown>];
+      expect(payload.clientSecret).toEqual({ configured: false, sha256: null });
+      expect(payload.expectedHmac).toBeNull();
     });
 
     it('redirects with reason=invalid_signature when the raw query has malformed percent-encoding, instead of throwing', async () => {

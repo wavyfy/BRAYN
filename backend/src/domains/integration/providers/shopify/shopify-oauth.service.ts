@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ConflictError, ProviderError, ValidationError } from '../../../../common/errors/app-error';
@@ -49,6 +49,24 @@ export interface AuthorizeUrlResult {
   authorizeUrl: string;
   cookieValue: string;
   cookieMaxAgeSeconds: number;
+}
+
+export interface Fingerprint {
+  length: number;
+  sha256: string;
+}
+
+/** Non-reversible stand-in for a raw value in diagnostics (doc 20 Part 16) — never log the value itself, only this. */
+export function fingerprint(value: string): Fingerprint {
+  return { length: value.length, sha256: createHash('sha256').update(value).digest('hex') };
+}
+
+function fingerprintParams(params: Record<string, string>): Record<string, Fingerprint> {
+  const result: Record<string, Fingerprint> = {};
+  for (const [key, value] of Object.entries(params)) {
+    result[key] = fingerprint(value);
+  }
+  return result;
 }
 
 /**
@@ -219,12 +237,12 @@ export class ShopifyOAuthService {
     }
 
     if (!this.verifyHmac(rawQuery)) {
-      // Diagnostic only (doc 20 Part 14) — param NAMES, never values, plus whether the
-      // secret is configured at all. No hmac/code/state/shop/timestamp/raw query logged.
+      // Diagnostic only (doc 20 Part 16, supersedes Part 14's flatter version) —
+      // fingerprints/lengths only, never a raw value. See buildHmacFailureDiagnostics's
+      // own doc comment. Temporary — remove once the investigation concludes.
       this.logger.event('warn', 'Shopify OAuth callback: HMAC verification failed', 'ShopifyOAuth', {
         workspaceId: state.workspaceId,
-        receivedParamKeys: Object.keys(query).sort(),
-        clientSecretConfigured: Boolean(this.config.get('SHOPIFY_APP_CLIENT_SECRET', { infer: true })),
+        ...this.buildHmacFailureDiagnostics(query, rawQuery),
       });
       return `${integrationsUrl}?shopify=error&reason=invalid_signature`;
     }
@@ -304,30 +322,18 @@ export class ShopifyOAuthService {
 
   /**
    * shopify.dev — Authorization Code Grant: drop `hmac`, sort the
-   * remaining params alphabetically by key, join as `key=value&...`,
-   * HMAC-SHA256 with the app's client secret, compare timing-safe.
-   *
-   * Works from the raw query string via `decodeShopifyCallbackQuery`,
-   * not Fastify's `@Query()` — see that function's doc comment. Malformed
-   * percent-encoding fails closed (verification fails) rather than
-   * throwing into the request.
+   * remaining params alphabetically by key, join as `key=value&...`.
+   * Pure — no secret, no comparison — extracted purely so
+   * `buildHmacFailureDiagnostics` (doc 20 Part 16) can recompute the exact
+   * same message for fingerprinting without duplicating this logic or
+   * changing `verifyHmac`'s own behavior.
    */
-  private verifyHmac(rawQuery: string): boolean {
-    const clientSecret = this.config.get('SHOPIFY_APP_CLIENT_SECRET', { infer: true });
-    if (!clientSecret) {
-      return false;
-    }
-
+  private buildHmacMessage(rawQuery: string): { message: string; receivedHmac: string | undefined } | null {
     let params: Record<string, string>;
     try {
       params = decodeShopifyCallbackQuery(rawQuery);
     } catch {
-      return false;
-    }
-
-    const hmac = params.hmac;
-    if (!hmac) {
-      return false;
+      return null;
     }
 
     const message = Object.entries(params)
@@ -336,10 +342,81 @@ export class ShopifyOAuthService {
       .map(([key, value]) => `${key}=${value}`)
       .join('&');
 
-    const expected = createHmac('sha256', clientSecret).update(message).digest('hex');
+    return { message, receivedHmac: params.hmac };
+  }
+
+  /**
+   * HMAC-SHA256 with the app's client secret, compare timing-safe. Works
+   * from the raw query string via `buildHmacMessage`/
+   * `decodeShopifyCallbackQuery`, not Fastify's `@Query()` — see that
+   * function's doc comment. Malformed percent-encoding fails closed
+   * (verification fails) rather than throwing into the request. Identical
+   * behavior to before the Part 16 refactor — only the message-building
+   * step moved into its own method.
+   */
+  private verifyHmac(rawQuery: string): boolean {
+    const clientSecret = this.config.get('SHOPIFY_APP_CLIENT_SECRET', { infer: true });
+    if (!clientSecret) {
+      return false;
+    }
+
+    const built = this.buildHmacMessage(rawQuery);
+    if (!built || !built.receivedHmac) {
+      return false;
+    }
+
+    const expected = createHmac('sha256', clientSecret).update(built.message).digest('hex');
     const expectedBuf = Buffer.from(expected, 'hex');
-    const actualBuf = Buffer.from(hmac, 'hex');
+    const actualBuf = Buffer.from(built.receivedHmac, 'hex');
     return expectedBuf.length === actualBuf.length && timingSafeEqual(expectedBuf, actualBuf);
+  }
+
+  /**
+   * Temporary, staging-safe diagnostic (doc 20 Part 16) — never logs a
+   * raw value, only SHA-256 fingerprints + lengths, so it's safe to keep
+   * in the HMAC-failure branch while diagnosing a real callback failure.
+   * Lets us tell apart: (A) wrong secret, (B) Shopify's actual param
+   * values differing from what we expect, (C) our decoding corrupting a
+   * value Fastify's parser got right (or vice versa), (D) a message-
+   * construction bug — by comparing fingerprints across both decode
+   * paths and the HMAC inputs/output, without ever exposing the
+   * underlying bytes. Remove once the investigation concludes.
+   */
+  private buildHmacFailureDiagnostics(query: Record<string, string | undefined>, rawQuery: string) {
+    const parsedParams: Record<string, string> = {};
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined) {
+        parsedParams[key] = value;
+      }
+    }
+    const parsed = fingerprintParams(parsedParams);
+
+    let rawDecodedParams: Record<string, string> = {};
+    try {
+      rawDecodedParams = decodeShopifyCallbackQuery(rawQuery);
+    } catch {
+      rawDecodedParams = {};
+    }
+    const rawDecoded = fingerprintParams(rawDecodedParams);
+
+    const comparison: Record<string, 'same' | 'different'> = {};
+    for (const key of new Set([...Object.keys(parsed), ...Object.keys(rawDecoded)])) {
+      comparison[key] = parsed[key] && rawDecoded[key] && parsed[key].sha256 === rawDecoded[key].sha256 ? 'same' : 'different';
+    }
+
+    const clientSecret = this.config.get('SHOPIFY_APP_CLIENT_SECRET', { infer: true });
+    const built = this.buildHmacMessage(rawQuery);
+    const expected = built && clientSecret ? createHmac('sha256', clientSecret).update(built.message).digest('hex') : undefined;
+
+    return {
+      parsed,
+      rawDecoded,
+      comparison,
+      signedMessage: built ? fingerprint(built.message) : null,
+      receivedHmac: built?.receivedHmac ? fingerprint(built.receivedHmac) : null,
+      expectedHmac: expected ? fingerprint(expected) : null,
+      clientSecret: { configured: Boolean(clientSecret), sha256: clientSecret ? fingerprint(clientSecret).sha256 : null },
+    };
   }
 
   private async exchangeCodeForToken(shop: string, code: string): Promise<string> {
