@@ -52,6 +52,35 @@ export interface AuthorizeUrlResult {
 }
 
 /**
+ * Percent-decodes a raw query string the way Shopify's HMAC signing
+ * expects — `%2B` → `+`, but a literal, unencoded `+` stays `+` (not a
+ * space). Fastify's default `@Query()` parser follows
+ * application/x-www-form-urlencoded rules instead (`+` → space), which
+ * silently corrupts any callback value that legitimately contains a raw
+ * `+` — most notably `host`, which is base64 and can contain `+` as a
+ * normal alphabet character. That corruption happens *before* the
+ * controller ever sees the value, so `verifyHmac` must work from the raw
+ * query string, not the already-parsed `@Query()` object, to compute the
+ * same message Shopify signed. Throws on malformed percent-encoding
+ * (`decodeURIComponent`'s own `URIError`) — callers must treat that as a
+ * verification failure, not let it crash the request.
+ */
+export function decodeShopifyCallbackQuery(rawQuery: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!rawQuery) {
+    return result;
+  }
+  for (const pair of rawQuery.split('&')) {
+    if (!pair) continue;
+    const eqIndex = pair.indexOf('=');
+    const rawKey = eqIndex === -1 ? pair : pair.slice(0, eqIndex);
+    const rawValue = eqIndex === -1 ? '' : pair.slice(eqIndex + 1);
+    result[decodeURIComponent(rawKey)] = decodeURIComponent(rawValue);
+  }
+  return result;
+}
+
+/**
  * Standalone-app OAuth authorization-code grant (shopify.dev — apps that
  * run outside the Shopify admin; BRAYN is never embedded). Two hops:
  * `buildAuthorizeUrl` (authenticated — the merchant is already in a BRAYN
@@ -152,8 +181,14 @@ export class ShopifyOAuthService {
    * error, only a place to be sent next. Every failure path below logs the
    * reason server-side (never the code/token) and returns a frontend URL
    * carrying a safe `?shopify=error&reason=...` instead.
+   *
+   * `rawQuery` (the callback's undecoded query string) is used only for
+   * `verifyHmac` — see `decodeShopifyCallbackQuery`'s doc comment for why
+   * the already-parsed `query` object can't be trusted for that one step.
+   * Every other field below (`state`, `shop`, `code`) reads from `query`
+   * as before — Fastify's normal decoding is correct for those.
    */
-  async handleCallback(query: Record<string, string | undefined>, cookieValue: string | undefined): Promise<string> {
+  async handleCallback(query: Record<string, string | undefined>, cookieValue: string | undefined, rawQuery: string): Promise<string> {
     const frontendUrl = this.config.get('FRONTEND_URL', { infer: true });
 
     let state: OAuthState;
@@ -183,7 +218,7 @@ export class ShopifyOAuthService {
       return `${integrationsUrl}?shopify=error&reason=invalid_shop`;
     }
 
-    if (!this.verifyHmac(query)) {
+    if (!this.verifyHmac(rawQuery)) {
       this.logger.event('warn', 'Shopify OAuth callback: HMAC verification failed', 'ShopifyOAuth', { workspaceId: state.workspaceId });
       return `${integrationsUrl}?shopify=error&reason=invalid_signature`;
     }
@@ -265,16 +300,32 @@ export class ShopifyOAuthService {
    * shopify.dev — Authorization Code Grant: drop `hmac`, sort the
    * remaining params alphabetically by key, join as `key=value&...`,
    * HMAC-SHA256 with the app's client secret, compare timing-safe.
+   *
+   * Works from the raw query string via `decodeShopifyCallbackQuery`,
+   * not Fastify's `@Query()` — see that function's doc comment. Malformed
+   * percent-encoding fails closed (verification fails) rather than
+   * throwing into the request.
    */
-  private verifyHmac(query: Record<string, string | undefined>): boolean {
+  private verifyHmac(rawQuery: string): boolean {
     const clientSecret = this.config.get('SHOPIFY_APP_CLIENT_SECRET', { infer: true });
-    const hmac = query.hmac;
-    if (!clientSecret || !hmac) {
+    if (!clientSecret) {
       return false;
     }
 
-    const message = Object.entries(query)
-      .filter(([key, value]) => key !== 'hmac' && value !== undefined)
+    let params: Record<string, string>;
+    try {
+      params = decodeShopifyCallbackQuery(rawQuery);
+    } catch {
+      return false;
+    }
+
+    const hmac = params.hmac;
+    if (!hmac) {
+      return false;
+    }
+
+    const message = Object.entries(params)
+      .filter(([key]) => key !== 'hmac')
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([key, value]) => `${key}=${value}`)
       .join('&');

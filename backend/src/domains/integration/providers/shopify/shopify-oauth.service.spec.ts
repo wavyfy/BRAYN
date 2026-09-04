@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
-import { ShopifyOAuthService } from './shopify-oauth.service';
+import { ShopifyOAuthService, decodeShopifyCallbackQuery } from './shopify-oauth.service';
 import { ConflictError, ValidationError } from '../../../../common/errors/app-error';
 import type { Env } from '../../../../config/env.schema';
 import type { IntegrationService } from '../../integration.service';
@@ -41,7 +41,15 @@ function makeAdapter(overrides: Partial<ShopifyAdapter> = {}): ShopifyAdapter {
   return { verifyConnection: vi.fn(async () => true), ...overrides } as unknown as ShopifyAdapter;
 }
 
-function signedQuery(overrides: Record<string, string | undefined> = {}) {
+/** Percent-encodes like a real browser would — the raw bytes Shopify's redirect would actually send. */
+function toRawQueryString(params: Record<string, string>): string {
+  return Object.entries(params)
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join('&');
+}
+
+/** Returns both the Nest-style already-decoded `query` object and the raw query string `verifyHmac` now works from — both derived from the same params, so they always agree. */
+function signedQuery(overrides: Record<string, string | undefined> = {}): { query: Record<string, string>; rawQuery: string } {
   // Spread after the defaults so an explicit `undefined` override actually deletes that key.
   const merged: Record<string, string | undefined> = { code: 'auth-code', shop: SHOP, timestamp: '1700000000', ...overrides };
   const base = Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== undefined)) as Record<string, string>;
@@ -51,7 +59,8 @@ function signedQuery(overrides: Record<string, string | undefined> = {}) {
     .map(([k, v]) => `${k}=${v}`)
     .join('&');
   const hmac = createHmac('sha256', CLIENT_SECRET).update(message).digest('hex');
-  return { ...base, hmac };
+  const query = { ...base, hmac };
+  return { query, rawQuery: toRawQueryString(query) };
 }
 
 describe('ShopifyOAuthService', () => {
@@ -83,6 +92,28 @@ describe('ShopifyOAuthService', () => {
     });
   });
 
+  describe('decodeShopifyCallbackQuery()', () => {
+    it('preserves a literal, unencoded "+" as "+" rather than decoding it as a space', () => {
+      expect(decodeShopifyCallbackQuery('host=admin+store')).toEqual({ host: 'admin+store' });
+    });
+
+    it('decodes a percent-encoded "%2B" to "+"', () => {
+      expect(decodeShopifyCallbackQuery('state=abc%2Bdef')).toEqual({ state: 'abc+def' });
+    });
+
+    it('decodes ordinary percent-encoding (e.g. "%3D" to "=", "%2F" to "/")', () => {
+      expect(decodeShopifyCallbackQuery('code=xyz%3D%3D&shop=test%2Fstore')).toEqual({ code: 'xyz==', shop: 'test/store' });
+    });
+
+    it('throws on malformed percent-encoding rather than silently misparsing it', () => {
+      expect(() => decodeShopifyCallbackQuery('bad=100%')).toThrow();
+    });
+
+    it('returns an empty object for an empty raw query', () => {
+      expect(decodeShopifyCallbackQuery('')).toEqual({});
+    });
+  });
+
   describe('handleCallback()', () => {
     function start(service: ShopifyOAuthService, workspaceId = 'ws_1') {
       const { authorizeUrl, cookieValue } = service.buildAuthorizeUrl(workspaceId, SHOP);
@@ -95,13 +126,15 @@ describe('ShopifyOAuthService', () => {
       queryOverrides: Record<string, string | undefined> = {},
     ): Promise<string> {
       const { state, cookieValue } = start(service);
-      return service.handleCallback(signedQuery({ state, ...queryOverrides }), cookieValue);
+      const { query, rawQuery } = signedQuery({ state, ...queryOverrides });
+      return service.handleCallback(query, cookieValue, rawQuery);
     }
 
     it('redirects to a generic error when state is missing or undecryptable', async () => {
       const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+      const { query, rawQuery } = signedQuery({ state: 'garbage' });
 
-      const redirect = await service.handleCallback(signedQuery({ state: 'garbage' }), 'irrelevant');
+      const redirect = await service.handleCallback(query, 'irrelevant', rawQuery);
 
       expect(redirect).toBe('http://localhost:3000?shopify=error');
     });
@@ -109,8 +142,9 @@ describe('ShopifyOAuthService', () => {
     it('redirects with reason=session_mismatch when the binding cookie is missing', async () => {
       const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
       const { state } = start(service);
+      const { query, rawQuery } = signedQuery({ state });
 
-      const redirect = await service.handleCallback(signedQuery({ state }), undefined);
+      const redirect = await service.handleCallback(query, undefined, rawQuery);
 
       expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=session_mismatch');
     });
@@ -118,8 +152,9 @@ describe('ShopifyOAuthService', () => {
     it('redirects with reason=session_mismatch when the binding cookie does not match the state that was issued', async () => {
       const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
       const { state } = start(service);
+      const { query, rawQuery } = signedQuery({ state });
 
-      const redirect = await service.handleCallback(signedQuery({ state }), 'someone-elses-cookie-value');
+      const redirect = await service.handleCallback(query, 'someone-elses-cookie-value', rawQuery);
 
       expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=session_mismatch');
     });
@@ -132,8 +167,9 @@ describe('ShopifyOAuthService', () => {
       const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
       const attackerFlow = start(service, 'attacker-ws');
       const victimBrowserCookie = 'victim-never-had-this-cookie';
+      const { query, rawQuery } = signedQuery({ state: attackerFlow.state });
 
-      const redirect = await service.handleCallback(signedQuery({ state: attackerFlow.state }), victimBrowserCookie);
+      const redirect = await service.handleCallback(query, victimBrowserCookie, rawQuery);
 
       expect(redirect).toBe('http://localhost:3000/workspace/attacker-ws/integrations?shopify=error&reason=session_mismatch');
     });
@@ -149,10 +185,44 @@ describe('ShopifyOAuthService', () => {
     it('redirects with reason=invalid_signature when the hmac does not match', async () => {
       const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
       const { state, cookieValue } = start(service);
+      const query = { code: 'auth-code', shop: SHOP, state, hmac: 'deadbeef' };
 
-      const redirect = await service.handleCallback({ code: 'auth-code', shop: SHOP, state, hmac: 'deadbeef' }, cookieValue);
+      const redirect = await service.handleCallback(query, cookieValue, toRawQueryString(query));
 
       expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=invalid_signature');
+    });
+
+    it('redirects with reason=invalid_signature when the raw query has malformed percent-encoding, instead of throwing', async () => {
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+      const { state, cookieValue } = start(service);
+      const { query } = signedQuery({ state });
+      // A lone '%' is not valid percent-encoding — decodeURIComponent throws on this.
+      const malformedRawQuery = `code=auth-code&shop=${SHOP}&state=${encodeURIComponent(state)}&hmac=${query.hmac}&bad=100%`;
+
+      const redirect = await service.handleCallback(query, cookieValue, malformedRawQuery);
+
+      expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=invalid_signature');
+    });
+
+    it('succeeds when a callback value (e.g. host) contains a literal unencoded "+" — Fastify\'s form-decoding must not corrupt it before HMAC verification', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpat_new' }), { status: 200 })));
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+      const { state, cookieValue } = start(service);
+      // host is base64 and can legitimately contain '+' — build the raw query with a literal, unencoded '+'.
+      const host = 'YWRtaW4rc3RvcmU='; // arbitrary base64-shaped value containing '+'
+      const base = { code: 'auth-code', shop: SHOP, timestamp: '1700000000', state, host };
+      const message = Object.entries(base)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => `${k}=${v}`)
+        .join('&');
+      const hmac = createHmac('sha256', CLIENT_SECRET).update(message).digest('hex');
+      const query = { ...base, hmac };
+      // Raw query string as Shopify would actually send it — '+' left as a literal '+', not %2B.
+      const rawQuery = `code=auth-code&shop=${SHOP}&timestamp=1700000000&state=${encodeURIComponent(state)}&host=${host}&hmac=${hmac}`;
+
+      const redirect = await service.handleCallback(query, cookieValue, rawQuery);
+
+      expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=connected');
     });
 
     it('redirects with reason=missing_code when Shopify omits the authorization code', async () => {
@@ -220,8 +290,9 @@ describe('ShopifyOAuthService', () => {
       vi.spyOn(Date, 'now').mockReturnValueOnce(1_000_000_000_000);
       const { state, cookieValue } = start(service);
       vi.spyOn(Date, 'now').mockReturnValue(1_000_000_000_000 + 11 * 60 * 1000);
+      const { query, rawQuery } = signedQuery({ state });
 
-      const redirect = await service.handleCallback(signedQuery({ state }), cookieValue);
+      const redirect = await service.handleCallback(query, cookieValue, rawQuery);
 
       expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=expired');
     });

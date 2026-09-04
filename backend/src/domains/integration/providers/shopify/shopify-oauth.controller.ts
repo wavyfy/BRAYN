@@ -124,7 +124,11 @@ export class ShopifyOAuthCallbackController {
   @Get('callback')
   async callback(@Query() query: Record<string, string | undefined>, @Req() request: FastifyRequest, @Res() reply: FastifyReply) {
     const cookieValue = readCookie(request, STATE_COOKIE_NAME);
-    const redirectUrl = await this.shopifyOAuthService.handleCallback(query, cookieValue);
+    // request.url is the raw, undecoded path+query as received — needed so verifyHmac
+    // can percent-decode without Fastify's @Query() form-decoding a literal '+' into a space first.
+    const queryIndex = request.url.indexOf('?');
+    const rawQuery = queryIndex === -1 ? '' : request.url.slice(queryIndex + 1);
+    const redirectUrl = await this.shopifyOAuthService.handleCallback(query, cookieValue, rawQuery);
     reply
       .status(302)
       .header('set-cookie', `${STATE_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Max-Age=0; Path=${STATE_COOKIE_PATH}`)
