@@ -219,7 +219,13 @@ export class ShopifyOAuthService {
     }
 
     if (!this.verifyHmac(rawQuery)) {
-      this.logger.event('warn', 'Shopify OAuth callback: HMAC verification failed', 'ShopifyOAuth', { workspaceId: state.workspaceId });
+      // Diagnostic only (doc 20 Part 14) — param NAMES, never values, plus whether the
+      // secret is configured at all. No hmac/code/state/shop/timestamp/raw query logged.
+      this.logger.event('warn', 'Shopify OAuth callback: HMAC verification failed', 'ShopifyOAuth', {
+        workspaceId: state.workspaceId,
+        receivedParamKeys: Object.keys(query).sort(),
+        clientSecretConfigured: Boolean(this.config.get('SHOPIFY_APP_CLIENT_SECRET', { infer: true })),
+      });
       return `${integrationsUrl}?shopify=error&reason=invalid_signature`;
     }
 

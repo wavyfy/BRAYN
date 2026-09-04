@@ -182,14 +182,59 @@ describe('ShopifyOAuthService', () => {
       expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=invalid_shop');
     });
 
-    it('redirects with reason=invalid_signature when the hmac does not match', async () => {
-      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+    it('redirects with reason=invalid_signature when the hmac does not match, and logs only param names + workspaceId + whether the secret is configured', async () => {
+      const logger = makeLogger();
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), logger);
       const { state, cookieValue } = start(service);
-      const query = { code: 'auth-code', shop: SHOP, state, hmac: 'deadbeef' };
+      const query = { code: 'auth-code', shop: SHOP, state, hmac: 'deadbeef', timestamp: '1700000000' };
 
       const redirect = await service.handleCallback(query, cookieValue, toRawQueryString(query));
 
       expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=invalid_signature');
+      expect(logger.event).toHaveBeenCalledWith(
+        'warn',
+        'Shopify OAuth callback: HMAC verification failed',
+        'ShopifyOAuth',
+        { workspaceId: 'ws_1', receivedParamKeys: ['code', 'hmac', 'shop', 'state', 'timestamp'], clientSecretConfigured: true },
+      );
+    });
+
+    it('never logs the actual hmac/code/state/shop/timestamp values or the raw query on HMAC failure — only param names', async () => {
+      const logger = makeLogger();
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), logger);
+      const { state, cookieValue } = start(service);
+      const query = { code: 'super-secret-auth-code', shop: SHOP, state, hmac: 'deadbeef', timestamp: '1700000000' };
+      const rawQuery = toRawQueryString(query);
+
+      await service.handleCallback(query, cookieValue, rawQuery);
+
+      const loggedCalls = (logger.event as ReturnType<typeof vi.fn>).mock.calls;
+      const serialized = JSON.stringify(loggedCalls);
+      expect(serialized).not.toContain('super-secret-auth-code');
+      expect(serialized).not.toContain('deadbeef');
+      expect(serialized).not.toContain(state);
+      expect(serialized).not.toContain(rawQuery);
+    });
+
+    it('reports clientSecretConfigured: false when SHOPIFY_APP_CLIENT_SECRET is not set', async () => {
+      const logger = makeLogger();
+      const service = new ShopifyOAuthService(
+        makeConfig({ SHOPIFY_APP_CLIENT_SECRET: undefined }),
+        makeIntegrationService(),
+        makeAdapter(),
+        logger,
+      );
+      const { state, cookieValue } = start(service);
+      const query = { code: 'auth-code', shop: SHOP, state, hmac: 'deadbeef' };
+
+      await service.handleCallback(query, cookieValue, toRawQueryString(query));
+
+      expect(logger.event).toHaveBeenCalledWith(
+        'warn',
+        'Shopify OAuth callback: HMAC verification failed',
+        'ShopifyOAuth',
+        expect.objectContaining({ clientSecretConfigured: false }),
+      );
     });
 
     it('redirects with reason=invalid_signature when the raw query has malformed percent-encoding, instead of throwing', async () => {
