@@ -2,7 +2,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-const { getToken } = vi.hoisted(() => ({ getToken: vi.fn(async () => 'test-token') }));
+const { getToken } = vi.hoisted(() => ({ getToken: vi.fn(async (): Promise<string | null> => 'test-token') }));
 vi.mock('@clerk/nextjs', () => ({ useAuth: () => ({ getToken }) }));
 vi.mock('@/lib/env', () => ({ env: { NEXT_PUBLIC_API_URL: 'http://api.test' } }));
 
@@ -47,7 +47,7 @@ describe('ShopifyConnect', () => {
     await vi.waitFor(() => expect(setHref).toHaveBeenCalled());
 
     expect(fetchMock).not.toHaveBeenCalled();
-    const url = new URL(setHref.mock.calls[0][0] as string);
+    const url = new URL(setHref.mock.calls[0]?.[0] as string);
     expect(url.origin + url.pathname).toBe('http://api.test/api/v1/workspaces/ws_1/integrations/shopify/oauth/start');
     expect(url.searchParams.get('shopDomain')).toBe('test-store.myshopify.com');
     expect(url.searchParams.get('token')).toBe('test-token');
