@@ -5,6 +5,8 @@ import { Test } from '@nestjs/testing';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ShopifyOAuthStartController, ShopifyOAuthCallbackController } from './shopify-oauth.controller';
 import { ShopifyOAuthService } from './shopify-oauth.service';
+import { ShopifyOAuthHandoffService } from './shopify-oauth-handoff.service';
+import { ShopifyOAuthHandoffGuard } from './shopify-oauth-handoff.guard';
 import { UserService } from '../../../workspace/user.service';
 import { WorkspaceMembershipService } from '../../../workspace/workspace-membership.service';
 import { WorkspaceMembershipGuard } from '../../../workspace/workspace-membership.guard';
@@ -42,6 +44,10 @@ describe('Shopify OAuth controllers (e2e)', () => {
       workspaceId === 'ws_1' && userId === 'user_1' ? { id: 'mem_1', workspaceId, userId, role: 'owner' } : null,
     ),
   };
+  const handoffService = {
+    mint: vi.fn(async () => ({ token: 'minted-handoff-token', expiresAt: new Date('2026-01-01T00:00:00.000Z') })),
+    consume: vi.fn(async (token: string) => (token === 'valid-handoff' ? { clerkUserId: 'clerk_1' } : null)),
+  };
 
   beforeAll(async () => {
     process.env.CLERK_SECRET_KEY = 'test-secret';
@@ -51,9 +57,11 @@ describe('Shopify OAuth controllers (e2e)', () => {
       controllers: [ShopifyOAuthStartController, ShopifyOAuthCallbackController],
       providers: [
         { provide: ShopifyOAuthService, useValue: shopifyOAuthService },
+        { provide: ShopifyOAuthHandoffService, useValue: handoffService },
         { provide: UserService, useValue: userService },
         { provide: WorkspaceMembershipService, useValue: membershipService },
         WorkspaceMembershipGuard,
+        ShopifyOAuthHandoffGuard,
         { provide: APP_GUARD, useClass: AuthGuard },
       ],
     }).compile();
@@ -74,10 +82,57 @@ describe('Shopify OAuth controllers (e2e)', () => {
     shopifyOAuthService.buildAuthorizeUrl.mockClear();
     shopifyOAuthService.handleCallback.mockClear();
     shopifyOAuthService.connectViaClientCredentials.mockClear();
+    handoffService.mint.mockClear();
+    handoffService.consume.mockClear();
+  });
+
+  describe('POST /workspaces/:workspaceId/integrations/shopify/oauth/handoff-token', () => {
+    it('rejects an unauthenticated request', async () => {
+      const res = await app.inject({ method: 'POST', url: '/workspaces/ws_1/integrations/shopify/oauth/handoff-token' });
+
+      expect(res.statusCode).toBe(401);
+      expect(handoffService.mint).not.toHaveBeenCalled();
+    });
+
+    it('rejects a caller who is not a workspace member', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/workspaces/ws_2/integrations/shopify/oauth/handoff-token',
+        headers: { authorization: 'Bearer valid-token' },
+      });
+
+      expect(res.statusCode).toBe(403);
+      expect(handoffService.mint).not.toHaveBeenCalled();
+    });
+
+    it('rejects a member without owner/admin role', async () => {
+      membershipService.findMembership.mockResolvedValueOnce({ id: 'mem_1', workspaceId: 'ws_1', userId: 'user_1', role: 'analyst' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/workspaces/ws_1/integrations/shopify/oauth/handoff-token',
+        headers: { authorization: 'Bearer valid-token' },
+      });
+
+      expect(res.statusCode).toBe(403);
+      expect(handoffService.mint).not.toHaveBeenCalled();
+    });
+
+    it('mints a handoff token for an owner, bound to the caller and workspace', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/workspaces/ws_1/integrations/shopify/oauth/handoff-token',
+        headers: { authorization: 'Bearer valid-token' },
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(res.json()).toEqual({ handoffToken: 'minted-handoff-token', expiresAt: '2026-01-01T00:00:00.000Z' });
+      expect(handoffService.mint).toHaveBeenCalledWith('clerk_1', 'ws_1');
+    });
   });
 
   describe('GET /workspaces/:workspaceId/integrations/shopify/oauth/start', () => {
-    it('rejects an unauthenticated request (no header, no ?token=)', async () => {
+    it('rejects a request with no ?handoff= at all', async () => {
       const res = await app.inject({
         method: 'GET',
         url: '/workspaces/ws_1/integrations/shopify/oauth/start?shopDomain=test-store.myshopify.com',
@@ -87,13 +142,45 @@ describe('Shopify OAuth controllers (e2e)', () => {
       expect(shopifyOAuthService.buildAuthorizeUrl).not.toHaveBeenCalled();
     });
 
-    it('rejects a caller who is not a workspace member', async () => {
+    it('rejects an invalid/expired/already-consumed handoff token', async () => {
       const res = await app.inject({
         method: 'GET',
-        url: '/workspaces/ws_2/integrations/shopify/oauth/start?shopDomain=test-store.myshopify.com&token=valid-token',
+        url: '/workspaces/ws_1/integrations/shopify/oauth/start?shopDomain=test-store.myshopify.com&handoff=stale-or-wrong',
+      });
+
+      expect(res.statusCode).toBe(401);
+      expect(shopifyOAuthService.buildAuthorizeUrl).not.toHaveBeenCalled();
+    });
+
+    it('no longer accepts the raw Clerk JWT via ?token= (superseded by the handoff token)', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/workspaces/ws_1/integrations/shopify/oauth/start?shopDomain=test-store.myshopify.com&token=valid-token',
+      });
+
+      expect(res.statusCode).toBe(401);
+      expect(shopifyOAuthService.buildAuthorizeUrl).not.toHaveBeenCalled();
+    });
+
+    it('no longer accepts the Clerk JWT via the Authorization header either — start authenticates only via the handoff token', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/workspaces/ws_1/integrations/shopify/oauth/start?shopDomain=test-store.myshopify.com',
+        headers: { authorization: 'Bearer valid-token' },
+      });
+
+      expect(res.statusCode).toBe(401);
+      expect(shopifyOAuthService.buildAuthorizeUrl).not.toHaveBeenCalled();
+    });
+
+    it('rejects a valid handoff token whose bound user is not a member of this workspace', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/workspaces/ws_2/integrations/shopify/oauth/start?shopDomain=test-store.myshopify.com&handoff=valid-handoff',
       });
 
       expect(res.statusCode).toBe(403);
+      expect(handoffService.consume).toHaveBeenCalledWith('valid-handoff', 'ws_2');
       expect(shopifyOAuthService.buildAuthorizeUrl).not.toHaveBeenCalled();
     });
 
@@ -102,21 +189,22 @@ describe('Shopify OAuth controllers (e2e)', () => {
 
       const res = await app.inject({
         method: 'GET',
-        url: '/workspaces/ws_1/integrations/shopify/oauth/start?shopDomain=test-store.myshopify.com&token=valid-token',
+        url: '/workspaces/ws_1/integrations/shopify/oauth/start?shopDomain=test-store.myshopify.com&handoff=valid-handoff',
       });
 
       expect(res.statusCode).toBe(403);
       expect(shopifyOAuthService.buildAuthorizeUrl).not.toHaveBeenCalled();
     });
 
-    it('redirects to the authorize URL for an owner authenticated via ?token=, and sets the session-binding cookie', async () => {
+    it('redirects to the authorize URL for an owner authenticated via a valid handoff token, and sets the session-binding cookie', async () => {
       const res = await app.inject({
         method: 'GET',
-        url: '/workspaces/ws_1/integrations/shopify/oauth/start?shopDomain=test-store.myshopify.com&token=valid-token',
+        url: '/workspaces/ws_1/integrations/shopify/oauth/start?shopDomain=test-store.myshopify.com&handoff=valid-handoff',
       });
 
       expect(res.statusCode).toBe(302);
       expect(res.headers.location).toBe('https://test-store.myshopify.com/admin/oauth/authorize?state=fake&workspace=ws_1');
+      expect(handoffService.consume).toHaveBeenCalledWith('valid-handoff', 'ws_1');
       expect(shopifyOAuthService.buildAuthorizeUrl).toHaveBeenCalledWith('ws_1', 'test-store.myshopify.com');
 
       const cookie = res.headers['set-cookie'] as string;
@@ -127,21 +215,10 @@ describe('Shopify OAuth controllers (e2e)', () => {
       expect(cookie).toContain('Path=/api/v1/integrations/shopify/oauth');
     });
 
-    it('also accepts the Clerk token via the Authorization header (top-level navigation is not the only caller)', async () => {
-      const res = await app.inject({
-        method: 'GET',
-        url: '/workspaces/ws_1/integrations/shopify/oauth/start?shopDomain=test-store.myshopify.com',
-        headers: { authorization: 'Bearer valid-token' },
-      });
-
-      expect(res.statusCode).toBe(302);
-      expect(shopifyOAuthService.buildAuthorizeUrl).toHaveBeenCalledWith('ws_1', 'test-store.myshopify.com');
-    });
-
     it('rejects a missing shopDomain', async () => {
       const res = await app.inject({
         method: 'GET',
-        url: '/workspaces/ws_1/integrations/shopify/oauth/start?token=valid-token',
+        url: '/workspaces/ws_1/integrations/shopify/oauth/start?handoff=valid-handoff',
       });
 
       expect(res.statusCode).toBe(400);

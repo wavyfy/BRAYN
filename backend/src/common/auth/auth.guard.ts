@@ -6,7 +6,6 @@ import type { FastifyRequest } from 'fastify';
 import { ProviderError, UnauthenticatedError } from '../errors/app-error';
 import { RequestContext } from '../logging/request-context';
 import { IS_PUBLIC_KEY } from './public.decorator';
-import { ALLOW_QUERY_TOKEN_KEY } from './allow-query-token.decorator';
 import type { Env } from '../../config/env.schema';
 
 /**
@@ -21,6 +20,13 @@ import type { Env } from '../../config/env.schema';
  * what they're allowed to do, and it does not resolve workspace
  * membership (that requires the Workspace domain + a database, neither
  * of which exist yet).
+ *
+ * Only ever reads the token from the Authorization header — no query-
+ * param fallback. A route that must be reached via a top-level browser
+ * navigation (which can't attach that header) does not weaken this guard
+ * to accommodate it; it marks itself @Public() and authenticates through
+ * its own dedicated mechanism instead (see ShopifyOAuthHandoffGuard for
+ * an example — doc 20 Part 4B).
  */
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -39,11 +45,7 @@ export class AuthGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<FastifyRequest>();
-    const allowQueryToken = this.reflector.getAllAndOverride<boolean>(ALLOW_QUERY_TOKEN_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
-    const token = this.extractBearerToken(request) ?? (allowQueryToken ? this.extractQueryToken(request) : undefined);
+    const token = this.extractBearerToken(request);
 
     if (!token) {
       throw new UnauthenticatedError('A bearer token is required.');
@@ -75,11 +77,5 @@ export class AuthGuard implements CanActivate {
       return undefined;
     }
     return header.slice('Bearer '.length).trim() || undefined;
-  }
-
-  /** Only consulted when the route opts in via @AllowQueryToken() — see that decorator's doc comment. */
-  private extractQueryToken(request: FastifyRequest): string | undefined {
-    const value = (request.query as Record<string, unknown> | undefined)?.token;
-    return typeof value === 'string' && value.length > 0 ? value : undefined;
   }
 }

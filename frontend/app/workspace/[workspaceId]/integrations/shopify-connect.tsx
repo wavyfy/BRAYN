@@ -24,11 +24,16 @@ import { env } from '@/lib/env';
  * third-party cookie and gets silently dropped by browsers with
  * third-party-cookie blocking (Safari ITP, Firefox ETP, etc.) — a plain
  * top-level navigation to the backend's own host sets it as first-party
- * instead, which is never blocked. Since a top-level navigation can't
- * carry an `Authorization` header, the Clerk session token is passed as
- * a short-lived `?token=` query param instead — accepted only on this
- * one route (AuthGuard's `@AllowQueryToken()`), and the app's own request
- * logger already strips query strings before logging (http-logging.hook.ts).
+ * instead, which is never blocked.
+ *
+ * A top-level navigation can't carry an `Authorization` header, but the
+ * real Clerk JWT must never appear in a URL either (doc 20 Part 4B) — so
+ * this first makes a normal authenticated fetch (Bearer header, no
+ * cookie involved, exactly like any other API call) to mint a short-
+ * lived, single-use, opaque handoff token server-side
+ * (ShopifyOAuthHandoffService), then navigates with *that* opaque token
+ * instead of the JWT. The handoff token lives only in this function's
+ * local variable — never localStorage/sessionStorage, never logged.
  */
 export function ShopifyConnect({ workspaceId }: { workspaceId: string }) {
   const { getToken } = useAuth();
@@ -48,9 +53,17 @@ export function ShopifyConnect({ workspaceId }: { workspaceId: string }) {
           if (!token) {
             throw new Error('Not authenticated.');
           }
+          const res = await fetch(
+            `${env.NEXT_PUBLIC_API_URL}/api/v1/workspaces/${workspaceId}/integrations/shopify/oauth/handoff-token`,
+            { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
+          );
+          if (!res.ok) {
+            throw new Error('Could not mint a Shopify authorization handoff token.');
+          }
+          const { handoffToken } = (await res.json()) as { handoffToken: string };
           const url = new URL(`${env.NEXT_PUBLIC_API_URL}/api/v1/workspaces/${workspaceId}/integrations/shopify/oauth/start`);
           url.searchParams.set('shopDomain', shopDomain);
-          url.searchParams.set('token', token);
+          url.searchParams.set('handoff', handoffToken);
           window.location.href = url.toString();
         } catch {
           setError('Could not start Shopify authorization. Check the store domain and try again.');
