@@ -154,6 +154,17 @@ describe('ImportRunService', () => {
 
       await expect(service.failImportRun('missing', 'boom')).rejects.toMatchObject({ code: 'NOT_FOUND' });
     });
+
+    it('scrubs sensitive text out of the error message before persisting it', async () => {
+      const updateChain = makeChain([{ ...runningRun, status: 'failed' }]);
+      const client = { select: makeSelectQueue([[runningRun]]), update: vi.fn(() => updateChain) };
+      const service = new ImportRunService({ client } as unknown as DatabaseService);
+
+      await service.failImportRun('run_1', 'auth failed for jane@example.com using Bearer sometoken1234567890');
+
+      const setArg = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      expect(setArg.error).toBe('auth failed for [redacted-email] using Bearer [redacted-token]');
+    });
   });
 
   describe('getLatestImportRun()', () => {

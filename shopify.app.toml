@@ -1,0 +1,17 @@
+name = "BRAYN"
+client_id = "b5533c63b63ff4d24ed94feb98d9fd60"
+application_url = "https://brayn-frontend.vercel.app"
+embedded = false
+
+[access_scopes]
+scopes = "read_customers,read_orders,read_products"
+
+[auth]
+redirect_urls = ["https://brayn-production.onrender.com/api/v1/integrations/shopify/oauth/callback"]
+
+[webhooks]
+api_version = "2026-07"
+
+[[webhooks.subscriptions]]
+compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+uri = "https://brayn-production.onrender.com/api/v1/integrations/shopify/compliance"

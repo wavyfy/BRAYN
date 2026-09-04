@@ -377,20 +377,7 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
    * Shopify and BRAYN should know, not something BRAYN issues or derives).
    */
   verifyWebhookSignature(rawBody: string, headers: Record<string, string>, secret: string): boolean {
-    const signature = headers['x-shopify-hmac-sha256'];
-    if (!signature) {
-      return false;
-    }
-
-    const computed = createHmac('sha256', secret).update(rawBody, 'utf8').digest('base64');
-    const computedBuffer = Buffer.from(computed);
-    const signatureBuffer = Buffer.from(signature);
-    // timingSafeEqual throws on a length mismatch rather than returning false.
-    if (computedBuffer.length !== signatureBuffer.length) {
-      return false;
-    }
-
-    return timingSafeEqual(computedBuffer, signatureBuffer);
+    return verifyShopifyHmac(rawBody, headers, secret);
   }
 
   /**
@@ -477,6 +464,32 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
 
     return { body: await response.json(), nextCursor: parseNextCursor(response.headers.get('link')) };
   }
+}
+
+/**
+ * Shopify's `X-Shopify-Hmac-Sha256` check — base64(HMAC-SHA256(rawBody,
+ * secret)) — shared by two callers with two different secrets: a
+ * per-integration topic webhook (`ShopifyAdapter.verifyWebhookSignature`,
+ * `secret` = that integration's `credentials.webhookSecret`) and the
+ * app-level mandatory compliance webhooks (`ShopifyComplianceService`,
+ * `secret` = `SHOPIFY_APP_CLIENT_SECRET`) — same math, exported standalone
+ * so neither has to duplicate it.
+ */
+export function verifyShopifyHmac(rawBody: string, headers: Record<string, string>, secret: string): boolean {
+  const signature = headers['x-shopify-hmac-sha256'];
+  if (!signature) {
+    return false;
+  }
+
+  const computed = createHmac('sha256', secret).update(rawBody, 'utf8').digest('base64');
+  const computedBuffer = Buffer.from(computed);
+  const signatureBuffer = Buffer.from(signature);
+  // timingSafeEqual throws on a length mismatch rather than returning false.
+  if (computedBuffer.length !== signatureBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(computedBuffer, signatureBuffer);
 }
 
 /** Recognized webhook topics → the commerce resource they normalize to (doc 21 — "process only relevant events"). */

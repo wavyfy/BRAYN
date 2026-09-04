@@ -16,7 +16,11 @@ import { ReconciliationProcessorService } from './reconciliation-processor.servi
 import { SyncProcessorService } from './sync-processor.service';
 import { ShopifyAdapter } from './providers/shopify/shopify.adapter';
 import { ShopifyOAuthService } from './providers/shopify/shopify-oauth.service';
+import { ShopifyOAuthHandoffService } from './providers/shopify/shopify-oauth-handoff.service';
+import { ShopifyOAuthHandoffGuard } from './providers/shopify/shopify-oauth-handoff.guard';
 import { ShopifyOAuthStartController, ShopifyOAuthCallbackController } from './providers/shopify/shopify-oauth.controller';
+import { ShopifyComplianceService } from './providers/shopify/shopify-compliance.service';
+import { ShopifyComplianceController } from './providers/shopify/shopify-compliance.controller';
 import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter';
 
 /**
@@ -39,7 +43,13 @@ import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter'
  */
 @Module({
   imports: [WorkspaceModule, CommerceModule, IdentityResolutionModule],
-  controllers: [IntegrationController, WebhookController, ShopifyOAuthStartController, ShopifyOAuthCallbackController],
+  controllers: [
+    IntegrationController,
+    WebhookController,
+    ShopifyOAuthStartController,
+    ShopifyOAuthCallbackController,
+    ShopifyComplianceController,
+  ],
   providers: [
     IntegrationService,
     ProviderRegistry,
@@ -53,6 +63,9 @@ import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter'
     SyncProcessorService,
     ShopifyAdapter,
     ShopifyOAuthService,
+    ShopifyOAuthHandoffService,
+    ShopifyOAuthHandoffGuard,
+    ShopifyComplianceService,
     WooCommerceAdapter,
   ],
   exports: [

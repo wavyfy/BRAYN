@@ -9,6 +9,7 @@ import {
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { captureException } from '../observability/sentry';
 import { StructuredLoggerService } from '../logging/structured-logger.service';
+import { scrubSensitive } from '../logging/scrub-sensitive';
 import { AppError } from './app-error';
 import { ErrorCode } from './error-codes';
 
@@ -86,13 +87,18 @@ export class AllExceptionsFilter implements ExceptionFilter {
       return;
     }
 
+    // An unhandled exception's message/stack is unstructured — unlike every
+    // AppError/HttpException branch above, this text was never written by
+    // BRAYN code with logging in mind (a third-party SDK error, a raw driver
+    // error, ...), so it gets the DLP scrub explicitly here rather than
+    // relying only on StructuredLoggerService's own backstop.
     this.logger.event(
       'error',
-      exception instanceof Error ? exception.message : 'Unhandled exception',
+      scrubSensitive(exception instanceof Error ? exception.message : 'Unhandled exception'),
       'AllExceptionsFilter',
       {
         requestId,
-        trace: exception instanceof Error ? exception.stack : String(exception),
+        trace: scrubSensitive(exception instanceof Error ? (exception.stack ?? exception.message) : String(exception)),
       },
     );
     captureException(exception);

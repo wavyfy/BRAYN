@@ -1,10 +1,11 @@
 import { Module } from '@nestjs/common';
-import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { loadConfiguration } from './config/configuration';
 import { AllExceptionsFilter } from './common/errors/all-exceptions.filter';
 import { AuthGuard } from './common/auth/auth.guard';
+import { ProtectedDataAccessInterceptor } from './common/access-log/protected-data-access.interceptor';
 import { LoggingModule } from './common/logging/logging.module';
 import { EventsModule } from './common/events/events.module';
 import { IdempotencyModule } from './common/idempotency/idempotency.module';
@@ -47,6 +48,7 @@ import { AutomationModule } from './domains/automation/automation.module';
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     { provide: APP_GUARD, useClass: AuthGuard },
+    { provide: APP_INTERCEPTOR, useClass: ProtectedDataAccessInterceptor },
   ],
 })
 export class AppModule {}

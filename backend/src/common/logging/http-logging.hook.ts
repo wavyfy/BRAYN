@@ -22,9 +22,13 @@ export function registerHttpLogging(
   });
 
   instance.addHook('onResponse', (request, reply, done) => {
-    logger.event('log', `${request.method} ${request.url}`, 'HTTP', {
+    // request.url includes the query string (e.g. `?search=jane@example.com`
+    // on the customer list endpoint) — never log it verbatim, or a search
+    // box becomes a PII leak into every deployment's log stream.
+    const path = request.url.split('?')[0];
+    logger.event('log', `${request.method} ${path}`, 'HTTP', {
       method: request.method,
-      path: request.url,
+      path,
       statusCode: reply.statusCode,
       durationMs: Math.round(reply.elapsedTime * 100) / 100,
     });

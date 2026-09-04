@@ -4,6 +4,7 @@ import { DatabaseService } from '../../database/database.service';
 import { integrations } from '../../database/schema/integrations';
 import { integrationImportRuns } from '../../database/schema/integration-import-runs';
 import { ConflictError, NotFoundError } from '../../common/errors/app-error';
+import { scrubSensitive } from '../../common/logging/scrub-sensitive';
 import type { IntegrationProvider } from './dto/connect-integration.schema';
 
 /**
@@ -107,7 +108,7 @@ export class ImportRunService {
 
     const [updated] = await this.database.client
       .update(integrationImportRuns)
-      .set({ status: 'failed', error, completedAt: new Date() })
+      .set({ status: 'failed', error: scrubSensitive(error), completedAt: new Date() })
       .where(eq(integrationImportRuns.id, runId))
       .returning();
 

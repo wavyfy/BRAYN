@@ -14,14 +14,26 @@ import { env } from '@/lib/env';
  * approves scopes and the resulting access token stays entirely server-side
  * (ShopifyOAuthService's callback), never reaching this component.
  *
- * Calls the backend directly from the browser (`credentials: 'include'`)
- * instead of going through a Server Action. That's deliberate, not just a
- * style choice: the backend's `/oauth/start` response sets an HttpOnly
- * cookie that binds the OAuth `state` to this browser (OAuth CSRF
- * protection — see shopify-oauth.controller.ts). A Server Action's fetch
- * happens on the Next.js *server*, so any Set-Cookie it received would
- * never reach the merchant's actual browser; only a direct browser→backend
- * request can deliver that cookie to the party that needs to hold it.
+ * Navigates the browser directly to the backend's `/oauth/start` (a
+ * top-level navigation, not a fetch) instead of calling it cross-origin
+ * and then redirecting client-side. That's deliberate: the backend's
+ * `/oauth/start` response sets an HttpOnly cookie that binds the OAuth
+ * `state` to this browser (OAuth CSRF protection — see
+ * shopify-oauth.controller.ts). A cookie set via a cross-origin `fetch`
+ * (this frontend's origin calling the backend's different origin) is a
+ * third-party cookie and gets silently dropped by browsers with
+ * third-party-cookie blocking (Safari ITP, Firefox ETP, etc.) — a plain
+ * top-level navigation to the backend's own host sets it as first-party
+ * instead, which is never blocked.
+ *
+ * A top-level navigation can't carry an `Authorization` header, but the
+ * real Clerk JWT must never appear in a URL either (doc 20 Part 4B) — so
+ * this first makes a normal authenticated fetch (Bearer header, no
+ * cookie involved, exactly like any other API call) to mint a short-
+ * lived, single-use, opaque handoff token server-side
+ * (ShopifyOAuthHandoffService), then navigates with *that* opaque token
+ * instead of the JWT. The handoff token lives only in this function's
+ * local variable — never localStorage/sessionStorage, never logged.
  */
 export function ShopifyConnect({ workspaceId }: { workspaceId: string }) {
   const { getToken } = useAuth();
@@ -38,20 +50,21 @@ export function ShopifyConnect({ workspaceId }: { workspaceId: string }) {
         setError(null);
         try {
           const token = await getToken();
-          const res = await fetch(`${env.NEXT_PUBLIC_API_URL}/api/v1/workspaces/${workspaceId}/integrations/shopify/oauth/start`, {
-            method: 'POST',
-            credentials: 'include',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-            body: JSON.stringify({ shopDomain }),
-          });
-          if (!res.ok) {
-            throw new Error('Could not start Shopify authorization.');
+          if (!token) {
+            throw new Error('Not authenticated.');
           }
-          const { authorizeUrl } = (await res.json()) as { authorizeUrl: string };
-          window.location.href = authorizeUrl;
+          const res = await fetch(
+            `${env.NEXT_PUBLIC_API_URL}/api/v1/workspaces/${workspaceId}/integrations/shopify/oauth/handoff-token`,
+            { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
+          );
+          if (!res.ok) {
+            throw new Error('Could not mint a Shopify authorization handoff token.');
+          }
+          const { handoffToken } = (await res.json()) as { handoffToken: string };
+          const url = new URL(`${env.NEXT_PUBLIC_API_URL}/api/v1/workspaces/${workspaceId}/integrations/shopify/oauth/start`);
+          url.searchParams.set('shopDomain', shopDomain);
+          url.searchParams.set('handoff', handoffToken);
+          window.location.href = url.toString();
         } catch {
           setError('Could not start Shopify authorization. Check the store domain and try again.');
           setPending(false);

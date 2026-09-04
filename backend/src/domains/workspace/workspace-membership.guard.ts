@@ -17,7 +17,11 @@ import type { WorkspaceRole } from './dto/add-member.schema';
  *
  * On success, sets RequestContext.workspaceId — closing the slot
  * request-context.ts left open pending exactly this (doc 18 —
- * Correlation & Traceability), now that it's actually resolvable.
+ * Correlation & Traceability), now that it's actually resolvable. Also
+ * sets `actorUserId`/`actorRole` (the internal user id and resolved
+ * role this guard already computed) so ProtectedDataAccessInterceptor
+ * can record protected-data access without this guard needing to know
+ * anything about that interceptor.
  */
 @Injectable()
 export class WorkspaceMembershipGuard implements CanActivate {
@@ -52,7 +56,7 @@ export class WorkspaceMembershipGuard implements CanActivate {
       throw new UnauthorizedError('Your role does not permit this action.');
     }
 
-    RequestContext.update({ workspaceId });
+    RequestContext.update({ workspaceId, actorUserId: caller.id, actorRole: membership.role });
 
     return true;
   }

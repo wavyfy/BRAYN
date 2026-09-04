@@ -40,6 +40,7 @@ describe('IntegrationController (e2e)', () => {
       status: 'connected',
     })),
     disconnect: vi.fn(async () => undefined),
+    purgeCustomerData: vi.fn(async () => ({ integrationId: 'int_1', commerceCustomersRemoved: 2, canonicalCustomersRemoved: 1 })),
     connectCredentials: vi.fn(async () => undefined),
     startInitialImport: vi.fn(async (workspaceId: string, provider: string) => ({
       id: 'run_1',
@@ -127,6 +128,7 @@ describe('IntegrationController (e2e)', () => {
     integrationService.listByWorkspace.mockClear();
     integrationService.connect.mockClear();
     integrationService.disconnect.mockClear();
+    integrationService.purgeCustomerData.mockClear();
     integrationService.connectCredentials.mockClear();
     integrationService.startInitialImport.mockClear();
     integrationService.startReconciliation.mockClear();
@@ -258,6 +260,47 @@ describe('IntegrationController (e2e)', () => {
 
     expect(res.statusCode).toBe(204);
     expect(integrationService.disconnect).toHaveBeenCalledWith('ws_1', 'shopify');
+  });
+
+  it('rejects purging customer data from a member without owner/admin role', async () => {
+    membershipService.findMembership.mockResolvedValueOnce({
+      id: 'mem_1',
+      workspaceId: 'ws_1',
+      userId: 'user_1',
+      role: 'support',
+    });
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: '/workspaces/ws_1/integrations/shopify/customer-data',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(integrationService.purgeCustomerData).not.toHaveBeenCalled();
+  });
+
+  it('rejects purging customer data for a caller who is not a member of the workspace', async () => {
+    const res = await app.inject({
+      method: 'DELETE',
+      url: '/workspaces/ws_2/integrations/shopify/customer-data',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(integrationService.purgeCustomerData).not.toHaveBeenCalled();
+  });
+
+  it('purges customer data for an owner/admin caller', async () => {
+    const res = await app.inject({
+      method: 'DELETE',
+      url: '/workspaces/ws_1/integrations/shopify/customer-data',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ integrationId: 'int_1', commerceCustomersRemoved: 2, canonicalCustomersRemoved: 1 });
+    expect(integrationService.purgeCustomerData).toHaveBeenCalledWith('ws_1', 'shopify');
   });
 
   it('rejects starting a reconciliation from a member without owner/admin role', async () => {

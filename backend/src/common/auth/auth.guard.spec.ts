@@ -99,6 +99,11 @@ describe('AuthGuard (e2e) — Clerk configured', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ ok: true });
   });
+
+  it('never accepts a token via a ?token= query param — Authorization header only (doc 20 Part 4B superseded the query-token fallback)', async () => {
+    const res = await app.inject({ method: 'GET', url: '/test/secure?token=valid-token' });
+    expect(res.statusCode).toBe(401);
+  });
 });
 
 describe('AuthGuard (e2e) — Clerk not configured', () => {

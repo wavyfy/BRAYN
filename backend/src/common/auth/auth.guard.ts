@@ -20,6 +20,13 @@ import type { Env } from '../../config/env.schema';
  * what they're allowed to do, and it does not resolve workspace
  * membership (that requires the Workspace domain + a database, neither
  * of which exist yet).
+ *
+ * Only ever reads the token from the Authorization header — no query-
+ * param fallback. A route that must be reached via a top-level browser
+ * navigation (which can't attach that header) does not weaken this guard
+ * to accommodate it; it marks itself @Public() and authenticates through
+ * its own dedicated mechanism instead (see ShopifyOAuthHandoffGuard for
+ * an example — doc 20 Part 4B).
  */
 @Injectable()
 export class AuthGuard implements CanActivate {

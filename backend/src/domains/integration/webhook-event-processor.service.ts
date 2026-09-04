@@ -6,6 +6,7 @@ import { integrationWebhookEvents } from '../../database/schema/integration-webh
 import { withRetry } from '../../common/async/retry';
 import type { DomainEvent } from '../../common/events/domain-event';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
+import { scrubSensitive } from '../../common/logging/scrub-sensitive';
 import { CustomerService } from '../commerce/customer.service';
 import { ProductService } from '../commerce/product.service';
 import { OrderService } from '../commerce/order.service';
@@ -71,7 +72,10 @@ export class WebhookEventProcessorService {
         .set({ status: 'processed', error: null, retryCount: 0 })
         .where(eq(integrationWebhookEvents.id, webhookEventId));
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
+      // Persisted alongside the row (doc 21 "Processing Failure") — scrubbed
+      // like any other log destination, since this text is the same
+      // unstructured error message a log line would otherwise carry.
+      const message = scrubSensitive(error instanceof Error ? error.message : 'Unknown error');
       this.logger.error(
         'Failed to apply webhook-delivered record to commerce data after retries — moved to dead_letter',
         error instanceof Error ? error.stack : undefined,
