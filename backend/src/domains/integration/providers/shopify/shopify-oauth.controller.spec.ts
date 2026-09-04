@@ -290,6 +290,7 @@ describe('Shopify OAuth controllers (e2e)', () => {
       expect(shopifyOAuthService.handleCallback).toHaveBeenCalledWith(
         { code: 'abc', shop: 'test-store.myshopify.com', state: 'xyz', hmac: 'deadbeef' },
         'test-bound-secret',
+        'code=abc&shop=test-store.myshopify.com&state=xyz&hmac=deadbeef',
       );
     });
 
@@ -300,7 +301,18 @@ describe('Shopify OAuth controllers (e2e)', () => {
       });
 
       expect(res.statusCode).toBe(302);
-      expect(shopifyOAuthService.handleCallback).toHaveBeenCalledWith(expect.anything(), undefined);
+      expect(shopifyOAuthService.handleCallback).toHaveBeenCalledWith(expect.anything(), undefined, expect.any(String));
+    });
+
+    it('passes the raw, undecoded query string through — preserving a literal "+" rather than the framework decoding it as a space', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/integrations/shopify/oauth/callback?code=abc&shop=test-store.myshopify.com&state=xyz&hmac=deadbeef&host=admin+store',
+      });
+
+      expect(res.statusCode).toBe(302);
+      const [, , rawQuery] = (shopifyOAuthService.handleCallback as ReturnType<typeof vi.fn>).mock.calls.at(-1) as [unknown, unknown, string];
+      expect(rawQuery).toBe('code=abc&shop=test-store.myshopify.com&state=xyz&hmac=deadbeef&host=admin+store');
     });
 
     it('clears the binding cookie on the way out', async () => {
