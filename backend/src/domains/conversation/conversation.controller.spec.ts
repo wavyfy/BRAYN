@@ -1,4 +1,4 @@
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
@@ -12,6 +12,8 @@ import { AuthGuard } from '../../common/auth/auth.guard';
 import { AllExceptionsFilter } from '../../common/errors/all-exceptions.filter';
 import { registerHttpLogging } from '../../common/logging/http-logging.hook';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
+import { ProtectedDataAccessInterceptor } from '../../common/access-log/protected-data-access.interceptor';
+import { DatabaseService } from '../../database/database.service';
 
 vi.mock('@clerk/backend', () => ({
   verifyToken: vi.fn(async (token: string) => {
@@ -26,7 +28,8 @@ vi.mock('@clerk/backend', () => ({
  * Owner/admin-only surface (doc15/doc18 — conversation messages are
  * free-text customer communication and can carry PII). Full role matrix
  * on `list`; one owner-success check on each other handler to prove the
- * class-level `@RequireWorkspaceRole` reaches all four.
+ * class-level `@RequireWorkspaceRole` reaches all four. Also verifies
+ * `@LogsProtectedAccess` records the right resourceId per route (Part 3).
  */
 describe('ConversationController (e2e)', () => {
   let app: NestFastifyApplication;
@@ -45,6 +48,9 @@ describe('ConversationController (e2e)', () => {
       workspaceId === 'ws_1' && userId === 'user_1' ? { id: 'mem_1', workspaceId, userId, role: 'owner' } : null,
     ),
   };
+  const accessLogValues = vi.fn(async (row: Record<string, unknown>) => void row);
+  const accessLogInsert = vi.fn(() => ({ values: accessLogValues }));
+  const database = { client: { insert: accessLogInsert } };
 
   beforeAll(async () => {
     process.env.CLERK_SECRET_KEY = 'test-secret';
@@ -56,8 +62,11 @@ describe('ConversationController (e2e)', () => {
         { provide: ConversationService, useValue: conversationService },
         { provide: UserService, useValue: userService },
         { provide: WorkspaceMembershipService, useValue: membershipService },
+        { provide: DatabaseService, useValue: database },
+        StructuredLoggerService,
         WorkspaceMembershipGuard,
         { provide: APP_GUARD, useClass: AuthGuard },
+        { provide: APP_INTERCEPTOR, useClass: ProtectedDataAccessInterceptor },
       ],
     }).compile();
 
@@ -78,6 +87,8 @@ describe('ConversationController (e2e)', () => {
     conversationService.startConversation.mockClear();
     conversationService.listMessages.mockClear();
     conversationService.sendMessage.mockClear();
+    accessLogInsert.mockClear();
+    accessLogValues.mockClear();
   });
 
   function memberWithRole(role: string) {
@@ -85,11 +96,12 @@ describe('ConversationController (e2e)', () => {
   }
 
   describe('GET /workspaces/:workspaceId/customers/:canonicalCustomerId/conversations', () => {
-    it('rejects an unauthenticated request', async () => {
+    it('rejects an unauthenticated request and creates no access record', async () => {
       const res = await app.inject({ method: 'GET', url: '/workspaces/ws_1/customers/canon_1/conversations' });
 
       expect(res.statusCode).toBe(401);
       expect(conversationService.listConversations).not.toHaveBeenCalled();
+      expect(accessLogInsert).not.toHaveBeenCalled();
     });
 
     it('rejects a caller who is not a member of the workspace', async () => {
@@ -101,10 +113,11 @@ describe('ConversationController (e2e)', () => {
 
       expect(res.statusCode).toBe(403);
       expect(conversationService.listConversations).not.toHaveBeenCalled();
+      expect(accessLogInsert).not.toHaveBeenCalled();
     });
 
     for (const role of ['marketing', 'support', 'analyst']) {
-      it(`rejects a ${role} member with 403 before the service executes`, async () => {
+      it(`rejects a ${role} member with 403 before the service executes, and creates no access record`, async () => {
         memberWithRole(role);
 
         const res = await app.inject({
@@ -115,10 +128,11 @@ describe('ConversationController (e2e)', () => {
 
         expect(res.statusCode).toBe(403);
         expect(conversationService.listConversations).not.toHaveBeenCalled();
+        expect(accessLogInsert).not.toHaveBeenCalled();
       });
     }
 
-    it('allows an owner', async () => {
+    it('allows an owner and records the access with resourceId: canonicalCustomerId', async () => {
       memberWithRole('owner');
 
       const res = await app.inject({
@@ -129,6 +143,14 @@ describe('ConversationController (e2e)', () => {
 
       expect(res.statusCode).toBe(200);
       expect(conversationService.listConversations).toHaveBeenCalledWith('ws_1', 'canon_1');
+      expect(accessLogValues).toHaveBeenCalledWith({
+        workspaceId: 'ws_1',
+        actorUserId: 'user_1',
+        actorRole: 'owner',
+        action: 'view',
+        resourceType: 'conversation',
+        resourceId: 'canon_1',
+      });
     });
 
     it('allows an admin', async () => {
@@ -142,11 +164,12 @@ describe('ConversationController (e2e)', () => {
 
       expect(res.statusCode).toBe(200);
       expect(conversationService.listConversations).toHaveBeenCalled();
+      expect(accessLogValues).toHaveBeenCalledWith(expect.objectContaining({ actorRole: 'admin' }));
     });
   });
 
   describe('POST /workspaces/:workspaceId/customers/:canonicalCustomerId/conversations', () => {
-    it('rejects a marketing member', async () => {
+    it('rejects a marketing member and creates no access record', async () => {
       memberWithRole('marketing');
 
       const res = await app.inject({
@@ -158,9 +181,10 @@ describe('ConversationController (e2e)', () => {
 
       expect(res.statusCode).toBe(403);
       expect(conversationService.startConversation).not.toHaveBeenCalled();
+      expect(accessLogInsert).not.toHaveBeenCalled();
     });
 
-    it('allows an owner', async () => {
+    it('allows an owner and records a create-action access', async () => {
       memberWithRole('owner');
 
       const res = await app.inject({
@@ -172,11 +196,12 @@ describe('ConversationController (e2e)', () => {
 
       expect(res.statusCode).toBe(200);
       expect(conversationService.startConversation).toHaveBeenCalledWith('ws_1', 'canon_1', { channel: 'whatsapp' });
+      expect(accessLogValues).toHaveBeenCalledWith(expect.objectContaining({ action: 'create', resourceId: 'canon_1' }));
     });
   });
 
   describe('GET /workspaces/:workspaceId/customers/:canonicalCustomerId/conversations/:conversationId/messages', () => {
-    it('rejects a support member', async () => {
+    it('rejects a support member and creates no access record', async () => {
       memberWithRole('support');
 
       const res = await app.inject({
@@ -187,9 +212,10 @@ describe('ConversationController (e2e)', () => {
 
       expect(res.statusCode).toBe(403);
       expect(conversationService.listMessages).not.toHaveBeenCalled();
+      expect(accessLogInsert).not.toHaveBeenCalled();
     });
 
-    it('allows an admin', async () => {
+    it('allows an admin and records the access with resourceId: conversationId (not canonicalCustomerId)', async () => {
       memberWithRole('admin');
 
       const res = await app.inject({
@@ -200,11 +226,26 @@ describe('ConversationController (e2e)', () => {
 
       expect(res.statusCode).toBe(200);
       expect(conversationService.listMessages).toHaveBeenCalledWith('ws_1', 'canon_1', 'conv_1');
+      expect(accessLogValues).toHaveBeenCalledWith(expect.objectContaining({ resourceType: 'conversation', resourceId: 'conv_1' }));
+    });
+
+    it('never logs message content into the access record', async () => {
+      memberWithRole('admin');
+
+      await app.inject({
+        method: 'GET',
+        url: '/workspaces/ws_1/customers/canon_1/conversations/conv_1/messages',
+        headers: { authorization: 'Bearer valid-token' },
+      });
+
+      const recorded = accessLogValues.mock.calls[0][0];
+      expect(JSON.stringify(recorded)).not.toContain('hi');
+      expect(Object.keys(recorded).sort()).toEqual(['action', 'actorRole', 'actorUserId', 'resourceId', 'resourceType', 'workspaceId']);
     });
   });
 
   describe('POST /workspaces/:workspaceId/customers/:canonicalCustomerId/conversations/:conversationId/messages', () => {
-    it('rejects an analyst member', async () => {
+    it('rejects an analyst member and creates no access record', async () => {
       memberWithRole('analyst');
 
       const res = await app.inject({
@@ -216,9 +257,10 @@ describe('ConversationController (e2e)', () => {
 
       expect(res.statusCode).toBe(403);
       expect(conversationService.sendMessage).not.toHaveBeenCalled();
+      expect(accessLogInsert).not.toHaveBeenCalled();
     });
 
-    it('allows an owner', async () => {
+    it('allows an owner and records the access with resourceId: conversationId', async () => {
       memberWithRole('owner');
 
       const res = await app.inject({
@@ -230,6 +272,7 @@ describe('ConversationController (e2e)', () => {
 
       expect(res.statusCode).toBe(200);
       expect(conversationService.sendMessage).toHaveBeenCalledWith('ws_1', 'canon_1', 'conv_1', 'hi');
+      expect(accessLogValues).toHaveBeenCalledWith(expect.objectContaining({ action: 'create', resourceType: 'conversation', resourceId: 'conv_1' }));
     });
   });
 });

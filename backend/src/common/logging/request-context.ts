@@ -12,6 +12,16 @@ export interface RequestContextStore {
    * (Logging).
    */
   workspaceId?: string;
+  /**
+   * Set by WorkspaceMembershipGuard alongside `workspaceId` — the
+   * caller's internal `users.id` (not `userId` above, which is the Clerk
+   * external sub) and their resolved role for this workspace. Exists so
+   * ProtectedDataAccessInterceptor can record who accessed customer PII
+   * without the guard and interceptor needing a direct dependency on
+   * each other.
+   */
+  actorUserId?: string;
+  actorRole?: string;
 }
 
 const storage = new AsyncLocalStorage<RequestContextStore>();

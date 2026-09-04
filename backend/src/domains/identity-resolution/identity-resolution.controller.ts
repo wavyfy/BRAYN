@@ -1,6 +1,7 @@
 import { Controller, Get, Param, UseGuards } from '@nestjs/common';
 import { WorkspaceMembershipGuard } from '../workspace/workspace-membership.guard';
 import { RequireWorkspaceRole } from '../workspace/require-workspace-role.decorator';
+import { LogsProtectedAccess } from '../../common/access-log/protected-data-access.decorator';
 import { IdentityResolutionService } from './identity-resolution.service';
 
 /**
@@ -19,6 +20,7 @@ export class IdentityResolutionController {
   constructor(private readonly identityResolutionService: IdentityResolutionService) {}
 
   @Get()
+  @LogsProtectedAccess('identity_duplicate')
   async list(@Param('workspaceId') workspaceId: string) {
     return this.identityResolutionService.listDuplicates(workspaceId);
   }

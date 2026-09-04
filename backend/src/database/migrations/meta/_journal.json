@@ -183,6 +183,13 @@
       "when": 1788422630489,
       "tag": "0025_workable_blindfold",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1788459848599,
+      "tag": "0026_complete_absorbing_man",
+      "breakpoints": true
     }
   ]
 }

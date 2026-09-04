@@ -2,6 +2,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, UseGuards } f
 import { ZodValidationPipe } from '../../common/api/zod-validation.pipe';
 import { WorkspaceMembershipGuard } from '../workspace/workspace-membership.guard';
 import { RequireWorkspaceRole } from '../workspace/require-workspace-role.decorator';
+import { LogsProtectedAccess } from '../../common/access-log/protected-data-access.decorator';
 import { ConversationService } from './conversation.service';
 import { startConversationSchema, type StartConversationInput } from './dto/start-conversation.schema';
 import { sendMessageSchema, type SendMessageInput } from './dto/send-message.schema';
@@ -22,12 +23,15 @@ export class ConversationController {
   constructor(private readonly conversationService: ConversationService) {}
 
   @Get()
+  @LogsProtectedAccess('conversation', 'canonicalCustomerId')
   async list(@Param('workspaceId') workspaceId: string, @Param('canonicalCustomerId') canonicalCustomerId: string) {
     return this.conversationService.listConversations(workspaceId, canonicalCustomerId);
   }
 
+  /** resourceId is canonicalCustomerId, not the new conversation's id — the latter only exists in the response body, not a route param (doc — resourceId comes from route/controller metadata, never a response payload). */
   @Post()
   @HttpCode(HttpStatus.OK)
+  @LogsProtectedAccess('conversation', 'canonicalCustomerId')
   async start(
     @Param('workspaceId') workspaceId: string,
     @Param('canonicalCustomerId') canonicalCustomerId: string,
@@ -37,6 +41,7 @@ export class ConversationController {
   }
 
   @Get(':conversationId/messages')
+  @LogsProtectedAccess('conversation', 'conversationId')
   async listMessages(
     @Param('workspaceId') workspaceId: string,
     @Param('canonicalCustomerId') canonicalCustomerId: string,
@@ -47,6 +52,7 @@ export class ConversationController {
 
   @Post(':conversationId/messages')
   @HttpCode(HttpStatus.OK)
+  @LogsProtectedAccess('conversation', 'conversationId')
   async sendMessage(
     @Param('workspaceId') workspaceId: string,
     @Param('canonicalCustomerId') canonicalCustomerId: string,

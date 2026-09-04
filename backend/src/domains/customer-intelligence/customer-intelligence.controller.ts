@@ -1,6 +1,7 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { WorkspaceMembershipGuard } from '../workspace/workspace-membership.guard';
 import { RequireWorkspaceRole } from '../workspace/require-workspace-role.decorator';
+import { LogsProtectedAccess } from '../../common/access-log/protected-data-access.decorator';
 import { CustomerIntelligenceService } from './customer-intelligence.service';
 
 /**
@@ -20,6 +21,7 @@ export class CustomerIntelligenceController {
   constructor(private readonly customerIntelligenceService: CustomerIntelligenceService) {}
 
   @Get()
+  @LogsProtectedAccess('customer')
   async list(
     @Param('workspaceId') workspaceId: string,
     @Query('search') search?: string,
@@ -34,11 +36,13 @@ export class CustomerIntelligenceController {
   }
 
   @Get(':canonicalCustomerId')
+  @LogsProtectedAccess('customer', 'canonicalCustomerId')
   async get(@Param('workspaceId') workspaceId: string, @Param('canonicalCustomerId') canonicalCustomerId: string) {
     return this.customerIntelligenceService.getCustomer(workspaceId, canonicalCustomerId);
   }
 
   @Get(':canonicalCustomerId/activity')
+  @LogsProtectedAccess('customer_activity', 'canonicalCustomerId')
   async getActivity(@Param('workspaceId') workspaceId: string, @Param('canonicalCustomerId') canonicalCustomerId: string) {
     return this.customerIntelligenceService.getActivity(workspaceId, canonicalCustomerId);
   }

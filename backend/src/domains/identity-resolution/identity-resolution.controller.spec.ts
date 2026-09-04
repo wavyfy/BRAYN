@@ -1,4 +1,4 @@
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
@@ -12,6 +12,8 @@ import { AuthGuard } from '../../common/auth/auth.guard';
 import { AllExceptionsFilter } from '../../common/errors/all-exceptions.filter';
 import { registerHttpLogging } from '../../common/logging/http-logging.hook';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
+import { ProtectedDataAccessInterceptor } from '../../common/access-log/protected-data-access.interceptor';
+import { DatabaseService } from '../../database/database.service';
 
 vi.mock('@clerk/backend', () => ({
   verifyToken: vi.fn(async (token: string) => {
@@ -37,6 +39,9 @@ describe('IdentityResolutionController (e2e)', () => {
       workspaceId === 'ws_1' && userId === 'user_1' ? { id: 'mem_1', workspaceId, userId, role: 'owner' } : null,
     ),
   };
+  const accessLogValues = vi.fn(async (row: Record<string, unknown>) => void row);
+  const accessLogInsert = vi.fn(() => ({ values: accessLogValues }));
+  const database = { client: { insert: accessLogInsert } };
 
   beforeAll(async () => {
     process.env.CLERK_SECRET_KEY = 'test-secret';
@@ -48,8 +53,11 @@ describe('IdentityResolutionController (e2e)', () => {
         { provide: IdentityResolutionService, useValue: identityResolutionService },
         { provide: UserService, useValue: userService },
         { provide: WorkspaceMembershipService, useValue: membershipService },
+        { provide: DatabaseService, useValue: database },
+        StructuredLoggerService,
         WorkspaceMembershipGuard,
         { provide: APP_GUARD, useClass: AuthGuard },
+        { provide: APP_INTERCEPTOR, useClass: ProtectedDataAccessInterceptor },
       ],
     }).compile();
 
@@ -67,17 +75,20 @@ describe('IdentityResolutionController (e2e)', () => {
 
   beforeEach(() => {
     identityResolutionService.listDuplicates.mockClear();
+    accessLogInsert.mockClear();
+    accessLogValues.mockClear();
   });
 
   function memberWithRole(role: string) {
     membershipService.findMembership.mockResolvedValueOnce({ id: 'mem_1', workspaceId: 'ws_1', userId: 'user_1', role });
   }
 
-  it('rejects an unauthenticated request', async () => {
+  it('rejects an unauthenticated request and creates no access record', async () => {
     const res = await app.inject({ method: 'GET', url: '/workspaces/ws_1/identity/duplicates' });
 
     expect(res.statusCode).toBe(401);
     expect(identityResolutionService.listDuplicates).not.toHaveBeenCalled();
+    expect(accessLogInsert).not.toHaveBeenCalled();
   });
 
   it('rejects a caller who is not a member of the workspace', async () => {
@@ -89,10 +100,11 @@ describe('IdentityResolutionController (e2e)', () => {
 
     expect(res.statusCode).toBe(403);
     expect(identityResolutionService.listDuplicates).not.toHaveBeenCalled();
+    expect(accessLogInsert).not.toHaveBeenCalled();
   });
 
   for (const role of ['marketing', 'support', 'analyst']) {
-    it(`rejects a ${role} member with 403 before the service executes`, async () => {
+    it(`rejects a ${role} member with 403 before the service executes, and creates no access record`, async () => {
       memberWithRole(role);
 
       const res = await app.inject({
@@ -103,10 +115,11 @@ describe('IdentityResolutionController (e2e)', () => {
 
       expect(res.statusCode).toBe(403);
       expect(identityResolutionService.listDuplicates).not.toHaveBeenCalled();
+      expect(accessLogInsert).not.toHaveBeenCalled();
     });
   }
 
-  it('allows an owner', async () => {
+  it('allows an owner and records the access with resourceId: null', async () => {
     memberWithRole('owner');
 
     const res = await app.inject({
@@ -117,9 +130,17 @@ describe('IdentityResolutionController (e2e)', () => {
 
     expect(res.statusCode).toBe(200);
     expect(identityResolutionService.listDuplicates).toHaveBeenCalledWith('ws_1');
+    expect(accessLogValues).toHaveBeenCalledWith({
+      workspaceId: 'ws_1',
+      actorUserId: 'user_1',
+      actorRole: 'owner',
+      action: 'view',
+      resourceType: 'identity_duplicate',
+      resourceId: null,
+    });
   });
 
-  it('allows an admin', async () => {
+  it('allows an admin and never logs the raw phone number (matchedValue) into the access record', async () => {
     memberWithRole('admin');
 
     const res = await app.inject({
@@ -130,5 +151,7 @@ describe('IdentityResolutionController (e2e)', () => {
 
     expect(res.statusCode).toBe(200);
     expect(identityResolutionService.listDuplicates).toHaveBeenCalled();
+    const recorded = accessLogValues.mock.calls[0][0];
+    expect(JSON.stringify(recorded)).not.toContain('555-1234');
   });
 });

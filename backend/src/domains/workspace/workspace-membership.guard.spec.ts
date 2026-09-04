@@ -86,6 +86,25 @@ describe('WorkspaceMembershipGuard', () => {
     });
   });
 
+  it('sets RequestContext.actorUserId/actorRole to the internal user id and resolved role (not the Clerk sub)', async () => {
+    const userService = { findOrCreateByClerkId: vi.fn(async () => ({ id: 'user_internal_1' })) };
+    const membershipService = {
+      findMembership: vi.fn(async () => ({ id: 'mem_1', workspaceId: 'ws_1', userId: 'user_internal_1', role: 'admin' })),
+    };
+    const { context, reflector } = makeContext('ws_1', undefined);
+    const guard = new WorkspaceMembershipGuard(
+      reflector,
+      userService as unknown as UserService,
+      membershipService as unknown as WorkspaceMembershipService,
+    );
+
+    await RequestContext.run({ correlationId: 'c1', userId: 'clerk_1' }, async () => {
+      await guard.canActivate(context);
+      expect(RequestContext.get()?.actorUserId).toBe('user_internal_1');
+      expect(RequestContext.get()?.actorRole).toBe('admin');
+    });
+  });
+
   it('allows any member when no roles are required', async () => {
     const userService = { findOrCreateByClerkId: vi.fn(async () => ({ id: 'user_1' })) };
     const membershipService = {

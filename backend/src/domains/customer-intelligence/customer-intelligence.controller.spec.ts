@@ -1,4 +1,4 @@
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
@@ -12,6 +12,8 @@ import { AuthGuard } from '../../common/auth/auth.guard';
 import { AllExceptionsFilter } from '../../common/errors/all-exceptions.filter';
 import { registerHttpLogging } from '../../common/logging/http-logging.hook';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
+import { ProtectedDataAccessInterceptor } from '../../common/access-log/protected-data-access.interceptor';
+import { DatabaseService } from '../../database/database.service';
 
 vi.mock('@clerk/backend', () => ({
   verifyToken: vi.fn(async (token: string) => {
@@ -46,6 +48,9 @@ describe('CustomerIntelligenceController (e2e)', () => {
       workspaceId === 'ws_1' && userId === 'user_1' ? { id: 'mem_1', workspaceId, userId, role: 'owner' } : null,
     ),
   };
+  const accessLogValues = vi.fn(async (row: Record<string, unknown>) => void row);
+  const accessLogInsert = vi.fn(() => ({ values: accessLogValues }));
+  const database = { client: { insert: accessLogInsert } };
 
   beforeAll(async () => {
     process.env.CLERK_SECRET_KEY = 'test-secret';
@@ -57,8 +62,11 @@ describe('CustomerIntelligenceController (e2e)', () => {
         { provide: CustomerIntelligenceService, useValue: customerIntelligenceService },
         { provide: UserService, useValue: userService },
         { provide: WorkspaceMembershipService, useValue: membershipService },
+        { provide: DatabaseService, useValue: database },
+        StructuredLoggerService,
         WorkspaceMembershipGuard,
         { provide: APP_GUARD, useClass: AuthGuard },
+        { provide: APP_INTERCEPTOR, useClass: ProtectedDataAccessInterceptor },
       ],
     }).compile();
 
@@ -78,6 +86,8 @@ describe('CustomerIntelligenceController (e2e)', () => {
     customerIntelligenceService.listCustomers.mockClear();
     customerIntelligenceService.getCustomer.mockClear();
     customerIntelligenceService.getActivity.mockClear();
+    accessLogInsert.mockClear();
+    accessLogValues.mockClear();
   });
 
   function memberWithRole(role: string) {
@@ -85,11 +95,12 @@ describe('CustomerIntelligenceController (e2e)', () => {
   }
 
   describe('GET /workspaces/:workspaceId/customers', () => {
-    it('rejects an unauthenticated request', async () => {
+    it('rejects an unauthenticated request and creates no access record', async () => {
       const res = await app.inject({ method: 'GET', url: '/workspaces/ws_1/customers' });
 
       expect(res.statusCode).toBe(401);
       expect(customerIntelligenceService.listCustomers).not.toHaveBeenCalled();
+      expect(accessLogInsert).not.toHaveBeenCalled();
     });
 
     it('rejects a caller who is not a member of the workspace', async () => {
@@ -101,10 +112,11 @@ describe('CustomerIntelligenceController (e2e)', () => {
 
       expect(res.statusCode).toBe(403);
       expect(customerIntelligenceService.listCustomers).not.toHaveBeenCalled();
+      expect(accessLogInsert).not.toHaveBeenCalled();
     });
 
     for (const role of ['marketing', 'support', 'analyst']) {
-      it(`rejects a ${role} member with 403 before the service executes`, async () => {
+      it(`rejects a ${role} member with 403 before the service executes, and creates no access record`, async () => {
         memberWithRole(role);
 
         const res = await app.inject({
@@ -115,10 +127,11 @@ describe('CustomerIntelligenceController (e2e)', () => {
 
         expect(res.statusCode).toBe(403);
         expect(customerIntelligenceService.listCustomers).not.toHaveBeenCalled();
+        expect(accessLogInsert).not.toHaveBeenCalled();
       });
     }
 
-    it('allows an owner', async () => {
+    it('allows an owner and records a customer access with resourceId: null (list-level)', async () => {
       memberWithRole('owner');
 
       const res = await app.inject({
@@ -129,9 +142,17 @@ describe('CustomerIntelligenceController (e2e)', () => {
 
       expect(res.statusCode).toBe(200);
       expect(customerIntelligenceService.listCustomers).toHaveBeenCalledWith('ws_1', { search: undefined, page: undefined, limit: undefined });
+      expect(accessLogValues).toHaveBeenCalledWith({
+        workspaceId: 'ws_1',
+        actorUserId: 'user_1',
+        actorRole: 'owner',
+        action: 'view',
+        resourceType: 'customer',
+        resourceId: null,
+      });
     });
 
-    it('allows an admin', async () => {
+    it('allows an admin and records the access with actorRole: admin', async () => {
       memberWithRole('admin');
 
       const res = await app.inject({
@@ -142,6 +163,20 @@ describe('CustomerIntelligenceController (e2e)', () => {
 
       expect(res.statusCode).toBe(200);
       expect(customerIntelligenceService.listCustomers).toHaveBeenCalled();
+      expect(accessLogValues).toHaveBeenCalledWith(expect.objectContaining({ actorRole: 'admin' }));
+    });
+
+    it('never logs the search query string into the access record', async () => {
+      memberWithRole('owner');
+
+      await app.inject({
+        method: 'GET',
+        url: '/workspaces/ws_1/customers?search=jane%40example.com',
+        headers: { authorization: 'Bearer valid-token' },
+      });
+
+      const recorded = accessLogValues.mock.calls[0][0];
+      expect(JSON.stringify(recorded)).not.toContain('jane@example.com');
     });
   });
 
@@ -159,7 +194,7 @@ describe('CustomerIntelligenceController (e2e)', () => {
       expect(customerIntelligenceService.getCustomer).not.toHaveBeenCalled();
     });
 
-    it('allows an owner', async () => {
+    it('allows an owner and records the access with the correct canonicalCustomerId', async () => {
       memberWithRole('owner');
 
       const res = await app.inject({
@@ -170,11 +205,12 @@ describe('CustomerIntelligenceController (e2e)', () => {
 
       expect(res.statusCode).toBe(200);
       expect(customerIntelligenceService.getCustomer).toHaveBeenCalledWith('ws_1', 'canon_1');
+      expect(accessLogValues).toHaveBeenCalledWith(expect.objectContaining({ resourceType: 'customer', resourceId: 'canon_1' }));
     });
   });
 
   describe('GET /workspaces/:workspaceId/customers/:canonicalCustomerId/activity', () => {
-    it('rejects an analyst member', async () => {
+    it('rejects an analyst member and creates no access record', async () => {
       memberWithRole('analyst');
 
       const res = await app.inject({
@@ -185,9 +221,10 @@ describe('CustomerIntelligenceController (e2e)', () => {
 
       expect(res.statusCode).toBe(403);
       expect(customerIntelligenceService.getActivity).not.toHaveBeenCalled();
+      expect(accessLogInsert).not.toHaveBeenCalled();
     });
 
-    it('allows an admin', async () => {
+    it('allows an admin and records the access with resourceType: customer_activity', async () => {
       memberWithRole('admin');
 
       const res = await app.inject({
@@ -198,6 +235,7 @@ describe('CustomerIntelligenceController (e2e)', () => {
 
       expect(res.statusCode).toBe(200);
       expect(customerIntelligenceService.getActivity).toHaveBeenCalledWith('ws_1', 'canon_1');
+      expect(accessLogValues).toHaveBeenCalledWith(expect.objectContaining({ resourceType: 'customer_activity', resourceId: 'canon_1' }));
     });
   });
 });

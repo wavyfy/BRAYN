@@ -1,8 +1,8 @@
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DashboardController } from '../dashboard/dashboard.controller';
 import { DashboardService } from '../dashboard/dashboard.service';
 import { CustomerHealthController } from './customer-health.controller';
@@ -18,6 +18,8 @@ import { AuthGuard } from '../../common/auth/auth.guard';
 import { AllExceptionsFilter } from '../../common/errors/all-exceptions.filter';
 import { registerHttpLogging } from '../../common/logging/http-logging.hook';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
+import { ProtectedDataAccessInterceptor } from '../../common/access-log/protected-data-access.interceptor';
+import { DatabaseService } from '../../database/database.service';
 
 vi.mock('@clerk/backend', () => ({
   verifyToken: vi.fn(async (token: string) => {
@@ -51,6 +53,9 @@ describe('Unrestricted customer-adjacent endpoints (e2e regression)', () => {
       workspaceId === 'ws_1' && userId === 'user_1' ? { id: 'mem_1', workspaceId, userId, role: 'support' } : null,
     ),
   };
+  const accessLogValues = vi.fn(async () => undefined);
+  const accessLogInsert = vi.fn(() => ({ values: accessLogValues }));
+  const database = { client: { insert: accessLogInsert } };
 
   beforeAll(async () => {
     process.env.CLERK_SECRET_KEY = 'test-secret';
@@ -65,8 +70,11 @@ describe('Unrestricted customer-adjacent endpoints (e2e regression)', () => {
         { provide: RecommendationService, useValue: recommendationService },
         { provide: UserService, useValue: userService },
         { provide: WorkspaceMembershipService, useValue: membershipService },
+        { provide: DatabaseService, useValue: database },
+        StructuredLoggerService,
         WorkspaceMembershipGuard,
         { provide: APP_GUARD, useClass: AuthGuard },
+        { provide: APP_INTERCEPTOR, useClass: ProtectedDataAccessInterceptor },
       ],
     }).compile();
 
@@ -82,7 +90,11 @@ describe('Unrestricted customer-adjacent endpoints (e2e regression)', () => {
     await app.close();
   });
 
-  it('a support member can still read the dashboard', async () => {
+  beforeEach(() => {
+    accessLogInsert.mockClear();
+  });
+
+  it('a support member can still read the dashboard, and it creates no protected-data access record', async () => {
     const res = await app.inject({
       method: 'GET',
       url: '/workspaces/ws_1/dashboard',
@@ -91,9 +103,10 @@ describe('Unrestricted customer-adjacent endpoints (e2e regression)', () => {
 
     expect(res.statusCode).toBe(200);
     expect(dashboardService.getSummary).toHaveBeenCalledWith('ws_1');
+    expect(accessLogInsert).not.toHaveBeenCalled();
   });
 
-  it('a support member can still read customer health', async () => {
+  it('a support member can still read customer health, and it creates no protected-data access record', async () => {
     const res = await app.inject({
       method: 'GET',
       url: '/workspaces/ws_1/customers/canon_1/health',
@@ -102,9 +115,10 @@ describe('Unrestricted customer-adjacent endpoints (e2e regression)', () => {
 
     expect(res.statusCode).toBe(200);
     expect(customerHealthService.getCurrent).toHaveBeenCalledWith('ws_1', 'canon_1');
+    expect(accessLogInsert).not.toHaveBeenCalled();
   });
 
-  it('a support member can still read revenue opportunities', async () => {
+  it('a support member can still read revenue opportunities, and it creates no protected-data access record', async () => {
     const res = await app.inject({
       method: 'GET',
       url: '/workspaces/ws_1/customers/canon_1/opportunities',
@@ -113,9 +127,10 @@ describe('Unrestricted customer-adjacent endpoints (e2e regression)', () => {
 
     expect(res.statusCode).toBe(200);
     expect(revenueOpportunityService.list).toHaveBeenCalledWith('ws_1', 'canon_1');
+    expect(accessLogInsert).not.toHaveBeenCalled();
   });
 
-  it('a support member can still read recommendations', async () => {
+  it('a support member can still read recommendations, and it creates no protected-data access record', async () => {
     const res = await app.inject({
       method: 'GET',
       url: '/workspaces/ws_1/customers/canon_1/recommendations',
@@ -124,5 +139,6 @@ describe('Unrestricted customer-adjacent endpoints (e2e regression)', () => {
 
     expect(res.statusCode).toBe(200);
     expect(recommendationService.list).toHaveBeenCalledWith('ws_1', 'canon_1');
+    expect(accessLogInsert).not.toHaveBeenCalled();
   });
 });
