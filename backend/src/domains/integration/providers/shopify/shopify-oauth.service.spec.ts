@@ -48,16 +48,24 @@ function toRawQueryString(params: Record<string, string>): string {
     .join('&');
 }
 
+/** Matches Shopify's official `stringifyQueryForAdmin` (shopify-api-js) — sorted keys via URLSearchParams, not naive concatenation. See buildHmacMessage's doc comment (Part 18). */
+function shopifyCanonicalMessage(params: Record<string, string>): string {
+  const usp = new URLSearchParams();
+  for (const key of Object.keys(params)
+    .filter((k) => k !== 'hmac' && k !== 'signature')
+    .sort((a, b) => a.localeCompare(b))) {
+    usp.append(key, params[key]);
+  }
+  return usp.toString();
+}
+
 /** Returns both the Nest-style already-decoded `query` object and the raw query string `verifyHmac` now works from — both derived from the same params, so they always agree. */
 function signedQuery(overrides: Record<string, string | undefined> = {}): { query: Record<string, string>; rawQuery: string } {
   // Spread after the defaults so an explicit `undefined` override actually deletes that key.
   const merged: Record<string, string | undefined> = { code: 'auth-code', shop: SHOP, timestamp: '1700000000', ...overrides };
   const base = Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== undefined)) as Record<string, string>;
 
-  const message = Object.entries(base)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}=${v}`)
-    .join('&');
+  const message = shopifyCanonicalMessage(base);
   const hmac = createHmac('sha256', CLIENT_SECRET).update(message).digest('hex');
   const query = { ...base, hmac };
   return { query, rawQuery: toRawQueryString(query) };
@@ -310,14 +318,51 @@ describe('ShopifyOAuthService', () => {
       // host is base64 and can legitimately contain '+' — build the raw query with a literal, unencoded '+'.
       const host = 'YWRtaW4rc3RvcmU='; // arbitrary base64-shaped value containing '+'
       const base = { code: 'auth-code', shop: SHOP, timestamp: '1700000000', state, host };
-      const message = Object.entries(base)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, v]) => `${k}=${v}`)
-        .join('&');
+      const message = shopifyCanonicalMessage(base);
       const hmac = createHmac('sha256', CLIENT_SECRET).update(message).digest('hex');
       const query = { ...base, hmac };
       // Raw query string as Shopify would actually send it — '+' left as a literal '+', not %2B.
       const rawQuery = `code=auth-code&shop=${SHOP}&timestamp=1700000000&state=${encodeURIComponent(state)}&host=${host}&hmac=${hmac}`;
+
+      const redirect = await service.handleCallback(query, cookieValue, rawQuery);
+
+      expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=connected');
+    });
+
+    it('canonicalizes a value containing "/", "+", "=", and a percent-encoded character the same way Shopify\'s official library does (URLSearchParams, not naive concatenation)', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpat_new' }), { status: 200 })));
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+      const { state, cookieValue } = start(service);
+      // A realistic base64-with-padding value: '/', '+', and '=' all present, plus one already-percent-encoded byte in the raw query.
+      const host = 'a/b+c=d%20e';
+      const base = { code: 'auth-code', shop: SHOP, timestamp: '1700000000', state, host };
+      // Sanity: this value must actually differ under naive concatenation vs URLSearchParams — otherwise this test would pass for the wrong reason.
+      const naiveMessage = Object.entries(base)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => `${k}=${v}`)
+        .join('&');
+      const message = shopifyCanonicalMessage(base);
+      expect(message).not.toBe(naiveMessage);
+      expect(message).toContain('host=a%2Fb%2Bc%3Dd%2520e'); // '%20' itself gets re-encoded — the raw query byte was literal '%2', '0'... see decode below
+      const hmac = createHmac('sha256', CLIENT_SECRET).update(message).digest('hex');
+      const query = { ...base, hmac };
+      const rawQuery = `code=auth-code&shop=${SHOP}&timestamp=1700000000&state=${encodeURIComponent(state)}&host=${encodeURIComponent(host)}&hmac=${hmac}`;
+
+      const redirect = await service.handleCallback(query, cookieValue, rawQuery);
+
+      expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=connected');
+    });
+
+    it('excludes both "hmac" and "signature" from the signed message, matching Shopify\'s official library', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpat_new' }), { status: 200 })));
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+      const { state, cookieValue } = start(service);
+      const base = { code: 'auth-code', shop: SHOP, timestamp: '1700000000', state };
+      const hmac = createHmac('sha256', CLIENT_SECRET).update(shopifyCanonicalMessage(base)).digest('hex');
+      // An arbitrary, unrelated 'signature' param present alongside hmac — if it were included in the
+      // signed message, this precomputed hmac (which excludes it) would no longer match.
+      const query = { ...base, hmac, signature: 'unrelated-app-proxy-signature' };
+      const rawQuery = toRawQueryString(query);
 
       const redirect = await service.handleCallback(query, cookieValue, rawQuery);
 

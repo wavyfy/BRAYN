@@ -321,9 +321,21 @@ export class ShopifyOAuthService {
   }
 
   /**
-   * shopify.dev — Authorization Code Grant: drop `hmac`, sort the
-   * remaining params alphabetically by key, join as `key=value&...`.
-   * Pure — no secret, no comparison — extracted purely so
+   * doc 20 Part 18 — matches Shopify's own official Node library
+   * (`generateLocalHmac`/`stringifyQueryForAdmin` in `shopify-api-js`)
+   * exactly, not the simplified naive-concatenation shown in shopify.dev's
+   * prose (which Part 11 followed and which turned out to be incomplete):
+   * drop both `hmac` and `signature`, sort the remaining keys with
+   * `localeCompare`, then build the message via `URLSearchParams` — NOT
+   * `${key}=${value}` string concatenation of the already-decoded value.
+   * `URLSearchParams.append()`+`.toString()` re-encodes each value using
+   * application/x-www-form-urlencoded rules, which differs from a naive
+   * join whenever a value contains `+`, `/`, `=`, or another character
+   * that needs encoding — exactly what a base64-shaped value like `host`
+   * (or BRAYN's own `state`) contains. Confirmed via direct reproduction
+   * against Shopify's actual source before this fix (Part 17).
+   *
+   * Pure — no secret, no comparison — kept as its own method so
    * `buildHmacFailureDiagnostics` (doc 20 Part 16) can recompute the exact
    * same message for fingerprinting without duplicating this logic or
    * changing `verifyHmac`'s own behavior.
@@ -336,13 +348,14 @@ export class ShopifyOAuthService {
       return null;
     }
 
-    const message = Object.entries(params)
-      .filter(([key]) => key !== 'hmac')
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, value]) => `${key}=${value}`)
-      .join('&');
+    const signedParams = new URLSearchParams();
+    for (const key of Object.keys(params)
+      .filter((key) => key !== 'hmac' && key !== 'signature')
+      .sort((a, b) => a.localeCompare(b))) {
+      signedParams.append(key, params[key]);
+    }
 
-    return { message, receivedHmac: params.hmac };
+    return { message: signedParams.toString(), receivedHmac: params.hmac };
   }
 
   /**
@@ -350,9 +363,9 @@ export class ShopifyOAuthService {
    * from the raw query string via `buildHmacMessage`/
    * `decodeShopifyCallbackQuery`, not Fastify's `@Query()` — see that
    * function's doc comment. Malformed percent-encoding fails closed
-   * (verification fails) rather than throwing into the request. Identical
-   * behavior to before the Part 16 refactor — only the message-building
-   * step moved into its own method.
+   * (verification fails) rather than throwing into the request. Message
+   * construction itself lives in `buildHmacMessage` — see its doc comment
+   * for the Part 18 canonicalization fix.
    */
   private verifyHmac(rawQuery: string): boolean {
     const clientSecret = this.config.get('SHOPIFY_APP_CLIENT_SECRET', { infer: true });
