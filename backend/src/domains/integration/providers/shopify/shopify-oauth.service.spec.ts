@@ -478,6 +478,7 @@ describe('ShopifyOAuthService', () => {
       expect(integrationService.setCredentials).toHaveBeenCalledWith('ws_1', 'shopify', {
         shopDomain: SHOP,
         accessToken: 'shpat_new',
+        grantType: 'authorization_code',
       });
       expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=connected');
     });
@@ -496,8 +497,59 @@ describe('ShopifyOAuthService', () => {
       expect(integrationService.setCredentials).toHaveBeenCalledWith('ws_1', 'shopify', {
         shopDomain: SHOP,
         accessToken: 'shpat_rotated',
+        grantType: 'authorization_code',
       });
       expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=connected');
+    });
+
+    it('requests an expiring offline token (expiring=1) in the token-exchange body', async () => {
+      const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
+        async () => new Response(JSON.stringify({ access_token: 'shpat_new' }), { status: 200 }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), makeAdapter(), makeLogger());
+
+      await startThenCallback(service);
+
+      const exchangeCall = fetchMock.mock.calls.find(([url]) => url.includes('/admin/oauth/access_token'));
+      expect(exchangeCall).toBeDefined();
+      const [, init] = exchangeCall!;
+      const sentBody = new URLSearchParams(init!.body as string);
+      expect(sentBody.get('expiring')).toBe('1');
+      expect(sentBody.get('client_id')).toBe(CLIENT_ID);
+      expect(sentBody.get('client_secret')).toBe(CLIENT_SECRET);
+      expect(sentBody.get('code')).toBe('auth-code');
+    });
+
+    it('parses refresh_token/expires_in from an expiring-token exchange response and persists the full authorization_code credential shape', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          new Response(
+            JSON.stringify({
+              access_token: 'shpat_new',
+              refresh_token: 'shprt_new',
+              expires_in: 3600,
+              refresh_token_expires_in: 7776000,
+              scope: 'read_customers,read_orders,read_products',
+            }),
+            { status: 200 },
+          ),
+        ),
+      );
+      const integrationService = makeIntegrationService();
+      const service = new ShopifyOAuthService(makeConfig(), integrationService, makeAdapter(), makeLogger());
+
+      await startThenCallback(service);
+
+      expect(integrationService.setCredentials).toHaveBeenCalledWith('ws_1', 'shopify', {
+        shopDomain: SHOP,
+        accessToken: 'shpat_new',
+        refreshToken: 'shprt_new',
+        grantType: 'authorization_code',
+        expiresAt: new Date(1_700_000_000_000 + 3600 * 1000).toISOString(),
+      });
     });
 
     it('redirects with reason=expired when state is older than the allowed window', async () => {

@@ -12,6 +12,7 @@ import { StructuredLoggerService } from '../../../../common/logging/structured-l
 import { IntegrationService } from '../../integration.service';
 import {
   requestShopifyClientCredentialsToken,
+  SHOPIFY_AUTHORIZATION_CODE_GRANT_TYPE,
   SHOPIFY_CLIENT_CREDENTIALS_GRANT_TYPE,
   SHOPIFY_DOMAIN_PATTERN,
   ShopifyAdapter,
@@ -254,17 +255,31 @@ export class ShopifyOAuthService {
     }
 
     let accessToken: string;
+    let refreshToken: string | null = null;
+    let expiresAt: string | null = null;
     let grantedScopes: string | null = null;
     try {
       const exchanged = await this.exchangeCodeForToken(shop, query.code);
       accessToken = exchanged.accessToken;
+      refreshToken = exchanged.refreshToken;
+      expiresAt = exchanged.expiresAt;
       grantedScopes = exchanged.scope;
     } catch {
       this.logger.event('error', 'Shopify OAuth callback: token exchange failed', 'ShopifyOAuth', { workspaceId: state.workspaceId });
       return `${integrationsUrl}?shopify=error&reason=token_exchange_failed`;
     }
 
-    const credentials = { shopDomain: shop, accessToken };
+    // Expiring offline token (doc 20 Part 28) — reuses the same generic
+    // expiresAt/grantType shape IntegrationService.getCredentials() already
+    // refreshes on-read for the client-credentials grant (see
+    // ShopifyAdapter.refreshCredentials); no new refresh mechanism.
+    const credentials: Record<string, string> = { shopDomain: shop, accessToken, grantType: SHOPIFY_AUTHORIZATION_CODE_GRANT_TYPE };
+    if (refreshToken) {
+      credentials.refreshToken = refreshToken;
+    }
+    if (expiresAt) {
+      credentials.expiresAt = expiresAt;
+    }
 
     // Diagnostic only (doc 20 Part 20/25) — a status-code category, the non-sensitive
     // X-Shopify-API-Version header, and Shopify's own `errors` message (not the full
@@ -450,6 +465,15 @@ export class ShopifyOAuthService {
   }
 
   /**
+   * `expiring: '1'` (doc 20 Part 28 — shopify.dev "Token exchange") opts
+   * this authorization-code exchange into an *expiring* offline access
+   * token — Shopify now rejects non-expiring offline tokens for public
+   * apps outright ("API Non-expiring access tokens are no longer accepted
+   * for the Admin API"). An expiring token additionally returns
+   * `refresh_token`/`expires_in` (and `refresh_token_expires_in`, which
+   * BRAYN doesn't currently persist — nothing reads it, and the existing
+   * credential model has no use for it yet).
+   *
    * `scope` (doc 20 Part 25) is Shopify's own report of which scopes this
    * token actually carries — not a secret (it's a permission-name list,
    * same category as the `scope` param BRAYN itself puts on the authorize
@@ -457,7 +481,10 @@ export class ShopifyOAuthService {
    * diagnosed against what was actually granted instead of what was
    * requested, without a second API call.
    */
-  private async exchangeCodeForToken(shop: string, code: string): Promise<{ accessToken: string; scope: string | null }> {
+  private async exchangeCodeForToken(
+    shop: string,
+    code: string,
+  ): Promise<{ accessToken: string; refreshToken: string | null; expiresAt: string | null; scope: string | null }> {
     const clientId = this.config.get('SHOPIFY_APP_CLIENT_ID', { infer: true });
     const clientSecret = this.config.get('SHOPIFY_APP_CLIENT_SECRET', { infer: true });
     if (!clientId || !clientSecret) {
@@ -467,18 +494,29 @@ export class ShopifyOAuthService {
     const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-      body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, code }).toString(),
+      body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, code, expiring: '1' }).toString(),
     });
 
     if (!response.ok) {
       throw new ProviderError('Shopify rejected the authorization code.');
     }
 
-    const body = (await response.json()) as { access_token?: string; scope?: string };
+    const body = (await response.json()) as {
+      access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
+      refresh_token_expires_in?: number;
+      scope?: string;
+    };
     if (!body.access_token) {
       throw new ProviderError('Shopify token exchange returned no access token.');
     }
-    return { accessToken: body.access_token, scope: typeof body.scope === 'string' ? body.scope : null };
+    return {
+      accessToken: body.access_token,
+      refreshToken: typeof body.refresh_token === 'string' ? body.refresh_token : null,
+      expiresAt: typeof body.expires_in === 'number' ? new Date(Date.now() + body.expires_in * 1000).toISOString() : null,
+      scope: typeof body.scope === 'string' ? body.scope : null,
+    };
   }
 
   private resolveEncryptionKey() {

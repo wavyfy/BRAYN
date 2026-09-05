@@ -1081,5 +1081,111 @@ describe('ShopifyAdapter', () => {
         adapter.refreshCredentials({ shopDomain: 'acme.myshopify.com', accessToken: 'x', grantType: 'client_credentials', expiresAt: new Date().toISOString() }),
       ).rejects.toThrow('Shopify rejected the client credentials request.');
     });
+
+    describe('authorization_code grant (doc 20 Part 28 — expiring offline tokens)', () => {
+      const staleCredentials = {
+        shopDomain: 'acme.myshopify.com',
+        accessToken: 'shpat_old',
+        refreshToken: 'shprt_old',
+        grantType: 'authorization_code',
+        expiresAt: new Date(Date.now() - 1000).toISOString(),
+      };
+
+      it('sends grant_type=refresh_token with client_id/client_secret/refresh_token to /admin/oauth/access_token', async () => {
+        const fetchMock = vi.fn(async () =>
+          jsonResponse(200, { access_token: 'shpat_new', refresh_token: 'shprt_new', expires_in: 3600 }),
+        );
+        vi.stubGlobal('fetch', fetchMock);
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+        await adapter.refreshCredentials(staleCredentials);
+
+        expect(fetchMock).toHaveBeenCalledWith(
+          'https://acme.myshopify.com/admin/oauth/access_token',
+          expect.objectContaining({
+            method: 'POST',
+            body: 'grant_type=refresh_token&client_id=client_id&client_secret=client_secret&refresh_token=shprt_old',
+          }),
+        );
+      });
+
+      it('persists the NEW access token and the rotated NEW refresh token, and updates expiresAt', async () => {
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () => jsonResponse(200, { access_token: 'shpat_new', refresh_token: 'shprt_new', expires_in: 3600 })),
+        );
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const before = Date.now();
+
+        const result = await adapter.refreshCredentials(staleCredentials);
+
+        expect(result).toEqual({
+          shopDomain: 'acme.myshopify.com',
+          accessToken: 'shpat_new',
+          refreshToken: 'shprt_new',
+          grantType: 'authorization_code',
+          expiresAt: expect.any(String),
+        });
+        expect(new Date(result!.expiresAt).getTime()).toBeGreaterThanOrEqual(before + 3600 * 1000);
+      });
+
+      it('does not carry the old refresh token forward — the rotated one fully replaces it', async () => {
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () => jsonResponse(200, { access_token: 'shpat_new', refresh_token: 'shprt_new', expires_in: 3600 })),
+        );
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+        const result = await adapter.refreshCredentials(staleCredentials);
+
+        expect(result?.refreshToken).toBe('shprt_new');
+        expect(result?.refreshToken).not.toBe('shprt_old');
+      });
+
+      it('throws (does not return partial data) when Shopify rejects the refresh request — caller must not overwrite existing valid credentials', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401)));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+        await expect(adapter.refreshCredentials(staleCredentials)).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+      });
+
+      it('throws when the refresh response is missing an access or refresh token', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { access_token: 'shpat_new' })));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+        await expect(adapter.refreshCredentials(staleCredentials)).rejects.toThrow(
+          'Shopify refresh-token response was missing an access or refresh token.',
+        );
+      });
+
+      it('throws when the stored credential has no refresh token to use', async () => {
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+        await expect(
+          adapter.refreshCredentials({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_old', grantType: 'authorization_code' }),
+        ).rejects.toThrow('Shopify authorization-code refresh is not configured.');
+      });
+
+      it('throws when the app client id/secret are not configured', async () => {
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig({ SHOPIFY_APP_CLIENT_ID: undefined }));
+
+        await expect(adapter.refreshCredentials(staleCredentials)).rejects.toThrow('Shopify authorization-code refresh is not configured.');
+      });
+
+      it('never leaks the old or new refresh token, access token, or client secret through a thrown error message', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401)));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+        try {
+          await adapter.refreshCredentials(staleCredentials);
+          throw new Error('expected refreshCredentials to throw');
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          expect(message).not.toContain('shprt_old');
+          expect(message).not.toContain('shpat_old');
+          expect(message).not.toContain('client_secret');
+        }
+      });
+    });
   });
 });

@@ -124,6 +124,54 @@ export async function requestShopifyClientCredentialsToken(
   return { accessToken: body.access_token, expiresIn: body.expires_in ?? 86399 };
 }
 
+/** Tags a stored credential as having come from the standalone-app authorization-code grant (doc 20 Part 28) — see ShopifyOAuthService.handleCallback and ShopifyAdapter.refreshCredentials. */
+export const SHOPIFY_AUTHORIZATION_CODE_GRANT_TYPE = 'authorization_code';
+
+/**
+ * Refreshes an expiring offline access token (shopify.dev — "Refresh an
+ * expiring offline access token"): same `/admin/oauth/access_token`
+ * endpoint as the initial exchange, but `grant_type=refresh_token` plus
+ * the stored `refresh_token` instead of an authorization `code`. Shopify
+ * rotates the refresh token on every use — the response's `refresh_token`
+ * is a *new* value, and the old one stops working, so callers must
+ * persist both the new access and refresh tokens together, never just
+ * the access token.
+ */
+async function requestShopifyRefreshedToken(
+  shopDomain: string,
+  clientId: string,
+  clientSecret: string,
+  refreshToken: string,
+): Promise<{ accessToken: string; refreshToken: string; expiresIn: number }> {
+  const response = await fetch(`https://${shopDomain}/admin/oauth/access_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+    }).toString(),
+  });
+
+  if (!response.ok) {
+    throw new ProviderError('Shopify rejected the refresh token request.');
+  }
+
+  const body = (await response.json()) as {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+    refresh_token_expires_in?: number;
+  };
+  if (!body.access_token || !body.refresh_token) {
+    throw new ProviderError('Shopify refresh-token response was missing an access or refresh token.');
+  }
+
+  // shopify.dev: access tokens from this grant expire in 1 hour (3600s) — falling back only if a future response omits the field.
+  return { accessToken: body.access_token, refreshToken: body.refresh_token, expiresIn: body.expires_in ?? 3600 };
+}
+
 interface ShopifyCustomer {
   id: number;
   email: string | null;
@@ -240,13 +288,38 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
   }
 
   /**
-   * Re-mints a client-credentials-grant token before it expires (doc07 —
+   * Re-mints an expiring token before it expires (doc07 —
    * IntegrationService.getCredentials calls this generically off
-   * `credentials.expiresAt`). Returns `null` for any other credential
-   * shape — the authorization-code/manual token has no refresh mechanism
-   * here, same as WooCommerce; nothing to do.
+   * `credentials.expiresAt`). Two grant shapes, dispatched by
+   * `credentials.grantType`; any other shape (WooCommerce, or a Shopify
+   * credential with no expiry) returns `null` — nothing to do. Throws
+   * (never returns partial data) on any failure, matching the existing
+   * client-credentials branch's convention — `IntegrationService.
+   * refreshIfExpiring` never catches this, so a thrown error here leaves
+   * the previously-stored credentials in the database untouched rather
+   * than overwriting them with something invalid (doc 20 Part 28).
    */
   async refreshCredentials(credentials: Record<string, string>): Promise<Record<string, string> | null> {
+    if (credentials.grantType === SHOPIFY_AUTHORIZATION_CODE_GRANT_TYPE) {
+      const { shopDomain, refreshToken } = credentials;
+      const clientId = this.config.get('SHOPIFY_APP_CLIENT_ID', { infer: true });
+      const clientSecret = this.config.get('SHOPIFY_APP_CLIENT_SECRET', { infer: true });
+      if (!shopDomain || !refreshToken || !clientId || !clientSecret) {
+        throw new ProviderError('Shopify authorization-code refresh is not configured.');
+      }
+
+      const refreshed = await requestShopifyRefreshedToken(shopDomain, clientId, clientSecret, refreshToken);
+      return {
+        shopDomain,
+        accessToken: refreshed.accessToken,
+        // Shopify rotates the refresh token on every use — the old one stops working, so the
+        // newly-returned one must replace it, never just the access token (doc 20 Part 28).
+        refreshToken: refreshed.refreshToken,
+        grantType: SHOPIFY_AUTHORIZATION_CODE_GRANT_TYPE,
+        expiresAt: new Date(Date.now() + refreshed.expiresIn * 1000).toISOString(),
+      };
+    }
+
     if (credentials.grantType !== SHOPIFY_CLIENT_CREDENTIALS_GRANT_TYPE) {
       return null;
     }
