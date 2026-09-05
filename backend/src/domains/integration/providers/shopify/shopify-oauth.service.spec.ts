@@ -396,14 +396,19 @@ describe('ShopifyOAuthService', () => {
       expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=verification_failed');
     });
 
-    it('logs the connection-check category (never the token/domain) when post-exchange verification fails (doc 20 Part 20/22)', async () => {
+    it('logs the connection-check category and Shopify\'s error message (never the token/domain) when post-exchange verification fails (doc 20 Part 20/22/25)', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpat_new' }), { status: 200 })));
       const logger = makeLogger();
       const adapter = makeAdapter({
-        verifyConnection: vi.fn(async (_credentials: Record<string, string>, onDiagnostic?: (d: { category: string; apiVersionHeader: string | null }) => void) => {
-          onDiagnostic?.({ category: '401', apiVersionHeader: '2024-10' });
-          return false;
-        }),
+        verifyConnection: vi.fn(
+          async (
+            _credentials: Record<string, string>,
+            onDiagnostic?: (d: { category: string; apiVersionHeader: string | null; shopifyError: string | null }) => void,
+          ) => {
+            onDiagnostic?.({ category: '403', apiVersionHeader: '2024-10', shopifyError: 'This action requires merchant approval for protected customer data' });
+            return false;
+          },
+        ),
       });
       const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), adapter, logger);
 
@@ -413,8 +418,37 @@ describe('ShopifyOAuthService', () => {
         'error',
         'Shopify OAuth callback: post-exchange verification failed',
         'ShopifyOAuth',
-        { workspaceId: 'ws_1', connectionCheck: { category: '401', apiVersionHeader: '2024-10' } },
+        {
+          workspaceId: 'ws_1',
+          grantedScopes: null,
+          connectionCheck: {
+            category: '403',
+            apiVersionHeader: '2024-10',
+            shopifyError: 'This action requires merchant approval for protected customer data',
+          },
+        },
       );
+    });
+
+    it('captures the granted `scope` from the token-exchange response and includes it in the failure log — never the access token itself', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpat_new', scope: 'read_customers,read_orders' }), { status: 200 })),
+      );
+      const logger = makeLogger();
+      const adapter = makeAdapter({ verifyConnection: vi.fn(async () => false) });
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), adapter, logger);
+
+      await startThenCallback(service);
+
+      expect(logger.event).toHaveBeenCalledWith(
+        'error',
+        'Shopify OAuth callback: post-exchange verification failed',
+        'ShopifyOAuth',
+        expect.objectContaining({ grantedScopes: 'read_customers,read_orders' }),
+      );
+      const serialized = JSON.stringify((logger.event as ReturnType<typeof vi.fn>).mock.calls);
+      expect(serialized).not.toContain('shpat_new');
     });
 
     it('logs connectionCheck category "unknown" when verifyConnection rejects before ever invoking the diagnostic callback', async () => {
@@ -429,7 +463,7 @@ describe('ShopifyOAuthService', () => {
         'error',
         'Shopify OAuth callback: post-exchange verification failed',
         'ShopifyOAuth',
-        { workspaceId: 'ws_1', connectionCheck: { category: 'unknown', apiVersionHeader: null } },
+        { workspaceId: 'ws_1', grantedScopes: null, connectionCheck: { category: 'unknown', apiVersionHeader: null, shopifyError: null } },
       );
     });
 

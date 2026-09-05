@@ -24,14 +24,46 @@ const SHOPIFY_API_VERSION = '2024-10';
 
 /**
  * Non-sensitive classification of a verifyConnection() outcome (doc 20
- * Part 20/22) — never a token/domain/body. `category` distinguishes 401
- * from 403 exactly (Part 22 — a combined "401_403" bucket wasn't enough
- * to tell an invalid/expired token apart from a scopes/permissions
- * problem).
+ * Part 20/22/25) — never a token/domain/full body. `category`
+ * distinguishes 401 from 403 exactly (Part 22 — a combined "401_403"
+ * bucket wasn't enough to tell an invalid/expired token apart from a
+ * scopes/permissions problem). `shopifyError` (Part 25) is Shopify's own
+ * `errors` field from the response body — its explanation for *why* —
+ * extracted on its own, never the complete response body.
  */
 export interface ShopifyConnectionCheckDiagnostic {
   category: '200' | '401' | '403' | '404' | 'other_4xx' | 'server_error' | 'network_error';
   apiVersionHeader: string | null;
+  shopifyError: string | null;
+}
+
+/**
+ * Extracts only the `errors` field from a Shopify error response body
+ * (doc 20 Part 25) — never the full body, never customer/store data.
+ * Shopify's REST API returns `{"errors": "some message"}` for a simple
+ * permission error, or `{"errors": {"field": ["message"]}}` for a
+ * validation error; either shape is reduced to a single string here.
+ * Never throws — a missing/invalid/unparseable body yields `null`, since
+ * this is diagnostic-only and must never break the actual verification
+ * outcome it's attached to.
+ */
+async function readShopifyErrorField(response: Response): Promise<string | null> {
+  try {
+    const body: unknown = await response.clone().json();
+    if (!body || typeof body !== 'object' || !('errors' in body)) {
+      return null;
+    }
+    const errors = (body as { errors?: unknown }).errors;
+    if (typeof errors === 'string') {
+      return errors;
+    }
+    if (errors && typeof errors === 'object') {
+      return JSON.stringify(errors);
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 const CUSTOMERS_PAGE_SIZE = 250;
@@ -267,7 +299,7 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
       });
     } catch (error) {
       // Network/DNS failure — unclassified, not an ordinary "bad credentials" outcome.
-      onDiagnostic?.({ category: 'network_error', apiVersionHeader: null });
+      onDiagnostic?.({ category: 'network_error', apiVersionHeader: null, shopifyError: null });
       throw new ProviderError(
         `Could not reach Shopify: ${error instanceof Error ? error.message : 'unknown network error'}.`,
       );
@@ -280,15 +312,17 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
     if (response.status >= 400 && response.status < 500) {
       const category =
         response.status === 401 ? '401' : response.status === 403 ? '403' : response.status === 404 ? '404' : 'other_4xx';
-      onDiagnostic?.({ category, apiVersionHeader });
+      const shopifyError = onDiagnostic ? await readShopifyErrorField(response) : null;
+      onDiagnostic?.({ category, apiVersionHeader, shopifyError });
       return false;
     }
     if (!response.ok) {
-      onDiagnostic?.({ category: 'server_error', apiVersionHeader });
+      const shopifyError = onDiagnostic ? await readShopifyErrorField(response) : null;
+      onDiagnostic?.({ category: 'server_error', apiVersionHeader, shopifyError });
       throw new ProviderError(`Shopify connection check failed with status ${response.status}.`);
     }
 
-    onDiagnostic?.({ category: '200', apiVersionHeader });
+    onDiagnostic?.({ category: '200', apiVersionHeader, shopifyError: null });
     return true;
   }
 

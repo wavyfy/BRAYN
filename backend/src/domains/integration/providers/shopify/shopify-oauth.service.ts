@@ -254,8 +254,11 @@ export class ShopifyOAuthService {
     }
 
     let accessToken: string;
+    let grantedScopes: string | null = null;
     try {
-      accessToken = await this.exchangeCodeForToken(shop, query.code);
+      const exchanged = await this.exchangeCodeForToken(shop, query.code);
+      accessToken = exchanged.accessToken;
+      grantedScopes = exchanged.scope;
     } catch {
       this.logger.event('error', 'Shopify OAuth callback: token exchange failed', 'ShopifyOAuth', { workspaceId: state.workspaceId });
       return `${integrationsUrl}?shopify=error&reason=token_exchange_failed`;
@@ -263,9 +266,10 @@ export class ShopifyOAuthService {
 
     const credentials = { shopDomain: shop, accessToken };
 
-    // Diagnostic only (doc 20 Part 20) — a status-code category + the non-sensitive
-    // X-Shopify-API-Version header, never the token/domain/response body. Captured via
-    // the callback since verifyConnection() only returns/throws a boolean either way.
+    // Diagnostic only (doc 20 Part 20/25) — a status-code category, the non-sensitive
+    // X-Shopify-API-Version header, and Shopify's own `errors` message (not the full
+    // body) — never the token/domain/customer data. Captured via the callback since
+    // verifyConnection() only returns/throws a boolean either way.
     let connectionCheck: ShopifyConnectionCheckDiagnostic | undefined;
     const verified = await this.shopifyAdapter
       .verifyConnection(credentials, (diagnostic) => {
@@ -275,7 +279,8 @@ export class ShopifyOAuthService {
     if (!verified) {
       this.logger.event('error', 'Shopify OAuth callback: post-exchange verification failed', 'ShopifyOAuth', {
         workspaceId: state.workspaceId,
-        connectionCheck: connectionCheck ?? { category: 'unknown', apiVersionHeader: null },
+        grantedScopes,
+        connectionCheck: connectionCheck ?? { category: 'unknown', apiVersionHeader: null, shopifyError: null },
       });
       return `${integrationsUrl}?shopify=error&reason=verification_failed`;
     }
@@ -444,7 +449,15 @@ export class ShopifyOAuthService {
     };
   }
 
-  private async exchangeCodeForToken(shop: string, code: string): Promise<string> {
+  /**
+   * `scope` (doc 20 Part 25) is Shopify's own report of which scopes this
+   * token actually carries — not a secret (it's a permission-name list,
+   * same category as the `scope` param BRAYN itself puts on the authorize
+   * URL), captured here so a post-exchange verification failure can be
+   * diagnosed against what was actually granted instead of what was
+   * requested, without a second API call.
+   */
+  private async exchangeCodeForToken(shop: string, code: string): Promise<{ accessToken: string; scope: string | null }> {
     const clientId = this.config.get('SHOPIFY_APP_CLIENT_ID', { infer: true });
     const clientSecret = this.config.get('SHOPIFY_APP_CLIENT_SECRET', { infer: true });
     if (!clientId || !clientSecret) {
@@ -461,11 +474,11 @@ export class ShopifyOAuthService {
       throw new ProviderError('Shopify rejected the authorization code.');
     }
 
-    const body = (await response.json()) as { access_token?: string };
+    const body = (await response.json()) as { access_token?: string; scope?: string };
     if (!body.access_token) {
       throw new ProviderError('Shopify token exchange returned no access token.');
     }
-    return body.access_token;
+    return { accessToken: body.access_token, scope: typeof body.scope === 'string' ? body.scope : null };
   }
 
   private resolveEncryptionKey() {

@@ -126,7 +126,7 @@ describe('ShopifyAdapter', () => {
 
         await adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, onDiagnostic);
 
-        expect(onDiagnostic).toHaveBeenCalledWith({ category: '200', apiVersionHeader: '2024-10' });
+        expect(onDiagnostic).toHaveBeenCalledWith({ category: '200', apiVersionHeader: '2024-10', shopifyError: null });
       });
 
       it('reports category "401" (not a combined 401/403 bucket) for a 401', async () => {
@@ -136,7 +136,7 @@ describe('ShopifyAdapter', () => {
 
         await adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }, onDiagnostic);
 
-        expect(onDiagnostic).toHaveBeenCalledWith({ category: '401', apiVersionHeader: null });
+        expect(onDiagnostic).toHaveBeenCalledWith({ category: '401', apiVersionHeader: null, shopifyError: null });
       });
 
       it('reports category "403" (distinct from 401) for a 403', async () => {
@@ -146,7 +146,7 @@ describe('ShopifyAdapter', () => {
 
         await adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }, onDiagnostic);
 
-        expect(onDiagnostic).toHaveBeenCalledWith({ category: '403', apiVersionHeader: null });
+        expect(onDiagnostic).toHaveBeenCalledWith({ category: '403', apiVersionHeader: null, shopifyError: null });
       });
 
       it('reports category "404" for an unknown shop domain', async () => {
@@ -156,7 +156,7 @@ describe('ShopifyAdapter', () => {
 
         await adapter.verifyConnection({ shopDomain: 'nonexistent.myshopify.com', accessToken: 'shpat_123' }, onDiagnostic);
 
-        expect(onDiagnostic).toHaveBeenCalledWith({ category: '404', apiVersionHeader: null });
+        expect(onDiagnostic).toHaveBeenCalledWith({ category: '404', apiVersionHeader: null, shopifyError: null });
       });
 
       it('reports category "other_4xx" for a 4xx that is neither 401/403 nor 404', async () => {
@@ -166,7 +166,7 @@ describe('ShopifyAdapter', () => {
 
         await adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, onDiagnostic);
 
-        expect(onDiagnostic).toHaveBeenCalledWith({ category: 'other_4xx', apiVersionHeader: null });
+        expect(onDiagnostic).toHaveBeenCalledWith({ category: 'other_4xx', apiVersionHeader: null, shopifyError: null });
       });
 
       it('reports category "server_error" (before throwing) for a 5xx', async () => {
@@ -177,7 +177,7 @@ describe('ShopifyAdapter', () => {
         await expect(
           adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, onDiagnostic),
         ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
-        expect(onDiagnostic).toHaveBeenCalledWith({ category: 'server_error', apiVersionHeader: null });
+        expect(onDiagnostic).toHaveBeenCalledWith({ category: 'server_error', apiVersionHeader: null, shopifyError: null });
       });
 
       it('reports category "network_error" (before throwing) when the request itself fails', async () => {
@@ -193,11 +193,55 @@ describe('ShopifyAdapter', () => {
         await expect(
           adapter.verifyConnection({ shopDomain: 'bad.myshopify.com', accessToken: 'shpat_123' }, onDiagnostic),
         ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
-        expect(onDiagnostic).toHaveBeenCalledWith({ category: 'network_error', apiVersionHeader: null });
+        expect(onDiagnostic).toHaveBeenCalledWith({ category: 'network_error', apiVersionHeader: null, shopifyError: null });
       });
 
-      it('never includes the access token, shop domain, or response body in the diagnostic payload', async () => {
-        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401, { errors: 'secret-looking-body-content' })));
+      it('extracts a string "errors" field from a 403 body as shopifyError', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(403, { errors: 'This action requires merchant approval for write_products scope' })));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }, onDiagnostic);
+
+        expect(onDiagnostic).toHaveBeenCalledWith(
+          expect.objectContaining({ category: '403', shopifyError: 'This action requires merchant approval for write_products scope' }),
+        );
+      });
+
+      it('extracts an object-shaped "errors" field (validation-style) as a JSON string, not the raw object', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(403, { errors: { scope: ['is missing'] } })));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }, onDiagnostic);
+
+        expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({ shopifyError: JSON.stringify({ scope: ['is missing'] }) }));
+      });
+
+      it('reports shopifyError: null when the body has no "errors" field', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(403, { message: 'forbidden' })));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }, onDiagnostic);
+
+        expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({ shopifyError: null }));
+      });
+
+      it('reports shopifyError: null (fails closed, never throws) when the body is not valid JSON', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => new Response('not json', { status: 403 })));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await expect(adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }, onDiagnostic)).resolves.toBe(false);
+        expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({ shopifyError: null }));
+      });
+
+      it('never includes the access token, shop domain, or unrelated body fields in the diagnostic payload — only the "errors" field', async () => {
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () => jsonResponse(401, { errors: 'invalid api key or access token', customer_email: 'jane@example.com', order_id: 999 })),
+        );
         const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
         const onDiagnostic = vi.fn();
 
@@ -206,7 +250,9 @@ describe('ShopifyAdapter', () => {
         const serialized = JSON.stringify(onDiagnostic.mock.calls);
         expect(serialized).not.toContain('shpat_super_secret_token');
         expect(serialized).not.toContain('acme.myshopify.com');
-        expect(serialized).not.toContain('secret-looking-body-content');
+        expect(serialized).not.toContain('jane@example.com');
+        expect(serialized).not.toContain('order_id');
+        expect(serialized).toContain('invalid api key or access token');
       });
 
       it('does not change behavior for callers that omit onDiagnostic (e.g. connectViaClientCredentials)', async () => {
