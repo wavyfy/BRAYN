@@ -396,12 +396,12 @@ describe('ShopifyOAuthService', () => {
       expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=verification_failed');
     });
 
-    it('logs the connection-check category (never the token/domain) when post-exchange verification fails (doc 20 Part 20)', async () => {
+    it('logs the connection-check category (never the token/domain) when post-exchange verification fails (doc 20 Part 20/22)', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpat_new' }), { status: 200 })));
       const logger = makeLogger();
       const adapter = makeAdapter({
         verifyConnection: vi.fn(async (_credentials: Record<string, string>, onDiagnostic?: (d: { category: string; apiVersionHeader: string | null }) => void) => {
-          onDiagnostic?.({ category: '401_403', apiVersionHeader: '2024-10' });
+          onDiagnostic?.({ category: '401', apiVersionHeader: '2024-10' });
           return false;
         }),
       });
@@ -413,7 +413,7 @@ describe('ShopifyOAuthService', () => {
         'error',
         'Shopify OAuth callback: post-exchange verification failed',
         'ShopifyOAuth',
-        { workspaceId: 'ws_1', connectionCheck: { category: '401_403', apiVersionHeader: '2024-10' } },
+        { workspaceId: 'ws_1', connectionCheck: { category: '401', apiVersionHeader: '2024-10' } },
       );
     });
 

@@ -22,9 +22,15 @@ import type { Env } from '../../../../config/env.schema';
 
 const SHOPIFY_API_VERSION = '2024-10';
 
-/** Non-sensitive classification of a verifyConnection() outcome (doc 20 Part 20) — never a token/domain/body. */
+/**
+ * Non-sensitive classification of a verifyConnection() outcome (doc 20
+ * Part 20/22) — never a token/domain/body. `category` distinguishes 401
+ * from 403 exactly (Part 22 — a combined "401_403" bucket wasn't enough
+ * to tell an invalid/expired token apart from a scopes/permissions
+ * problem).
+ */
 export interface ShopifyConnectionCheckDiagnostic {
-  category: '200' | '401_403' | '404' | 'other_4xx' | 'server_error' | 'network_error';
+  category: '200' | '401' | '403' | '404' | 'other_4xx' | 'server_error' | 'network_error';
   apiVersionHeader: string | null;
 }
 
@@ -272,10 +278,9 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
     // 4xx (401/403 bad token, 404 unknown shop domain, ...) is the merchant having
     // entered something wrong — an ordinary rejection, not a thrown error.
     if (response.status >= 400 && response.status < 500) {
-      onDiagnostic?.({
-        category: response.status === 401 || response.status === 403 ? '401_403' : response.status === 404 ? '404' : 'other_4xx',
-        apiVersionHeader,
-      });
+      const category =
+        response.status === 401 ? '401' : response.status === 403 ? '403' : response.status === 404 ? '404' : 'other_4xx';
+      onDiagnostic?.({ category, apiVersionHeader });
       return false;
     }
     if (!response.ok) {

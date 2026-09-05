@@ -129,24 +129,24 @@ describe('ShopifyAdapter', () => {
         expect(onDiagnostic).toHaveBeenCalledWith({ category: '200', apiVersionHeader: '2024-10' });
       });
 
-      it('reports category "401_403" for a 401', async () => {
+      it('reports category "401" (not a combined 401/403 bucket) for a 401', async () => {
         vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401)));
         const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
         const onDiagnostic = vi.fn();
 
         await adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }, onDiagnostic);
 
-        expect(onDiagnostic).toHaveBeenCalledWith({ category: '401_403', apiVersionHeader: null });
+        expect(onDiagnostic).toHaveBeenCalledWith({ category: '401', apiVersionHeader: null });
       });
 
-      it('reports category "401_403" for a 403', async () => {
+      it('reports category "403" (distinct from 401) for a 403', async () => {
         vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(403)));
         const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
         const onDiagnostic = vi.fn();
 
         await adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }, onDiagnostic);
 
-        expect(onDiagnostic).toHaveBeenCalledWith({ category: '401_403', apiVersionHeader: null });
+        expect(onDiagnostic).toHaveBeenCalledWith({ category: '403', apiVersionHeader: null });
       });
 
       it('reports category "404" for an unknown shop domain', async () => {
