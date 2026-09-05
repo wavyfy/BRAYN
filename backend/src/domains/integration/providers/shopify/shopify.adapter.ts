@@ -21,6 +21,13 @@ import type { NormalizedCollect, NormalizedCollection } from '../../../commerce/
 import type { Env } from '../../../../config/env.schema';
 
 const SHOPIFY_API_VERSION = '2024-10';
+
+/** Non-sensitive classification of a verifyConnection() outcome (doc 20 Part 20) — never a token/domain/body. */
+export interface ShopifyConnectionCheckDiagnostic {
+  category: '200' | '401_403' | '404' | 'other_4xx' | 'server_error' | 'network_error';
+  apiVersionHeader: string | null;
+}
+
 const CUSTOMERS_PAGE_SIZE = 250;
 const PRODUCTS_PAGE_SIZE = 250;
 const ORDERS_PAGE_SIZE = 250;
@@ -226,8 +233,20 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
    * Smallest real Shopify API call that proves the token actually works:
    * GET shop.json, the same request Shopify's own docs use as the
    * canonical "is this token valid" check.
+   *
+   * `onDiagnostic` (doc 20 Part 20) is an optional, fingerprint-safe hook
+   * — a status-code *category* plus the non-sensitive `X-Shopify-API-Version`
+   * response header, never the body/token/domain. Existing callers
+   * (`connectViaClientCredentials`) don't pass it, so this parameter changes
+   * nothing about their behavior; `ShopifyOAuthService.handleCallback` passes
+   * one so its own failure log can distinguish *why* verification failed
+   * (401/403 vs 404 vs 5xx vs network error) instead of a single opaque
+   * boolean, without ever logging a credential or response body.
    */
-  async verifyConnection(credentials: Record<string, string>): Promise<boolean> {
+  async verifyConnection(
+    credentials: Record<string, string>,
+    onDiagnostic?: (diagnostic: ShopifyConnectionCheckDiagnostic) => void,
+  ): Promise<boolean> {
     const { shopDomain, accessToken } = credentials;
     if (!shopDomain || !accessToken || !SHOPIFY_DOMAIN_PATTERN.test(shopDomain)) {
       // A malformed domain is the merchant having entered something wrong —
@@ -242,20 +261,29 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
       });
     } catch (error) {
       // Network/DNS failure — unclassified, not an ordinary "bad credentials" outcome.
+      onDiagnostic?.({ category: 'network_error', apiVersionHeader: null });
       throw new ProviderError(
         `Could not reach Shopify: ${error instanceof Error ? error.message : 'unknown network error'}.`,
       );
     }
 
-    // 4xx (401 bad token, 404 unknown shop domain, ...) is the merchant having
+    const apiVersionHeader = response.headers.get('x-shopify-api-version');
+
+    // 4xx (401/403 bad token, 404 unknown shop domain, ...) is the merchant having
     // entered something wrong — an ordinary rejection, not a thrown error.
     if (response.status >= 400 && response.status < 500) {
+      onDiagnostic?.({
+        category: response.status === 401 || response.status === 403 ? '401_403' : response.status === 404 ? '404' : 'other_4xx',
+        apiVersionHeader,
+      });
       return false;
     }
     if (!response.ok) {
+      onDiagnostic?.({ category: 'server_error', apiVersionHeader });
       throw new ProviderError(`Shopify connection check failed with status ${response.status}.`);
     }
 
+    onDiagnostic?.({ category: '200', apiVersionHeader });
     return true;
   }
 

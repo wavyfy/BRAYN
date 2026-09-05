@@ -16,6 +16,7 @@ import {
   SHOPIFY_DOMAIN_PATTERN,
   ShopifyAdapter,
 } from './shopify.adapter';
+import type { ShopifyConnectionCheckDiagnostic } from './shopify.adapter';
 import type { Env } from '../../../../config/env.schema';
 
 /** Exactly what ShopifyAdapter's fetchCustomers/fetchProducts/fetchOrders read (doc 20 — request only what's used). */
@@ -262,9 +263,20 @@ export class ShopifyOAuthService {
 
     const credentials = { shopDomain: shop, accessToken };
 
-    const verified = await this.shopifyAdapter.verifyConnection(credentials).catch(() => false);
+    // Diagnostic only (doc 20 Part 20) — a status-code category + the non-sensitive
+    // X-Shopify-API-Version header, never the token/domain/response body. Captured via
+    // the callback since verifyConnection() only returns/throws a boolean either way.
+    let connectionCheck: ShopifyConnectionCheckDiagnostic | undefined;
+    const verified = await this.shopifyAdapter
+      .verifyConnection(credentials, (diagnostic) => {
+        connectionCheck = diagnostic;
+      })
+      .catch(() => false);
     if (!verified) {
-      this.logger.event('error', 'Shopify OAuth callback: post-exchange verification failed', 'ShopifyOAuth', { workspaceId: state.workspaceId });
+      this.logger.event('error', 'Shopify OAuth callback: post-exchange verification failed', 'ShopifyOAuth', {
+        workspaceId: state.workspaceId,
+        connectionCheck: connectionCheck ?? { category: 'unknown', apiVersionHeader: null },
+      });
       return `${integrationsUrl}?shopify=error&reason=verification_failed`;
     }
 
