@@ -10,9 +10,42 @@
  * ProviderAdapter (Phase 3) preceded ShopifyAdapter (Phase 4).
  */
 
+/**
+ * One tool the model may call this turn (doc14 Tool Architecture — "Name,
+ * Purpose, Input schema"). Provider-neutral: `parameters` is a plain JSON
+ * Schema object, mapped to whatever shape the concrete provider's function-
+ * calling API expects (see OpenAiAdapter). Output schema/permission/side-
+ * effects/validation/failure-behaviour — the rest of doc14's per-tool
+ * contract — are the tool owner's concern (ai-agents domain), not the
+ * Gateway's; the Gateway only ever forwards `name`/`description`/`parameters`
+ * to the model.
+ */
+export interface AiToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+/**
+ * A tool invocation the model requested instead of (or before) a final
+ * answer (doc12 AI Request Lifecycle — "Response OR Tool Selection").
+ * `arguments` is the raw JSON string the model produced — parsing/
+ * validating it is the tool executor's job, not the Gateway's.
+ */
+export interface AiToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
 export interface AiMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  /** Empty when an `assistant` message is pure tool call(s) with no accompanying text. */
   content: string;
+  /** Only on an `assistant` message that requested tool call(s) this turn. */
+  toolCalls?: AiToolCall[];
+  /** Only on a `tool` message — the `AiToolCall.id` this result answers. */
+  toolCallId?: string;
 }
 
 export interface AiGenerateRequest {
@@ -23,6 +56,20 @@ export interface AiGenerateRequest {
    * decision), applied by the concrete provider when this is omitted.
    */
   model?: string;
+  /**
+   * Which AI capability/agent issued this call (doc 12 — AI Observability
+   * "Agent/capability"). No caller sets this yet — Phase 12/13 agents
+   * don't exist — so it stays optional and unset rather than a Phase-11
+   * placeholder value. Present now purely so AiGatewayService has a field
+   * to log once a caller supplies it.
+   */
+  capability?: string;
+  /**
+   * Tools the model may call this turn (doc14 Tool Architecture). Omitted
+   * or empty means no tool-calling — existing Phase 11/12 steps 1-5
+   * callers are unaffected since they never set this field.
+   */
+  tools?: AiToolDefinition[];
 }
 
 /**
@@ -38,7 +85,10 @@ export interface AiUsage {
 }
 
 export interface AiGenerateResult {
+  /** Empty when the model chose to call tool(s) instead of answering — check `toolCalls` first. */
   content: string;
+  /** Present when the model requested tool call(s) this turn (doc12 — "Response OR Tool Call"). The caller executes them and calls `generate()` again with the results appended as `tool` messages. */
+  toolCalls?: AiToolCall[];
   /** The model that actually produced this result (echoes request.model, or the provider's configured default). */
   model: string;
   /** Which provider served this result (doc 12 — Prompt & Model Versioning, AI Observability both track "Provider"). */

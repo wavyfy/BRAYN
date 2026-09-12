@@ -19,6 +19,8 @@ import { IntelligenceEnginesModule } from './domains/intelligence-engines/intell
 import { DashboardModule } from './domains/dashboard/dashboard.module';
 import { MerchantKnowledgeModule } from './domains/merchant-knowledge/merchant-knowledge.module';
 import { AiModule } from './domains/ai/ai.module';
+import { AiAgentsModule } from './domains/ai-agents/ai-agents.module';
+import { AiActionControlModule } from './domains/ai-action-control/ai-action-control.module';
 import { ConversationModule } from './domains/conversation/conversation.module';
 import { AutomationModule } from './domains/automation/automation.module';
 
@@ -41,6 +43,8 @@ import { AutomationModule } from './domains/automation/automation.module';
     DashboardModule,
     MerchantKnowledgeModule,
     AiModule,
+    AiAgentsModule,
+    AiActionControlModule,
     ConversationModule,
     AutomationModule,
   ],

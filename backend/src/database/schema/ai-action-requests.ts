@@ -1,0 +1,47 @@
+import { jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { id, workspaceId } from './columns';
+import { users } from './users';
+
+/**
+ * One immutable lifecycle record per AI/tool-initiated action request
+ * (doc19 Phase 14 — "Audit trail"; doc03 rule 7/15; doc18 AI Reliability —
+ * "Action audit trail"). Written once, by `AiActionControlService`, after
+ * the request reaches a terminal outcome — never updated afterward (no
+ * `updatedAt`, same convention as `protected_data_access_log`). Phase 1
+ * has no genuine async gap between "action requested" and "outcome known"
+ * (every registered action executes synchronously, and nothing yet grants
+ * a pending approval later — see AiActionControlService's doc comment), so
+ * one row already carries the full lifecycle rather than needing updates.
+ *
+ * Deliberately metadata-only: `inputSummary`/`resultSummary` must never
+ * carry raw customer PII or message content (doc18 Logging) — callers pass
+ * only small, already-safe identifiers/counts, the same discipline
+ * `AiGatewayService` applies to prompts/completions.
+ */
+export const aiActionRequests = pgTable('ai_action_requests', {
+  id: id(),
+  workspaceId: workspaceId(),
+  /** Internal `users.id` the action was performed on behalf of — not the Clerk external sub. */
+  actorUserId: uuid('actor_user_id')
+    .notNull()
+    .references(() => users.id),
+  /** Snapshot of the actor's workspace role at request time — roles can change later; this reflects what it was then. */
+  actorRole: text('actor_role', { enum: ['owner', 'admin', 'marketing', 'support', 'analyst'] }).notNull(),
+  /** Registered action name, e.g. 'recommendation.dismiss' (doc14 Tool Architecture — "Name"). */
+  action: text('action').notNull(),
+  riskLevel: text('risk_level', { enum: ['low', 'medium', 'high'] }).notNull(),
+  permissionDecision: text('permission_decision', { enum: ['permitted', 'denied'] }),
+  approvalState: text('approval_state', { enum: ['not_required', 'pending', 'approved', 'denied'] }).notNull(),
+  executionStatus: text('execution_status', {
+    enum: ['blocked_validation', 'blocked_permission', 'blocked_approval', 'executed', 'failed'],
+  }).notNull(),
+  /** Small, non-sensitive input identifiers only (e.g. `{ recommendationId }`) — never raw customer content. */
+  inputSummary: jsonb('input_summary'),
+  /** Small, non-sensitive result shape on success (e.g. `{ recommendationId, state }`). Null unless executed. */
+  resultSummary: jsonb('result_summary'),
+  /** Set only when executionStatus is 'blocked_validation' or 'failed'. */
+  failureReason: text('failure_reason'),
+  /** Correlates back to the originating request's log lines (doc18 Correlation & Traceability). */
+  correlationId: text('correlation_id').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});

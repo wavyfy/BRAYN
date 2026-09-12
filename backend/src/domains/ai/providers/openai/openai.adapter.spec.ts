@@ -139,6 +139,91 @@ describe('OpenAiAdapter', () => {
     await expect(adapter.generate(request)).rejects.toThrow(/OpenAI returned an error: model overloaded/);
   });
 
+  describe('tool calling (doc19 Phase 12 step 6)', () => {
+    it('omits tools from the request when none are supplied (existing steps 1-5 behavior unchanged)', async () => {
+      mockCreate.mockResolvedValue({ output_text: 'hello', model: 'gpt-5.6-luna' });
+      const adapter = new OpenAiAdapter(makeConfig({ OPENAI_API_KEY: 'sk-test' }), makeLogger());
+
+      await adapter.generate(request);
+
+      const call = mockCreate.mock.calls[0][0] as Record<string, unknown>;
+      expect(call).not.toHaveProperty('tools');
+    });
+
+    it('maps AiToolDefinition[] to the Responses API function-tool shape', async () => {
+      mockCreate.mockResolvedValue({ output_text: 'hello', model: 'gpt-5.6-luna' });
+      const adapter = new OpenAiAdapter(makeConfig({ OPENAI_API_KEY: 'sk-test' }), makeLogger());
+
+      await adapter.generate({
+        ...request,
+        tools: [{ name: 'get_thing', description: 'Gets a thing.', parameters: { type: 'object', properties: {} } }],
+      });
+
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tools: [
+            {
+              type: 'function',
+              name: 'get_thing',
+              description: 'Gets a thing.',
+              parameters: { type: 'object', properties: {} },
+              strict: false,
+            },
+          ],
+        }),
+      );
+    });
+
+    it('returns toolCalls when the model requests a function call instead of a final answer', async () => {
+      mockCreate.mockResolvedValue({
+        output_text: '',
+        model: 'gpt-5.6-luna',
+        output: [{ type: 'function_call', call_id: 'call_1', name: 'get_thing', arguments: '{"id":"123"}' }],
+      });
+      const adapter = new OpenAiAdapter(makeConfig({ OPENAI_API_KEY: 'sk-test' }), makeLogger());
+
+      const result = await adapter.generate({
+        ...request,
+        tools: [{ name: 'get_thing', description: 'Gets a thing.', parameters: {} }],
+      });
+
+      expect(result.toolCalls).toEqual([{ id: 'call_1', name: 'get_thing', arguments: '{"id":"123"}' }]);
+      expect(result.content).toBe('');
+    });
+
+    it('omits toolCalls from the result when the model returns only text', async () => {
+      mockCreate.mockResolvedValue({ output_text: 'hi', model: 'gpt-5.6-luna', output: [] });
+      const adapter = new OpenAiAdapter(makeConfig({ OPENAI_API_KEY: 'sk-test' }), makeLogger());
+
+      const result = await adapter.generate(request);
+
+      expect(result.toolCalls).toBeUndefined();
+    });
+
+    it('maps a tool result message to a function_call_output input item, replaying the prior function_call', async () => {
+      mockCreate.mockResolvedValue({ output_text: 'final answer', model: 'gpt-5.6-luna' });
+      const adapter = new OpenAiAdapter(makeConfig({ OPENAI_API_KEY: 'sk-test' }), makeLogger());
+
+      await adapter.generate({
+        messages: [
+          { role: 'user', content: 'question' },
+          { role: 'assistant', content: '', toolCalls: [{ id: 'call_1', name: 'get_thing', arguments: '{}' }] },
+          { role: 'tool', content: '{"result":"ok"}', toolCallId: 'call_1' },
+        ],
+      });
+
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: [
+            { role: 'user', content: 'question' },
+            { type: 'function_call', call_id: 'call_1', name: 'get_thing', arguments: '{}' },
+            { type: 'function_call_output', call_id: 'call_1', output: '{"result":"ok"}' },
+          ],
+        }),
+      );
+    });
+  });
+
   it('never logs the configured API key', () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

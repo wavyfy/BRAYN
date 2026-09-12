@@ -1,20 +1,70 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI, { APIConnectionError, APIConnectionTimeoutError, InternalServerError, RateLimitError } from 'openai';
+import type { Responses } from 'openai/resources/responses/responses';
 import { ProviderError } from '../../../../common/errors/app-error';
 import { withRetry } from '../../../../common/async/retry';
 import { StructuredLoggerService } from '../../../../common/logging/structured-logger.service';
-import type { AiGenerateRequest, AiGenerateResult, AiProvider } from '../../ai-provider.interface';
+import type { AiGenerateRequest, AiGenerateResult, AiMessage, AiProvider, AiToolDefinition } from '../../ai-provider.interface';
 import type { Env } from '../../../../config/env.schema';
 
 /**
- * A text-generation call is not agentic/tool-running — bounded well under
- * the SDK's 10-minute default so a stuck request fails fast instead of
- * hanging a caller. No locked number exists for this in doc 18
- * (Performance Requirements only sets a qualitative "handle timeout ...
- * gracefully" target) — 30s is a judgment call, not a canonical decision.
+ * Each individual call is still a single bounded request-response round
+ * trip — doc14's multi-turn tool loop (Tool Selection → Execution → Result
+ * → back to the model) is orchestrated by the caller across multiple
+ * `generate()` calls, not by this adapter or a stuck long-lived request, so
+ * the per-call timeout stays unchanged. No locked number exists for this in
+ * doc 18 (Performance Requirements only sets a qualitative "handle timeout
+ * ... gracefully" target) — 30s is a judgment call, not a canonical
+ * decision.
  */
 const REQUEST_TIMEOUT_MS = 30_000;
+
+/** doc14 Tool Architecture → OpenAI Responses API function-tool shape. `strict: false` — BRAYN tool schemas aren't authored as OpenAI's strict-mode subset (doc19 Phase 12 step 6 scope: reuse existing schemas, don't redesign them to fit a stricter dialect). */
+function toResponsesTools(tools: AiToolDefinition[] | undefined): Responses.Tool[] | undefined {
+  if (!tools || tools.length === 0) {
+    return undefined;
+  }
+  return tools.map(
+    (tool): Responses.FunctionTool => ({
+      type: 'function',
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+      strict: false,
+    }),
+  );
+}
+
+/**
+ * Maps BRAYN's provider-neutral message history to Responses API input
+ * items. A `tool` message becomes a `function_call_output` item; an
+ * `assistant` message carrying `toolCalls` becomes one `function_call` item
+ * per call (replaying the model's own prior tool request, required so a
+ * follow-up turn's history stays consistent — Responses API tool-output
+ * items must reference a `function_call` item already in the input/output).
+ */
+function toResponsesInput(messages: AiMessage[]): Responses.ResponseInputItem[] {
+  const items: Responses.ResponseInputItem[] = [];
+  for (const message of messages) {
+    if (message.role === 'tool') {
+      items.push({ type: 'function_call_output', call_id: message.toolCallId ?? '', output: message.content });
+      continue;
+    }
+    if (message.toolCalls && message.toolCalls.length > 0) {
+      for (const call of message.toolCalls) {
+        items.push({ type: 'function_call', call_id: call.id, name: call.name, arguments: call.arguments });
+      }
+      continue;
+    }
+    items.push({ role: message.role, content: message.content });
+  }
+  return items;
+}
+
+function isFunctionCall(item: Responses.ResponseOutputItem): item is Responses.ResponseFunctionToolCall {
+  return item.type === 'function_call';
+}
 
 /**
  * Rate limits, transient network failures, and 5xx are retryable (doc 18
@@ -76,10 +126,12 @@ export class OpenAiAdapter implements AiProvider {
     const client = this.client;
 
     const model = request.model ?? this.defaultModel;
+    const tools = toResponsesTools(request.tools);
 
-    const response = await withRetry(() => client.responses.create({ model, input: request.messages }), {
-      shouldRetry: isTransientOpenAiError,
-    }).catch((error: unknown) => {
+    const response = await withRetry(
+      () => client.responses.create({ model, input: toResponsesInput(request.messages), ...(tools ? { tools } : {}) }),
+      { shouldRetry: isTransientOpenAiError },
+    ).catch((error: unknown) => {
       // errorType only — never the request/response body, which may carry prompt content (doc 18 Logging).
       this.logger.event('error', 'OpenAI request failed', 'OpenAiAdapter', {
         errorType: error instanceof Error ? error.constructor.name : typeof error,
@@ -91,8 +143,14 @@ export class OpenAiAdapter implements AiProvider {
       throw new ProviderError(`OpenAI returned an error: ${response.error.message}`);
     }
 
+    const functionCalls = (response.output ?? []).filter(isFunctionCall);
+
     return {
       content: response.output_text,
+      toolCalls:
+        functionCalls.length > 0
+          ? functionCalls.map((call) => ({ id: call.call_id, name: call.name, arguments: call.arguments }))
+          : undefined,
       model: response.model,
       provider: this.name,
       usage: response.usage
