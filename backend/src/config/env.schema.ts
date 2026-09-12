@@ -6,8 +6,9 @@ import { z } from 'zod';
  * Only variables tied to a locked technology decision (see
  * "29. BRAYN Technology Stack, Engineering Standards & Exclusions") are
  * defined here. Variables tied to an unresolved product/architecture
- * decision (AI provider, cloud/region, billing) must not be added until
- * that decision is locked.
+ * decision (cloud/region, billing) must not be added until that decision
+ * is locked. AI provider/model policy is locked (doc 02 Pre-Implementation
+ * Decisions, Resolved) — OpenAI, default model below.
  *
  * Most external-service variables are optional at this stage: wiring them
  * into actual clients happens in the Database/Security foundation steps,
@@ -56,6 +57,17 @@ export const envSchema = z.object({
   // an OAuth route is actually invoked without them configured.
   SHOPIFY_APP_CLIENT_ID: z.string().optional(),
   SHOPIFY_APP_CLIENT_SECRET: z.string().optional(),
+
+  // AI provider — OpenAI (locked, doc 02 Pre-Implementation Decisions,
+  // doc 12 AI Architecture). Optional, same convention as
+  // SHOPIFY_APP_CLIENT_*: absent in environments that don't need a real AI
+  // call (most test runs); OpenAiAdapter fails closed if generate() is
+  // actually invoked without it configured. Non-empty when present — a
+  // blank secret is a misconfiguration, not "unset".
+  OPENAI_API_KEY: z.string().min(1).optional(),
+  // Default model — doc 12 "Model/provider selection should be
+  // configurable through the AI Gateway", never hard-coded in an adapter.
+  AI_MODEL: z.string().min(1).default('gpt-5.6-luna'),
 });
 
 export type Env = z.infer<typeof envSchema>;

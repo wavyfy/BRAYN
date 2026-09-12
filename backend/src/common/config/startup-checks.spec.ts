@@ -9,6 +9,7 @@ function makeEnv(overrides: Partial<Env>): Env {
     PORT: 3001,
     FRONTEND_URL: 'http://localhost:3000',
     BACKEND_URL: 'http://localhost:3001',
+    AI_MODEL: 'gpt-5.6-luna',
     ...overrides,
   };
 }
