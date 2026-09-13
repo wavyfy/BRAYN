@@ -27,6 +27,14 @@ const completeInputSchema = z.object({
 export const RECOMMENDATION_DISMISS_ACTION = 'recommendation.dismiss';
 export const RECOMMENDATION_COMPLETE_ACTION = 'recommendation.complete';
 
+/**
+ * Defined here (not in `ai-action-control.module.ts`) so both the module
+ * and `AiActionControlService` can import it without a module<->service
+ * circular import — the module still re-exports it unchanged for existing
+ * importers (e.g. `WriteToolsService`).
+ */
+export const ACTION_REGISTRY = Symbol('ACTION_REGISTRY');
+
 export function buildActionRegistry(recommendationService: RecommendationService) {
   const dismiss: ActionDefinition<z.infer<typeof dismissInputSchema>, Awaited<ReturnType<RecommendationService['dismiss']>>> = {
     name: RECOMMENDATION_DISMISS_ACTION,
@@ -54,3 +62,8 @@ export function buildActionRegistry(recommendationService: RecommendationService
 }
 
 export type ActionRegistry = ReturnType<typeof buildActionRegistry>;
+
+/** Doc19 Phase 14 Approval-Grant Workflow — `AiActionControlService.approve()`/`deny()` only have a stored action-name string (`aiActionRequests.action`) to resume from, not a typed reference; this resolves it back to the registered `ActionDefinition`. */
+export function findActionByName(registry: ActionRegistry, name: string): ActionDefinition<unknown, unknown> | undefined {
+  return Object.values(registry).find((definition) => definition.name === name) as ActionDefinition<unknown, unknown> | undefined;
+}

@@ -5,9 +5,9 @@ import { MerchantKnowledgeModule } from '../merchant-knowledge/merchant-knowledg
 import { RecommendationService } from '../intelligence-engines/recommendation.service';
 import { AiActionControlService } from './ai-action-control.service';
 import { AiActionRequestController } from './ai-action-request.controller';
-import { buildActionRegistry } from './actions.registry';
+import { ACTION_REGISTRY, buildActionRegistry } from './actions.registry';
 
-export const ACTION_REGISTRY = Symbol('ACTION_REGISTRY');
+export { ACTION_REGISTRY };
 
 /**
  * Doc19 Phase 14 Slice 1 — AI Action Control. Sits architecturally between
@@ -29,12 +29,12 @@ export const ACTION_REGISTRY = Symbol('ACTION_REGISTRY');
   imports: [WorkspaceModule, IntelligenceEnginesModule, MerchantKnowledgeModule],
   controllers: [AiActionRequestController],
   providers: [
-    AiActionControlService,
     {
       provide: ACTION_REGISTRY,
       useFactory: (recommendationService: RecommendationService) => buildActionRegistry(recommendationService),
       inject: [RecommendationService],
     },
+    AiActionControlService,
   ],
   exports: [AiActionControlService, ACTION_REGISTRY],
 })

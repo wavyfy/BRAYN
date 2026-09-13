@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { apiFetch, ApiError } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ApiErrorState } from '@/components/api-error-state';
+import { AiActionDecisionButtons } from './ai-action-decision-buttons';
 
 type AiActionRequest = {
   id: string;
@@ -9,7 +10,7 @@ type AiActionRequest = {
   riskLevel: 'low' | 'medium' | 'high';
   permissionDecision: 'permitted' | 'denied' | null;
   approvalState: 'not_required' | 'pending' | 'approved' | 'denied';
-  executionStatus: 'blocked_validation' | 'blocked_permission' | 'blocked_approval' | 'executed' | 'failed';
+  executionStatus: 'blocked_validation' | 'blocked_permission' | 'blocked_approval' | 'duplicate' | 'executed' | 'failed';
   failureReason: string | null;
   createdAt: string;
 };
@@ -20,6 +21,7 @@ const statusStyles: Record<AiActionRequest['executionStatus'], string> = {
   blocked_permission: 'bg-amber-50 text-amber-700 ring-amber-600/20',
   blocked_approval: 'bg-amber-50 text-amber-700 ring-amber-600/20',
   blocked_validation: 'bg-slate-100 text-slate-700 ring-slate-500/20',
+  duplicate: 'bg-slate-100 text-slate-700 ring-slate-500/20',
 };
 
 const riskStyles: Record<AiActionRequest['riskLevel'], string> = {
@@ -40,15 +42,19 @@ function describeOutcome(request: AiActionRequest): string {
       return 'Blocked — approval required';
     case 'blocked_validation':
       return 'Blocked — invalid input';
+    case 'duplicate':
+      return 'Duplicate — already requested';
   }
 }
 
 /**
- * Doc19 Phase 14 Slice 1 Visible Result — "Merchant can clearly see when an
- * AI action: Can execute automatically / Requires approval / Is blocked."
- * Read-only: nothing in this slice registers a live AI/tool caller yet
- * (Phase 12 Step 7 / Phase 13 are explicitly out of scope here), so this
- * list is expected to read empty until one exists — see this slice's
+ * Doc19 Phase 14 Visible Result — "Merchant can clearly see when an AI
+ * action: Can execute automatically / Requires approval / Is blocked."
+ * A `pending` row additionally gets Approve/Deny (doc19 Phase 14
+ * Approval-Grant Workflow; doc24 AI Action UX). No registered production
+ * action currently sets `requiresApproval: true` (Phase 12 Step 7's two
+ * actions are both low-risk), so this list/the Approve/Deny controls are
+ * expected to read empty/unused until one exists — see this slice's
  * completion report.
  */
 export default async function AiActionsPage({ params }: { params: { workspaceId: string } }) {
@@ -96,6 +102,7 @@ export default async function AiActionsPage({ params }: { params: { workspaceId:
                   </span>
                 </div>
                 {request.failureReason && <p className="mt-1 text-slate-600">{request.failureReason}</p>}
+                {request.approvalState === 'pending' && <AiActionDecisionButtons workspaceId={workspaceId} requestId={request.id} />}
               </li>
             ))}
           </ul>

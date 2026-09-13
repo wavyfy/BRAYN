@@ -211,6 +211,13 @@
       "when": 1789234585990,
       "tag": "0029_luxuriant_nehzno",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1789306896869,
+      "tag": "0030_volatile_red_hulk",
+      "breakpoints": true
     }
   ]
 }
