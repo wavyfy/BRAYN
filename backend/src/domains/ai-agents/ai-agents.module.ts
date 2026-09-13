@@ -4,9 +4,11 @@ import { AiModule } from '../ai/ai.module';
 import { CustomerIntelligenceModule } from '../customer-intelligence/customer-intelligence.module';
 import { IntelligenceEnginesModule } from '../intelligence-engines/intelligence-engines.module';
 import { MerchantKnowledgeModule } from '../merchant-knowledge/merchant-knowledge.module';
+import { AiActionControlModule } from '../ai-action-control/ai-action-control.module';
 import { MerchantBusinessAnalystService } from './merchant-business-analyst.service';
 import { MerchantBusinessAnalystController } from './merchant-business-analyst.controller';
 import { ReadToolsService } from './read-tools.service';
+import { WriteToolsService } from './write-tools.service';
 
 /**
  * Owns: Merchant Business Analyst, Sales Agent, Support Agent, agent
@@ -38,12 +40,16 @@ import { ReadToolsService } from './read-tools.service';
  * provides MerchantKnowledgeService (doc19 Phase 12 step 4 — "Merchant
  * knowledge integration"). `ReadToolsService` (doc19 Phase 12 step 6 —
  * "Controlled read tools") reuses CustomerIntelligenceModule too — no new
- * module import needed.
+ * module import needed. `AiActionControlModule` (Phase 14, already
+ * verified) is imported for `WriteToolsService` (doc19 Phase 12 step 7 —
+ * "Controlled write tools") — exports `AiActionControlService` and
+ * `ACTION_REGISTRY`; this domain never re-implements enforcement, it only
+ * calls into it (doc04 Rule 2).
  */
 @Module({
-  imports: [WorkspaceModule, AiModule, CustomerIntelligenceModule, IntelligenceEnginesModule, MerchantKnowledgeModule],
+  imports: [WorkspaceModule, AiModule, CustomerIntelligenceModule, IntelligenceEnginesModule, MerchantKnowledgeModule, AiActionControlModule],
   controllers: [MerchantBusinessAnalystController],
-  providers: [MerchantBusinessAnalystService, ReadToolsService],
+  providers: [MerchantBusinessAnalystService, ReadToolsService, WriteToolsService],
   exports: [MerchantBusinessAnalystService],
 })
 export class AiAgentsModule {}

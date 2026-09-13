@@ -7,10 +7,12 @@ import { RevenueOpportunityService } from '../intelligence-engines/revenue-oppor
 import { RecommendationService } from '../intelligence-engines/recommendation.service';
 import { MerchantKnowledgeService } from '../merchant-knowledge/merchant-knowledge.service';
 import { ReadToolsService, GET_CUSTOMER_ACTIVITY_HISTORY_TOOL } from './read-tools.service';
+import { WriteToolsService } from './write-tools.service';
+import { RECOMMENDATION_DISMISS_ACTION } from '../ai-action-control/actions.registry';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import { RequestContext } from '../../common/logging/request-context';
 import { DatabaseService } from '../../database/database.service';
-import { NotFoundError, ProviderError, UnauthorizedError } from '../../common/errors/app-error';
+import { ApprovalRequiredError, NotFoundError, ProviderError, UnauthorizedError } from '../../common/errors/app-error';
 import type { AiGenerateResult, AiProvider, AiToolCall } from '../ai/ai-provider.interface';
 
 const WORKSPACE_ID = 'ws_1';
@@ -101,6 +103,15 @@ function makeReadTools(overrides: Partial<ReadToolsService> = {}): ReadToolsServ
   } as unknown as ReadToolsService;
 }
 
+function makeWriteTools(overrides: Partial<WriteToolsService> = {}): WriteToolsService {
+  return {
+    availableTools: vi.fn(() => []),
+    isWriteTool: vi.fn(() => false),
+    execute: vi.fn(async () => JSON.stringify({ success: true })),
+    ...overrides,
+  } as unknown as WriteToolsService;
+}
+
 function makeDatabase() {
   const values = vi.fn(async () => undefined);
   const insert = vi.fn(() => ({ values }));
@@ -119,6 +130,7 @@ interface Deps {
   recommendation: RecommendationService;
   merchantKnowledge: MerchantKnowledgeService;
   readTools: ReadToolsService;
+  writeTools: WriteToolsService;
   database: DatabaseService;
   logger: StructuredLoggerService;
 }
@@ -132,6 +144,7 @@ function makeDeps(overrides: Partial<Deps> = {}): Deps {
     recommendation: makeRecommendation(),
     merchantKnowledge: makeMerchantKnowledge(),
     readTools: makeReadTools(),
+    writeTools: makeWriteTools(),
     database: makeDatabase().database,
     logger: makeLogger(),
     ...overrides,
@@ -147,6 +160,7 @@ function makeService(deps: Deps): MerchantBusinessAnalystService {
     deps.recommendation,
     deps.merchantKnowledge,
     deps.readTools,
+    deps.writeTools,
     deps.database,
     deps.logger,
   );

@@ -7,6 +7,7 @@ import { RevenueOpportunityService } from '../intelligence-engines/revenue-oppor
 import { RecommendationService } from '../intelligence-engines/recommendation.service';
 import { MerchantKnowledgeService } from '../merchant-knowledge/merchant-knowledge.service';
 import { ReadToolsService } from './read-tools.service';
+import { WriteToolsService } from './write-tools.service';
 import { NotFoundError } from '../../common/errors/app-error';
 import { RequestContext } from '../../common/logging/request-context';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
@@ -268,6 +269,7 @@ export class MerchantBusinessAnalystService {
     private readonly recommendation: RecommendationService,
     private readonly merchantKnowledge: MerchantKnowledgeService,
     private readonly readTools: ReadToolsService,
+    private readonly writeTools: WriteToolsService,
     private readonly database: DatabaseService,
     private readonly logger: StructuredLoggerService,
   ) {}
@@ -312,7 +314,7 @@ export class MerchantBusinessAnalystService {
       { role: 'user', content: question },
     ];
 
-    const tools = this.readTools.availableTools(actorRole, customerId);
+    const tools = [...this.readTools.availableTools(actorRole, customerId), ...this.writeTools.availableTools(actorRole, customerId)];
     const answer = await this.runWithTools(messages, tools, workspaceId, customerId);
 
     if (customer) {
@@ -363,10 +365,21 @@ export class MerchantBusinessAnalystService {
    * doc14 "failure behaviour" is a per-tool concern, not "crash the whole
    * answer"). The model sees a JSON error object as the tool's own output
    * and can explain the limitation rather than the caller getting a 5xx
-   * for something a merchant's phrasing triggered.
+   * for something a merchant's phrasing triggered. This includes
+   * `ApprovalRequiredError`/`UnauthorizedError` from a write tool going
+   * through `AiActionControlService` — same failure-handling path as any
+   * other tool error, no special-casing (doc19 Phase 12 step 7).
+   *
+   * Dispatch: a write tool name is routed to `WriteToolsService`; anything
+   * else still falls through to `ReadToolsService` exactly as before
+   * (unchanged read-tool behaviour, including its own "unknown tool"
+   * rejection for a genuinely unrecognized name).
    */
   private async executeTool(call: AiToolCall, workspaceId: string, customerId: string): Promise<string> {
     try {
+      if (this.writeTools.isWriteTool(call.name)) {
+        return await this.writeTools.execute(call, workspaceId, customerId);
+      }
       return await this.readTools.execute(call, workspaceId, customerId);
     } catch (error) {
       return JSON.stringify({ error: error instanceof Error ? error.message : 'Tool execution failed.' });
