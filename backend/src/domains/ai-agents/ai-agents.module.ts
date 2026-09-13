@@ -9,6 +9,8 @@ import { MerchantBusinessAnalystService } from './merchant-business-analyst.serv
 import { MerchantBusinessAnalystController } from './merchant-business-analyst.controller';
 import { ReadToolsService } from './read-tools.service';
 import { WriteToolsService } from './write-tools.service';
+import { SalesAgentService } from './sales-agent.service';
+import { SupportAgentService } from './support-agent.service';
 
 /**
  * Owns: Merchant Business Analyst, Sales Agent, Support Agent, agent
@@ -18,12 +20,14 @@ import { WriteToolsService } from './write-tools.service';
  * "AI Architecture" vs "AI Agents, Tools & Execution" are separate
  * owners; doc04 Rule 1 — One Owner).
  *
- * Phase 12 step 1 ("Basic merchant questions" — doc19): only the
- * Merchant Business Analyst's narrowest capability exists so far — no
- * customer context, no knowledge grounding, no tools. Sales/Support
- * agents and the tool registry land in later phases per doc19; they'll
- * add their own controller/service to this same module, matching how
- * IntelligenceEnginesModule hosts multiple sibling capabilities.
+ * Doc19 Phase 13 — `SalesAgentService`/`SupportAgentService` land here too
+ * (doc04 — same owning domain as Merchant Business Analyst, matching how
+ * `IntelligenceEnginesModule` hosts multiple sibling capabilities). Both
+ * are deliberately unreachable from outside this module for now — no
+ * controller, not exported — since their canonical trigger (a real
+ * customer message via doc19 Phase 9 item 2 / WAPon) doesn't exist yet;
+ * see each service's own doc comment. Reachable only through direct
+ * injection in tests until that channel is wired.
  *
  * Imports AiModule for AiGatewayService (never calls a provider
  * directly — doc12 AI Boundary), WorkspaceModule for
@@ -49,7 +53,7 @@ import { WriteToolsService } from './write-tools.service';
 @Module({
   imports: [WorkspaceModule, AiModule, CustomerIntelligenceModule, IntelligenceEnginesModule, MerchantKnowledgeModule, AiActionControlModule],
   controllers: [MerchantBusinessAnalystController],
-  providers: [MerchantBusinessAnalystService, ReadToolsService, WriteToolsService],
+  providers: [MerchantBusinessAnalystService, ReadToolsService, WriteToolsService, SalesAgentService, SupportAgentService],
   exports: [MerchantBusinessAnalystService],
 })
 export class AiAgentsModule {}
