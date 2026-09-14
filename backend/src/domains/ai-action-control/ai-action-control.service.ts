@@ -179,6 +179,106 @@ export class AiActionControlService {
   }
 
   /**
+   * Doc19 Phase 15 item 7 — AI Action Control integration for Business
+   * Action Automation (doc16 Core Flow: "Automation → Conditions → AI
+   * Action Control/Approval → Action Executor"). Automation is
+   * system-triggered (an `@OnEvent` handler, not an authenticated HTTP
+   * request) — there is no human actor to check a role against, so unlike
+   * `execute()` this skips the `allowedRoles` permission check entirely.
+   * The automation's own `enabled` flag and workspace scope (already
+   * enforced by `AutomationService` before this is ever called) is the
+   * authorization boundary here, not a role. Every other gate still
+   * applies unchanged: input validation, the policy-check boundary, the
+   * `requiresApproval` gate (future-proofs a later medium/high-risk
+   * automation action — doc16 draws automation through approval too),
+   * idempotency, execution, and audit.
+   *
+   * Does not use `RequestContext` at all (an event handler has no
+   * guaranteed request context to read) — `correlationId` is supplied by
+   * the caller instead (e.g. the triggering `DomainEvent`'s own `id`,
+   * doc18 Correlation & Traceability), and the resulting audit row is
+   * written with `actorUserId`/`actorRole` both null (doc19 Phase 15
+   * item 7 — "system-initiated automation requests have nullable
+   * actorUserId/actorRole").
+   */
+  async executeForAutomation<TInput, TResult>(
+    definition: ActionDefinition<TInput, TResult>,
+    rawInput: unknown,
+    context: ActionExecutionContext,
+    idempotencyKey: string,
+    correlationId: string,
+  ): Promise<TResult> {
+    const parsed = definition.inputSchema.safeParse(rawInput);
+    if (!parsed.success) {
+      await this.auditSystem(context, correlationId, {
+        action: definition.name,
+        riskLevel: definition.riskLevel,
+        permissionDecision: null,
+        approvalState: 'not_required',
+        executionStatus: 'blocked_validation',
+        inputSummary: null,
+        failureReason: 'Invalid input.',
+      });
+      throw new ValidationError(`Invalid input for action "${definition.name}".`);
+    }
+
+    // Policy-check boundary — same as execute() (doc13/doc14).
+    await this.merchantKnowledge.list(context.workspaceId, 'policy');
+
+    if (definition.requiresApproval) {
+      await this.auditSystem(context, correlationId, {
+        action: definition.name,
+        riskLevel: definition.riskLevel,
+        permissionDecision: null,
+        approvalState: 'pending',
+        executionStatus: 'blocked_approval',
+        inputSummary: parsed.data,
+      });
+      throw new ApprovalRequiredError(`Action "${definition.name}" requires merchant approval before it can execute.`);
+    }
+
+    const namespacedKey = `ai-action-automation:${context.workspaceId}:${definition.name}:${idempotencyKey}`;
+    const outcome = await this.runExecution(definition, parsed.data, context, namespacedKey);
+
+    if (outcome.executionStatus === 'duplicate') {
+      await this.auditSystem(context, correlationId, {
+        action: definition.name,
+        riskLevel: definition.riskLevel,
+        permissionDecision: null,
+        approvalState: 'not_required',
+        executionStatus: 'duplicate',
+        inputSummary: parsed.data,
+        failureReason: outcome.failureReason,
+      });
+      throw new ConflictError(`Action "${definition.name}" was already requested with this idempotency key.`);
+    }
+
+    if (outcome.executionStatus === 'failed') {
+      await this.auditSystem(context, correlationId, {
+        action: definition.name,
+        riskLevel: definition.riskLevel,
+        permissionDecision: null,
+        approvalState: 'not_required',
+        executionStatus: 'failed',
+        inputSummary: parsed.data,
+        failureReason: outcome.failureReason,
+      });
+      throw outcome.error;
+    }
+
+    await this.auditSystem(context, correlationId, {
+      action: definition.name,
+      riskLevel: definition.riskLevel,
+      permissionDecision: null,
+      approvalState: 'not_required',
+      executionStatus: 'executed',
+      inputSummary: parsed.data,
+      resultSummary: outcome.resultSummary,
+    });
+    return outcome.result;
+  }
+
+  /**
    * Doc19 Phase 14 Approval-Grant Workflow. Does NOT re-enter `execute()` —
    * that would re-check `requiresApproval` (immediate re-throw) and the
    * *requester's* `allowedRoles` (wrong permission: doc28 draws "AI action
@@ -355,6 +455,38 @@ export class AiActionControlService {
         resultSummary: fields.resultSummary ?? null,
         failureReason: fields.failureReason ?? null,
         correlationId: store.correlationId,
+      });
+    } catch (error) {
+      this.logger.event('error', 'Failed to record AI action audit', 'AiActionControlService', {
+        errorType: error instanceof Error ? error.constructor.name : typeof error,
+      });
+    }
+  }
+
+  /**
+   * `audit()`'s counterpart for `executeForAutomation()` — deliberately
+   * does not read `RequestContext` (an event handler has no guaranteed
+   * request context, and even where one exists it would belong to
+   * whatever unrelated request happened to trigger this tick's event
+   * loop, not to this action). `actorUserId`/`actorRole` are written null
+   * (doc19 Phase 15 item 7), `correlationId` comes from the caller.
+   */
+  private async auditSystem(context: ActionExecutionContext, correlationId: string, fields: AuditFields): Promise<void> {
+    try {
+      await this.database.client.insert(aiActionRequests).values({
+        workspaceId: context.workspaceId,
+        customerId: context.customerId ?? null,
+        actorUserId: null,
+        actorRole: null,
+        action: fields.action,
+        riskLevel: fields.riskLevel,
+        permissionDecision: fields.permissionDecision,
+        approvalState: fields.approvalState,
+        executionStatus: fields.executionStatus,
+        inputSummary: fields.inputSummary,
+        resultSummary: fields.resultSummary ?? null,
+        failureReason: fields.failureReason ?? null,
+        correlationId,
       });
     } catch (error) {
       this.logger.event('error', 'Failed to record AI action audit', 'AiActionControlService', {

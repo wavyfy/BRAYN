@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { and, desc, eq } from 'drizzle-orm';
 import { automationDefinitions } from '../../database/schema/automation-definitions';
@@ -7,7 +7,8 @@ import { DatabaseService } from '../../database/database.service';
 import { NotFoundError } from '../../common/errors/app-error';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import type { DomainEvent } from '../../common/events/domain-event';
-import { RecommendationService } from '../intelligence-engines/recommendation.service';
+import { AiActionControlService } from '../ai-action-control/ai-action-control.service';
+import { ACTION_REGISTRY, type ActionRegistry } from '../ai-action-control/actions.registry';
 import type { RevenueOpportunityCreatedPayload } from '../intelligence-engines/revenue-opportunity.service';
 import type { CreateAutomationInput } from './dto/create-automation.schema';
 import type { UpdateAutomationInput } from './dto/update-automation.schema';
@@ -24,16 +25,22 @@ interface AutomationConditions {
  *
  * - Scheduling/delay (doc19 item 5) — no automation here needs a delay;
  *   adding a scheduler before anything uses it is speculative (doc18).
- * - AI Action Control integration (doc19 item 7) — doesn't exist yet
- *   (doc19 Phase 14). `generate_recommendations` is Phase 1's only
- *   action precisely because it's read/derive-only and low-risk (doc14 —
- *   "Low risk → automatic execution where permitted"): it writes
- *   `recommendations` rows, the same effect a merchant can already
- *   trigger by hand (RecommendationService.generate), so no new
- *   authorization surface is created by automating it.
  * - Retry/recovery (doc19 item 9) — see automation-runs schema's doc
  *   comment; nothing here fails in a way retry would help with today (a
  *   thrown error means a real bug, not a transient failure).
+ *
+ * AI Action Control integration (doc19 item 7) is DONE — `runOne()` calls
+ * `AiActionControlService.executeForAutomation()` rather than
+ * `RecommendationService.generate()` directly (doc16 Core Flow:
+ * "Automation → Conditions → AI Action Control/Approval → Action
+ * Executor"). `executeForAutomation()` skips the human-role permission
+ * check `execute()` has — this listener is system-triggered, not an
+ * authenticated request, so there is no actor/role to check; the
+ * automation's own `enabled` flag + workspace scope (already the gate on
+ * `definitions` below) is the authorization boundary. Still goes through
+ * input validation, the policy-check boundary, the `requiresApproval`
+ * gate, idempotency, execution, and audit (with a null actor — doc19
+ * Phase 15 item 7).
  *
  * The `revenue_opportunity.created` listener runs in-process, in the
  * same tick as `RevenueOpportunityService.detect()` (EventBus is
@@ -44,7 +51,8 @@ interface AutomationConditions {
 export class AutomationService {
   constructor(
     private readonly database: DatabaseService,
-    private readonly recommendationService: RecommendationService,
+    private readonly aiActionControl: AiActionControlService,
+    @Inject(ACTION_REGISTRY) private readonly registry: ActionRegistry,
     private readonly logger: StructuredLoggerService,
   ) {}
 
@@ -153,7 +161,18 @@ export class AutomationService {
     }
 
     try {
-      const recommendations = await this.recommendationService.generate(workspaceId, canonicalCustomerId);
+      // Idempotency key derived from infra-assigned ids (this automation + the triggering event),
+      // never from workspaceId/action/input content (doc03 rule 5) — a genuine duplicate delivery
+      // of the same event to the same automation reuses this key and is safely de-duped;
+      // a different event or automation gets its own.
+      const idempotencyKey = `${definition.id}:${event.id}`;
+      const recommendations = await this.aiActionControl.executeForAutomation(
+        this.registry.generateRecommendations,
+        {},
+        { workspaceId, customerId: canonicalCustomerId },
+        idempotencyKey,
+        event.id,
+      );
       await this.database.client.insert(automationRuns).values({
         workspaceId,
         automationId: definition.id,

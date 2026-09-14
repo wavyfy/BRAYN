@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { AutomationService } from './automation.service';
 import type { DatabaseService } from '../../database/database.service';
 import type { StructuredLoggerService } from '../../common/logging/structured-logger.service';
-import type { RecommendationService } from '../intelligence-engines/recommendation.service';
+import type { AiActionControlService } from '../ai-action-control/ai-action-control.service';
+import type { ActionRegistry } from '../ai-action-control/actions.registry';
 import type { DomainEvent } from '../../common/events/domain-event';
 import type { RevenueOpportunityCreatedPayload } from '../intelligence-engines/revenue-opportunity.service';
 
@@ -33,6 +34,19 @@ function makeLogger() {
   return { event: vi.fn() } as unknown as StructuredLoggerService;
 }
 
+/** `executeForAutomation` is mocked at this boundary — these tests exercise `AutomationService.runOne()`'s own orchestration, not `AiActionControlService`'s internals (covered separately in `ai-action-control.service.spec.ts`). */
+function makeAiActionControl(overrides: { executeForAutomation?: (...args: unknown[]) => Promise<unknown> } = {}): AiActionControlService {
+  return {
+    executeForAutomation: vi.fn(async () => [{ id: 'rec_1' }]),
+    ...overrides,
+  } as unknown as AiActionControlService;
+}
+
+/** Opaque marker — `runOne()` only ever forwards this reference to `executeForAutomation` (mocked above), it never inspects the definition itself in these tests. */
+function makeRegistry(): ActionRegistry {
+  return { generateRecommendations: { name: 'generate_recommendations' } } as unknown as ActionRegistry;
+}
+
 function makeEvent(payload: Partial<RevenueOpportunityCreatedPayload> = {}): DomainEvent<RevenueOpportunityCreatedPayload> {
   return {
     id: 'evt_1',
@@ -61,7 +75,8 @@ describe('AutomationService', () => {
       const insert = vi.fn(() => insertChain);
       const service = new AutomationService(
         { client: { insert } } as unknown as DatabaseService,
-        {} as RecommendationService,
+        makeAiActionControl(),
+        makeRegistry(),
         makeLogger(),
       );
 
@@ -79,7 +94,8 @@ describe('AutomationService', () => {
       const select = makeSelectQueue([[]]);
       const service = new AutomationService(
         { client: { select } } as unknown as DatabaseService,
-        {} as RecommendationService,
+        makeAiActionControl(),
+        makeRegistry(),
         makeLogger(),
       );
 
@@ -94,7 +110,8 @@ describe('AutomationService', () => {
       const update = vi.fn(() => updateChain);
       const service = new AutomationService(
         { client: { select, update } } as unknown as DatabaseService,
-        {} as RecommendationService,
+        makeAiActionControl(),
+        makeRegistry(),
         makeLogger(),
       );
 
@@ -110,7 +127,8 @@ describe('AutomationService', () => {
       const select = makeSelectQueue([[]]);
       const service = new AutomationService(
         { client: { select } } as unknown as DatabaseService,
-        {} as RecommendationService,
+        makeAiActionControl(),
+        makeRegistry(),
         makeLogger(),
       );
 
@@ -122,7 +140,8 @@ describe('AutomationService', () => {
       const select = makeSelectQueue([[automation]]);
       const service = new AutomationService(
         { client: { select } } as unknown as DatabaseService,
-        {} as RecommendationService,
+        makeAiActionControl(),
+        makeRegistry(),
         makeLogger(),
       );
 
@@ -138,7 +157,8 @@ describe('AutomationService', () => {
       const select = vi.fn(() => makeSelectChain(rows));
       const service = new AutomationService(
         { client: { select } } as unknown as DatabaseService,
-        {} as RecommendationService,
+        makeAiActionControl(),
+        makeRegistry(),
         makeLogger(),
       );
 
@@ -151,7 +171,8 @@ describe('AutomationService', () => {
       const select = makeSelectQueue([[]]);
       const service = new AutomationService(
         { client: { select } } as unknown as DatabaseService,
-        {} as RecommendationService,
+        makeAiActionControl(),
+        makeRegistry(),
         makeLogger(),
       );
 
@@ -164,7 +185,8 @@ describe('AutomationService', () => {
       const select = vi.fn();
       const service = new AutomationService(
         { client: { select } } as unknown as DatabaseService,
-        {} as RecommendationService,
+        makeAiActionControl(),
+        makeRegistry(),
         makeLogger(),
       );
 
@@ -178,7 +200,8 @@ describe('AutomationService', () => {
       const insert = vi.fn();
       const service = new AutomationService(
         { client: { select, insert } } as unknown as DatabaseService,
-        {} as RecommendationService,
+        makeAiActionControl(),
+        makeRegistry(),
         makeLogger(),
       );
 
@@ -187,43 +210,69 @@ describe('AutomationService', () => {
       expect(insert).not.toHaveBeenCalled();
     });
 
-    it('records a skipped run when conditions do not match', async () => {
+    it('records a skipped run when conditions do not match, without ever calling AI Action Control', async () => {
       const definition = { id: 'auto_1', conditions: { priorityIn: ['critical'] } };
       const select = makeSelectQueue([[definition]]);
       const insertChain = makeInsertChain();
       const insert = vi.fn(() => insertChain);
-      const recommendationService = { generate: vi.fn() } as unknown as RecommendationService;
-      const service = new AutomationService({ client: { select, insert } } as unknown as DatabaseService, recommendationService, makeLogger());
+      const aiActionControl = makeAiActionControl();
+      const service = new AutomationService(
+        { client: { select, insert } } as unknown as DatabaseService,
+        aiActionControl,
+        makeRegistry(),
+        makeLogger(),
+      );
 
       await service.handleRevenueOpportunityCreated(makeEvent({ priority: 'high' }));
 
-      expect(recommendationService.generate).not.toHaveBeenCalled();
+      expect(aiActionControl.executeForAutomation).not.toHaveBeenCalled();
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ status: 'skipped', automationId: 'auto_1' }));
     });
 
-    it('runs the action and records a succeeded run when conditions match', async () => {
+    it('runs the action through AiActionControlService.executeForAutomation and records a succeeded run when conditions match', async () => {
       const definition = { id: 'auto_1', conditions: { priorityIn: ['high'] } };
       const select = makeSelectQueue([[definition]]);
       const insertChain = makeInsertChain();
       const insert = vi.fn(() => insertChain);
-      const recommendationService = { generate: vi.fn(async () => [{ id: 'rec_1' }]) } as unknown as RecommendationService;
-      const service = new AutomationService({ client: { select, insert } } as unknown as DatabaseService, recommendationService, makeLogger());
+      const registry = makeRegistry();
+      const aiActionControl = makeAiActionControl({ executeForAutomation: vi.fn(async () => [{ id: 'rec_1' }]) });
+      const service = new AutomationService(
+        { client: { select, insert } } as unknown as DatabaseService,
+        aiActionControl,
+        registry,
+        makeLogger(),
+      );
 
       await service.handleRevenueOpportunityCreated(makeEvent({ priority: 'high' }));
 
-      expect(recommendationService.generate).toHaveBeenCalledWith('ws_1', 'canon_1');
+      expect(aiActionControl.executeForAutomation).toHaveBeenCalledWith(
+        registry.generateRecommendations,
+        {},
+        { workspaceId: 'ws_1', customerId: 'canon_1' },
+        'auto_1:evt_1',
+        'evt_1',
+      );
       expect(insertChain.values).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'succeeded', result: { recommendationsCount: 1 } }),
       );
     });
 
-    it('records a failed run when the action throws, without propagating the error', async () => {
+    it('records a failed run when AI Action Control rejects the action, without propagating the error', async () => {
       const definition = { id: 'auto_1', conditions: null };
       const select = makeSelectQueue([[definition]]);
       const insertChain = makeInsertChain();
       const insert = vi.fn(() => insertChain);
-      const recommendationService = { generate: vi.fn(async () => { throw new Error('boom'); }) } as unknown as RecommendationService;
-      const service = new AutomationService({ client: { select, insert } } as unknown as DatabaseService, recommendationService, makeLogger());
+      const aiActionControl = makeAiActionControl({
+        executeForAutomation: vi.fn(async () => {
+          throw new Error('boom');
+        }),
+      });
+      const service = new AutomationService(
+        { client: { select, insert } } as unknown as DatabaseService,
+        aiActionControl,
+        makeRegistry(),
+        makeLogger(),
+      );
 
       await expect(service.handleRevenueOpportunityCreated(makeEvent())).resolves.toBeUndefined();
 
@@ -235,12 +284,17 @@ describe('AutomationService', () => {
       const select = makeSelectQueue([[definition]]);
       const insertChain = makeInsertChain();
       const insert = vi.fn(() => insertChain);
-      const recommendationService = { generate: vi.fn(async () => []) } as unknown as RecommendationService;
-      const service = new AutomationService({ client: { select, insert } } as unknown as DatabaseService, recommendationService, makeLogger());
+      const aiActionControl = makeAiActionControl();
+      const service = new AutomationService(
+        { client: { select, insert } } as unknown as DatabaseService,
+        aiActionControl,
+        makeRegistry(),
+        makeLogger(),
+      );
 
       await service.handleRevenueOpportunityCreated(makeEvent({ type: 'reorder' }));
 
-      expect(recommendationService.generate).not.toHaveBeenCalled();
+      expect(aiActionControl.executeForAutomation).not.toHaveBeenCalled();
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ status: 'skipped' }));
     });
   });

@@ -24,12 +24,16 @@ import { canonicalCustomers } from './canonical-customers';
 export const aiActionRequests = pgTable('ai_action_requests', {
   id: id(),
   workspaceId: workspaceId(),
-  /** Internal `users.id` the action was performed on behalf of — not the Clerk external sub. */
-  actorUserId: uuid('actor_user_id')
-    .notNull()
-    .references(() => users.id),
-  /** Snapshot of the actor's workspace role at request time — roles can change later; this reflects what it was then. */
-  actorRole: text('actor_role', { enum: ['owner', 'admin', 'marketing', 'support', 'analyst'] }).notNull(),
+  /**
+   * Internal `users.id` the action was performed on behalf of — not the
+   * Clerk external sub. Null for a system/automation-initiated request
+   * (doc19 Phase 15 item 7 — `AiActionControlService.executeForAutomation()`)
+   * — there is no human actor to attribute it to; the automation itself,
+   * via `action`/`workspaceId`, is the attribution.
+   */
+  actorUserId: uuid('actor_user_id').references(() => users.id),
+  /** Snapshot of the actor's workspace role at request time — roles can change later; this reflects what it was then. Null alongside `actorUserId` for a system/automation-initiated request — there is no role to check (doc16 Core Flow still routes automation through this same enforcement point; see `executeForAutomation()`'s doc comment for why no role check applies). */
+  actorRole: text('actor_role', { enum: ['owner', 'admin', 'marketing', 'support', 'analyst'] }),
   /** Registered action name, e.g. 'recommendation.dismiss' (doc14 Tool Architecture — "Name"). */
   action: text('action').notNull(),
   riskLevel: text('risk_level', { enum: ['low', 'medium', 'high'] }).notNull(),
