@@ -337,7 +337,10 @@ export class CustomerIntelligenceService {
     return {
       ordersCount: Number(summary?.ordersCount ?? 0),
       totalSpent: summary?.totalSpent ?? '0',
-      lastOrderAt: summary?.lastOrderAt ?? null,
+      // `sql<Date | null>` is a compile-time-only claim — a raw aggregate fragment (unlike a typed
+      // column select) comes back from pg as a string, not a Date; every caller (e.g.
+      // RevenueOpportunityService) calls .getTime() on this expecting a real Date.
+      lastOrderAt: summary?.lastOrderAt ? new Date(summary.lastOrderAt) : null,
       ordersLast90Days: Number(summary?.ordersLast90Days ?? 0),
       recentOrders,
     };
