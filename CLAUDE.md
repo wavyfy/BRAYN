@@ -182,6 +182,17 @@ When explicitly requested:
 - Report the result briefly.
 - Return to the user's requested task.
 
+### Graphify Update Token Discipline
+
+The `--update` flow is instruction-injection, not a subagent — the skill's steps are executed directly, one at a time. Keep this cheap:
+
+- Run `detect_incremental` first and check whether the changed-file set is **code-only**. If yes: run AST extraction only (deterministic, zero tokens) and skip semantic extraction entirely — do not dispatch subagents for a code-only change.
+- If a small number of non-code files (roughly ≤3) changed alongside code: do not dispatch an Agent-tool subagent for them. Write their semantic fragment (nodes/edges JSON) by hand instead — reading and summarizing a couple of files directly is cheaper than a subagent round-trip. Reserve the mandatory parallel-subagent dispatch (Step B2) for genuinely large non-code batches, matching the skill's own chunking threshold (~20-25 files per agent).
+- Do not print full file-path lists from `detect`/`detect_incremental` JSON output into the transcript — summarize counts only (e.g. "246 code, 1 doc").
+- Skip HTML regeneration when the graph exceeds the skill's own 5,000-node cap (it already warns and skips) — do not force it.
+- Skip community re-labeling (leave placeholder `Community N` labels) unless the user asks for a readable/explored report — it costs nothing to skip and nothing is lost since `graph.json`/community structure itself is unaffected.
+- Report the token cost actually spent (`cost.json` this-run numbers) so cheap updates are visibly cheap.
+
 Graphify output is a context/indexing artifact and must not become an implementation task itself.
 
 ---
