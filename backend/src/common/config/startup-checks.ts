@@ -14,6 +14,9 @@ const REQUIRED_IN_PRODUCTION: ReadonlyArray<keyof Env> = [
   'DATABASE_URL',
   'CLERK_SECRET_KEY',
   'BRAYN_CREDENTIAL_ENCRYPTION_KEY',
+  // Doc19 Phase 17 hardening — without this, RateLimitGuard fails open
+  // (see its own doc comment) and production silently runs unprotected.
+  'UPSTASH_REDIS_REST_URL',
 ];
 
 export function warnOnMissingProductionSecrets(env: Env, logger: StructuredLoggerService): void {

@@ -1,6 +1,7 @@
 import { Controller, HttpCode, HttpStatus, Headers, Post, Req } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { Public } from '../../../../common/auth/public.decorator';
+import { SkipRateLimit } from '../../../../common/rate-limit/rate-limit.decorator';
 import { ShopifyComplianceService } from './shopify-compliance.service';
 
 /**
@@ -12,12 +13,17 @@ import { ShopifyComplianceService } from './shopify-compliance.service';
  * controller: a Shopify delivery carries no Clerk session — the HMAC
  * check inside `ShopifyComplianceService` (using `SHOPIFY_APP_CLIENT_SECRET`,
  * not a per-integration secret) is this request's actual authentication.
+ *
+ * `@SkipRateLimit()` (doc19 Phase 17 hardening) — same reasoning as
+ * `WebhookController`: a mandatory compliance delivery must never be
+ * dropped by a false-positive 429.
  */
 @Controller('integrations/shopify/compliance')
 export class ShopifyComplianceController {
   constructor(private readonly complianceService: ShopifyComplianceService) {}
 
   @Public()
+  @SkipRateLimit()
   @Post()
   @HttpCode(HttpStatus.OK)
   async receive(@Headers('x-shopify-topic') topic: string | undefined, @Req() request: FastifyRequest) {

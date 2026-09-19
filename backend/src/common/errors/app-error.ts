@@ -66,3 +66,10 @@ export class ApprovalRequiredError extends AppError {
     super(ErrorCode.APPROVAL_REQUIRED, message, HttpStatus.ACCEPTED);
   }
 }
+
+/** Doc19 Phase 17 hardening — Rate-limit handling. Thrown by RateLimitGuard; carries no per-request detail (never echoes the caller's identity/count back) beyond the standard error envelope. */
+export class RateLimitError extends AppError {
+  constructor(message = 'Too many requests. Please slow down and try again shortly.') {
+    super(ErrorCode.RATE_LIMITED, message, HttpStatus.TOO_MANY_REQUESTS);
+  }
+}

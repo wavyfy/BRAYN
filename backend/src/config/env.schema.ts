@@ -68,6 +68,18 @@ export const envSchema = z.object({
   // Default model — doc 12 "Model/provider selection should be
   // configurable through the AI Gateway", never hard-coded in an adapter.
   AI_MODEL: z.string().min(1).default('gpt-5.6-luna'),
+
+  // Rate limiting (doc19 Phase 17 hardening; doc29 §13 — Upstash Redis is
+  // approved by name for "rate limiting"). Shared/durable counters via
+  // UPSTASH_REDIS_REST_URL/TOKEN above, not in-memory — this API can run
+  // as more than one instance (doc29 §19 Render), and an in-memory
+  // counter would under-count real traffic across instances. First-pass,
+  // config-overridable limits — see RateLimitGuard's doc comment for the
+  // reasoning behind each default.
+  RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
+  RATE_LIMIT_DEFAULT_MAX: z.coerce.number().int().positive().default(120),
+  RATE_LIMIT_AI_MAX: z.coerce.number().int().positive().default(10),
+  RATE_LIMIT_PUBLIC_MAX: z.coerce.number().int().positive().default(20),
 });
 
 export type Env = z.infer<typeof envSchema>;
