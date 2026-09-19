@@ -22,50 +22,13 @@ type KnowledgeEntryRow = Awaited<ReturnType<MerchantKnowledgeService['list']>>[n
 type RecommendationRow = Awaited<ReturnType<RecommendationService['list']>>[number];
 
 /**
- * Doc19 Phase 12 step 4 — "Merchant knowledge integration": doc13 says
- * "retrieve only knowledge relevant to the current task," but the actual
- * schema (`merchant_knowledge_entries`) has no metadata/tags/full-text
- * index to filter on (checked before writing this) — only `type`, which
- * `MerchantKnowledgeService.list` already uses. Doc13 explicitly calls
- * the retrieval mechanism "an implementation detail," so this is a
- * deterministic, bounded keyword-overlap scorer over title+content — the
- * smallest thing that satisfies "relevant," not embeddings/vector search
- * (explicitly out of scope for this slice). Swappable later behind the
- * same signature once real retrieval exists.
- */
-const MAX_RELEVANT_KNOWLEDGE_ENTRIES = 5;
-
-function scoreKnowledgeRelevance(questionWords: Set<string>, entry: KnowledgeEntryRow): number {
-  const haystack = `${entry.title} ${entry.content}`.toLowerCase();
-  let score = 0;
-  for (const word of questionWords) {
-    if (haystack.includes(word)) {
-      score += 1;
-    }
-  }
-  return score;
-}
-
-function selectRelevantKnowledge(question: string, entries: KnowledgeEntryRow[]): KnowledgeEntryRow[] {
-  const questionWords = new Set((question.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []));
-  if (questionWords.size === 0) {
-    return [];
-  }
-
-  return entries
-    .map((entry) => ({ entry, score: scoreKnowledgeRelevance(questionWords, entry) }))
-    .filter(({ score }) => score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, MAX_RELEVANT_KNOWLEDGE_ENTRIES)
-    .map(({ entry }) => entry);
-}
-
-/**
  * Knowledge (doc13): "information AI can use to understand the
- * business" — relevance-filtered per `selectRelevantKnowledge` above.
- * Kept in its own CATEGORY, separate from policy, per this slice's
- * explicit requirement (doc13 — knowledge vs. policy are distinct;
- * policy has higher authority when they conflict).
+ * business" — relevance-filtered by `MerchantKnowledgeService.findRelevant`
+ * (doc04 "One Owner" — the Knowledge Store owns retrieval, this domain
+ * just consumes it; moved out of this file, see that method's doc
+ * comment). Kept in its own CATEGORY, separate from policy, per this
+ * slice's explicit requirement (doc13 — knowledge vs. policy are
+ * distinct; policy has higher authority when they conflict).
  */
 function buildMerchantKnowledgeBlock(relevantEntries: KnowledgeEntryRow[]): string {
   const lines =
@@ -275,11 +238,10 @@ export class MerchantBusinessAnalystService {
   ) {}
 
   async ask(workspaceId: string, question: string, customerId?: string): Promise<{ answer: string }> {
-    const [knowledgeEntries, policyEntries] = await Promise.all([
-      this.merchantKnowledge.list(workspaceId, 'knowledge'),
+    const [relevantKnowledge, policyEntries] = await Promise.all([
+      this.merchantKnowledge.findRelevant(workspaceId, 'knowledge', question),
       this.merchantKnowledge.list(workspaceId, 'policy'),
     ]);
-    const relevantKnowledge = selectRelevantKnowledge(question, knowledgeEntries);
 
     if (!customerId) {
       const result = await this.aiGateway.generate({

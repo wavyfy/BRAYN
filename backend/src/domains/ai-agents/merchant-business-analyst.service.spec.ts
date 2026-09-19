@@ -85,6 +85,16 @@ interface KnowledgeFixture {
   content: string;
 }
 
+/** Mirrors MerchantKnowledgeService.findRelevant's real scoring so knowledge-filtering tests exercise the same behavior through the now-mocked service boundary. */
+function scoreForTest(queryWords: Set<string>, entry: KnowledgeFixture): number {
+  const haystack = `${entry.title} ${entry.content}`.toLowerCase();
+  let score = 0;
+  for (const word of queryWords) {
+    if (haystack.includes(word)) score += 1;
+  }
+  return score;
+}
+
 function makeMerchantKnowledge(
   entries: { knowledge?: KnowledgeFixture[]; policy?: KnowledgeFixture[] } = {},
 ): MerchantKnowledgeService {
@@ -92,6 +102,17 @@ function makeMerchantKnowledge(
   const policy = entries.policy ?? [];
   return {
     list: vi.fn(async (_workspaceId: string, type: 'knowledge' | 'policy') => (type === 'policy' ? policy : knowledge)),
+    findRelevant: vi.fn(async (_workspaceId: string, type: 'knowledge' | 'policy', query: string) => {
+      const source = type === 'policy' ? policy : knowledge;
+      const queryWords = new Set(query.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []);
+      if (queryWords.size === 0) return [];
+      return source
+        .map((entry) => ({ entry, score: scoreForTest(queryWords, entry) }))
+        .filter(({ score }) => score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 5)
+        .map(({ entry }) => entry);
+    }),
   } as unknown as MerchantKnowledgeService;
 }
 
@@ -571,15 +592,15 @@ describe('MerchantBusinessAnalystService — merchant knowledge integration (ste
     expect(policyMessage.content.toLowerCase()).toContain('priority');
   });
 
-  it('retrieves knowledge and policy scoped to the calling workspace only', async () => {
+  it('retrieves relevant knowledge through the Knowledge Store\'s own findRelevant() and policy scoped to the calling workspace only', async () => {
     const deps = makeDeps();
     const service = makeService(deps);
 
     await service.ask(WORKSPACE_ID, 'question');
 
-    expect(deps.merchantKnowledge.list).toHaveBeenCalledWith(WORKSPACE_ID, 'knowledge');
+    expect(deps.merchantKnowledge.findRelevant).toHaveBeenCalledWith(WORKSPACE_ID, 'knowledge', 'question');
     expect(deps.merchantKnowledge.list).toHaveBeenCalledWith(WORKSPACE_ID, 'policy');
-    expect(deps.merchantKnowledge.list).toHaveBeenCalledTimes(2);
+    expect(deps.merchantKnowledge.list).toHaveBeenCalledTimes(1);
   });
 
   it('applies knowledge/policy grounding on the customer-aware path too, alongside customer context', async () => {
