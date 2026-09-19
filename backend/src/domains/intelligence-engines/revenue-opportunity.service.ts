@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { and, desc, eq, notInArray, sql } from 'drizzle-orm';
+import { and, eq, desc, inArray, notInArray, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
+import { commerceCustomers } from '../../database/schema/commerce-customers';
+import { commerceOrders } from '../../database/schema/commerce-orders';
+import { commerceOrderLineItems } from '../../database/schema/commerce-order-line-items';
+import { commerceProductVariants } from '../../database/schema/commerce-product-variants';
 import { DatabaseService } from '../../database/database.service';
 import { createEvent } from '../../common/events/domain-event';
 import { EventBus } from '../../common/events/event-bus.service';
@@ -21,7 +26,23 @@ const VIP_ORDER_THRESHOLD = 10;
 /** Terminal lifecycle statuses (doc10) — a new candidate is only skipped as a duplicate against a still-open one. */
 const TERMINAL_STATUSES = ['converted', 'expired', 'ignored'] as const;
 
-export type OpportunityType = 'reorder' | 'win_back' | 'vip_recognition';
+/**
+ * Approved thresholds for cross_sell/bundle/upsell (Phase 7 product-affinity
+ * slice — approved heuristic proposal, not doc10-derived). First-pass
+ * product decisions, same status as WIN_BACK_THRESHOLD_DAYS/VIP_ORDER_THRESHOLD
+ * above — centralized here so they can be tuned later without touching
+ * detection logic.
+ */
+const CROSS_SELL_MIN_CO_OCCURRING_ORDERS = 3;
+const CROSS_SELL_MIN_RATIO = 0.15;
+const BUNDLE_MIN_CO_OCCURRING_ORDERS = 5;
+const BUNDLE_MIN_RATIO = 0.4;
+/** Below this many total workspace orders, no affinity signal is trusted (too little data). */
+const MIN_WORKSPACE_ORDERS_FOR_AFFINITY = 20;
+const UPSELL_CONFIDENCE_SINGLE_CANDIDATE = 80;
+const UPSELL_CONFIDENCE_MULTIPLE_CANDIDATES = 60;
+
+export type OpportunityType = 'reorder' | 'win_back' | 'vip_recognition' | 'cross_sell' | 'bundle' | 'upsell';
 export type OpportunityPriority = 'critical' | 'high' | 'medium' | 'low';
 
 interface OpportunityCandidate {
@@ -46,9 +67,26 @@ interface OpportunityCandidate {
  *   currency unit tracked anywhere, so a cross-customer revenue threshold
  *   would be meaningless.
  *
- * Not produced: cross_sell/upsell/bundle (need real product-affinity
- * analysis — not yet spec'd), review_request/referral (no review or
- * referral data exists anywhere in BRAYN yet).
+ * - `cross_sell` / `bundle` — both read from the same product-affinity
+ *   signal (workspace-wide same-order co-occurrence of two products),
+ *   differing only by threshold: `bundle` requires the stronger pair
+ *   (5+ co-occurring orders, 40%+ ratio), `cross_sell` the weaker one
+ *   (3+, 15%+). A pair meeting the bundle bar surfaces as `bundle` only,
+ *   never also as `cross_sell` (approved scope). Requires the workspace
+ *   to have at least `MIN_WORKSPACE_ORDERS_FOR_AFFINITY` total orders
+ *   before any affinity is trusted. At most one candidate total is
+ *   produced by this detector (the single highest-ratio qualifying pair),
+ *   matching `getOpenTypes()`'s type-level (not per-product) dedup.
+ * - `upsell` — customer purchased a variant; the *nearest* higher-priced
+ *   sibling variant of the same product (not the most expensive) is the
+ *   candidate, skipping any sibling already purchased or out of stock
+ *   (`inventoryQuantity === 0`; `null` is treated as available — nothing
+ *   in the current data ever guarantees a real number here). Evaluated
+ *   most-recently-purchased-product first, stopping at the first product
+ *   with a qualifying candidate.
+ *
+ * Not produced: review_request/referral (no review or referral data
+ * exists anywhere in BRAYN yet).
  *
  * Priority (doc10: "Expected Revenue × Confidence × Customer Risk &
  * Engagement State × Business Rules") only has two of those four inputs
@@ -84,10 +122,20 @@ export class RevenueOpportunityService {
 
   async detect(workspaceId: string, canonicalCustomerId: string) {
     const customer = await this.customerIntelligenceService.getCustomer(workspaceId, canonicalCustomerId);
+
+    // A customer with zero commerce orders trivially owns zero products, so
+    // affinity/upsell can only ever return null — skip the queries entirely
+    // rather than run them for a guaranteed-empty result.
+    const hasOrders = customer.commerceContext.ordersCount > 0;
+    const affinityCandidate = hasOrders ? await this.detectAffinityOpportunity(workspaceId, canonicalCustomerId) : null;
+    const upsellCandidate = hasOrders ? await this.detectUpsell(workspaceId, canonicalCustomerId) : null;
+
     const candidates = [
       detectReorder(customer),
       detectWinBack(customer),
       detectVipRecognition(customer),
+      affinityCandidate,
+      upsellCandidate,
     ].filter((candidate): candidate is OpportunityCandidate => candidate !== null);
 
     const existingOpenTypes = await this.getOpenTypes(workspaceId, canonicalCustomerId);
@@ -182,6 +230,291 @@ export class RevenueOpportunityService {
 
     return new Set(rows.map((row) => row.type as OpportunityType));
   }
+
+  /**
+   * cross_sell/bundle (approved Phase 7 heuristic). At most one candidate:
+   * the single highest-ratio qualifying (owned, other) product pair,
+   * checked against the bundle threshold first — a pair meeting bundle's
+   * bar never falls through to cross_sell (approved scope: "surface as
+   * Bundle only"). Sequential awaits throughout (not Promise.all) —
+   * deliberately: this runs at most a handful of times per detect() call,
+   * and a strictly linear query order is far easier to reason about/test
+   * than shaving a few ms of parallelism.
+   */
+  private async detectAffinityOpportunity(workspaceId: string, canonicalCustomerId: string): Promise<OpportunityCandidate | null> {
+    const totalOrders = await this.getWorkspaceOrderCount(workspaceId);
+    if (totalOrders < MIN_WORKSPACE_ORDERS_FOR_AFFINITY) {
+      return null;
+    }
+
+    const ownedProductIds = await this.getPurchasedProductIds(workspaceId, canonicalCustomerId);
+    if (ownedProductIds.length === 0) {
+      return null;
+    }
+
+    const affinityRows = await this.getProductAffinity(workspaceId, ownedProductIds);
+    if (affinityRows.length === 0) {
+      return null;
+    }
+
+    const orderCountByProduct = new Map((await this.getOwnedProductOrderCounts(workspaceId, ownedProductIds)).map((row) => [row.productId, Number(row.orderCount)]));
+
+    let bestBundle: { ownedProductId: string; otherProductId: string; ratio: number } | null = null;
+    let bestCrossSell: { ownedProductId: string; otherProductId: string; ratio: number } | null = null;
+
+    for (const row of affinityRows) {
+      const orderCountForOwned = orderCountByProduct.get(row.ownedProductId) ?? 0;
+      if (orderCountForOwned === 0) {
+        continue;
+      }
+      const coCount = Number(row.coOccurringOrders);
+      const ratio = coCount / orderCountForOwned;
+
+      if (coCount >= BUNDLE_MIN_CO_OCCURRING_ORDERS && ratio >= BUNDLE_MIN_RATIO) {
+        if (!bestBundle || ratio > bestBundle.ratio) {
+          bestBundle = { ownedProductId: row.ownedProductId, otherProductId: row.otherProductId, ratio };
+        }
+      } else if (coCount >= CROSS_SELL_MIN_CO_OCCURRING_ORDERS && ratio >= CROSS_SELL_MIN_RATIO) {
+        if (!bestCrossSell || ratio > bestCrossSell.ratio) {
+          bestCrossSell = { ownedProductId: row.ownedProductId, otherProductId: row.otherProductId, ratio };
+        }
+      }
+    }
+
+    if (bestBundle) {
+      const ownedPrice = await this.getLowestVariantPrice(workspaceId, bestBundle.ownedProductId);
+      const otherPrice = await this.getLowestVariantPrice(workspaceId, bestBundle.otherProductId);
+      const combined = ownedPrice !== null && otherPrice !== null ? (ownedPrice + otherPrice).toFixed(2) : null;
+      const confidence = Math.min(100, Math.round(bestBundle.ratio * 100));
+      return {
+        type: 'bundle',
+        confidence,
+        estimatedRevenue: combined,
+        reason: `These two products were purchased together in ${Math.round(bestBundle.ratio * 100)}% of the orders containing the customer's product.`,
+        recommendedAction: 'Offer these products together as a bundle.',
+      };
+    }
+
+    if (bestCrossSell) {
+      const otherPrice = await this.getLowestVariantPrice(workspaceId, bestCrossSell.otherProductId);
+      const confidence = Math.min(100, Math.round(bestCrossSell.ratio * 100));
+      return {
+        type: 'cross_sell',
+        confidence,
+        estimatedRevenue: otherPrice !== null ? otherPrice.toFixed(2) : null,
+        reason: `Other customers who bought the same product also bought this one in ${Math.round(bestCrossSell.ratio * 100)}% of matching orders.`,
+        recommendedAction: 'Recommend this product to the customer.',
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * upsell (approved Phase 7 heuristic). Evaluates the customer's purchased
+   * products most-recently-purchased first, returning the first product
+   * with a qualifying higher-priced sibling variant. Sequential — see
+   * detectAffinityOpportunity's doc comment for why.
+   */
+  private async detectUpsell(workspaceId: string, canonicalCustomerId: string): Promise<OpportunityCandidate | null> {
+    const purchasedVariants = await this.getPurchasedVariantsByRecency(workspaceId, canonicalCustomerId);
+    if (purchasedVariants.length === 0) {
+      return null;
+    }
+
+    const consideredProductIds = new Set<string>();
+    for (const purchased of purchasedVariants) {
+      if (consideredProductIds.has(purchased.productId)) {
+        continue;
+      }
+      consideredProductIds.add(purchased.productId);
+
+      const purchasedPrice = parsePrice(purchased.price);
+      if (purchasedPrice === null) {
+        continue;
+      }
+
+      const purchasedVariantIdsForProduct = new Set(
+        purchasedVariants.filter((variant) => variant.productId === purchased.productId).map((variant) => variant.variantId),
+      );
+
+      const siblings = await this.database.client
+        .select({ id: commerceProductVariants.id, price: commerceProductVariants.price, inventoryQuantity: commerceProductVariants.inventoryQuantity })
+        .from(commerceProductVariants)
+        .where(and(eq(commerceProductVariants.workspaceId, workspaceId), eq(commerceProductVariants.productId, purchased.productId)));
+
+      const higherCandidates = siblings
+        .filter((sibling) => !purchasedVariantIdsForProduct.has(sibling.id))
+        .filter((sibling) => sibling.inventoryQuantity === null || sibling.inventoryQuantity > 0)
+        .map((sibling) => ({ id: sibling.id, price: parsePrice(sibling.price) }))
+        .filter((sibling): sibling is { id: string; price: number } => sibling.price !== null && sibling.price > purchasedPrice)
+        .sort((a, b) => a.price - b.price);
+
+      if (higherCandidates.length === 0) {
+        continue;
+      }
+
+      const nearest = higherCandidates[0];
+      const confidence = higherCandidates.length === 1 ? UPSELL_CONFIDENCE_SINGLE_CANDIDATE : UPSELL_CONFIDENCE_MULTIPLE_CANDIDATES;
+      const revenueDelta = nearest.price - purchasedPrice;
+
+      return {
+        type: 'upsell',
+        confidence,
+        estimatedRevenue: revenueDelta.toFixed(2),
+        reason: `Customer purchased a ${purchasedPrice.toFixed(2)} variant; a ${nearest.price.toFixed(2)} variant of the same product is available and unpurchased.`,
+        recommendedAction: 'Suggest the higher-tier variant to this customer.',
+      };
+    }
+
+    return null;
+  }
+
+  private async getWorkspaceOrderCount(workspaceId: string): Promise<number> {
+    const [row] = await this.database.client
+      .select({ count: sql<number>`count(*)` })
+      .from(commerceOrders)
+      .where(eq(commerceOrders.workspaceId, workspaceId));
+    return Number(row?.count ?? 0);
+  }
+
+  /** This canonical customer's `commerce_customers` source-row ids (may span multiple providers). */
+  private async getSourceCustomerIds(workspaceId: string, canonicalCustomerId: string): Promise<string[]> {
+    const rows = await this.database.client
+      .select({ id: commerceCustomers.id })
+      .from(commerceCustomers)
+      .where(and(eq(commerceCustomers.workspaceId, workspaceId), eq(commerceCustomers.canonicalCustomerId, canonicalCustomerId)));
+    return rows.map((row) => row.id);
+  }
+
+  /** Distinct product ids this customer has ever purchased, across all their source rows/providers. */
+  private async getPurchasedProductIds(workspaceId: string, canonicalCustomerId: string): Promise<string[]> {
+    const sourceCustomerIds = await this.getSourceCustomerIds(workspaceId, canonicalCustomerId);
+    if (sourceCustomerIds.length === 0) {
+      return [];
+    }
+
+    const rows = await this.database.client
+      .selectDistinct({ productId: commerceProductVariants.productId })
+      .from(commerceOrderLineItems)
+      .innerJoin(commerceOrders, eq(commerceOrderLineItems.orderId, commerceOrders.id))
+      .innerJoin(commerceProductVariants, eq(commerceOrderLineItems.variantId, commerceProductVariants.id))
+      .where(and(eq(commerceOrderLineItems.workspaceId, workspaceId), inArray(commerceOrders.customerId, sourceCustomerIds)));
+
+    return rows.map((row) => row.productId);
+  }
+
+  /**
+   * Workspace-wide same-order co-occurrence: for each of `ownedProductIds`,
+   * every OTHER product that shares at least one order with it, and how
+   * many distinct orders they share. Self-join over commerce_order_line_items
+   * on order_id (approved query shape — shared by cross_sell and bundle).
+   */
+  private async getProductAffinity(
+    workspaceId: string,
+    ownedProductIds: string[],
+  ): Promise<{ ownedProductId: string; otherProductId: string; coOccurringOrders: number }[]> {
+    const otherLineItems = alias(commerceOrderLineItems, 'other_line_items');
+    const otherVariants = alias(commerceProductVariants, 'other_variants');
+
+    const rows = await this.database.client
+      .select({
+        ownedProductId: commerceProductVariants.productId,
+        otherProductId: otherVariants.productId,
+        coOccurringOrders: sql<number>`count(distinct ${commerceOrderLineItems.orderId})`,
+      })
+      .from(commerceOrderLineItems)
+      .innerJoin(commerceProductVariants, eq(commerceOrderLineItems.variantId, commerceProductVariants.id))
+      .innerJoin(
+        otherLineItems,
+        and(eq(otherLineItems.orderId, commerceOrderLineItems.orderId), sql`${otherLineItems.id} != ${commerceOrderLineItems.id}`),
+      )
+      .innerJoin(otherVariants, eq(otherLineItems.variantId, otherVariants.id))
+      .where(
+        and(
+          eq(commerceOrderLineItems.workspaceId, workspaceId),
+          inArray(commerceProductVariants.productId, ownedProductIds),
+          notInArray(otherVariants.productId, ownedProductIds),
+        ),
+      )
+      .groupBy(commerceProductVariants.productId, otherVariants.productId);
+
+    return rows as { ownedProductId: string; otherProductId: string; coOccurringOrders: number }[];
+  }
+
+  /** Total distinct orders containing each of `ownedProductIds` — the ratio denominator. */
+  private async getOwnedProductOrderCounts(workspaceId: string, ownedProductIds: string[]): Promise<{ productId: string; orderCount: number }[]> {
+    const rows = await this.database.client
+      .select({
+        productId: commerceProductVariants.productId,
+        orderCount: sql<number>`count(distinct ${commerceOrderLineItems.orderId})`,
+      })
+      .from(commerceOrderLineItems)
+      .innerJoin(commerceProductVariants, eq(commerceOrderLineItems.variantId, commerceProductVariants.id))
+      .where(and(eq(commerceOrderLineItems.workspaceId, workspaceId), inArray(commerceProductVariants.productId, ownedProductIds)))
+      .groupBy(commerceProductVariants.productId);
+
+    return rows as { productId: string; orderCount: number }[];
+  }
+
+  private async getLowestVariantPrice(workspaceId: string, productId: string): Promise<number | null> {
+    const rows = await this.database.client
+      .select({ price: commerceProductVariants.price })
+      .from(commerceProductVariants)
+      .where(and(eq(commerceProductVariants.workspaceId, workspaceId), eq(commerceProductVariants.productId, productId)));
+
+    const prices = rows.map((row) => parsePrice(row.price)).filter((price): price is number => price !== null);
+    return prices.length > 0 ? Math.min(...prices) : null;
+  }
+
+  /**
+   * This customer's purchased variants, deduped by variant id and ordered
+   * newest-purchase-first (by the owning order's own timestamp, same
+   * recency convention as CustomerIntelligenceService.getActivity —
+   * sourceUpdatedAt falling back to BRAYN's own createdAt).
+   */
+  private async getPurchasedVariantsByRecency(
+    workspaceId: string,
+    canonicalCustomerId: string,
+  ): Promise<{ variantId: string; productId: string; price: string | null; purchasedAt: Date }[]> {
+    const sourceCustomerIds = await this.getSourceCustomerIds(workspaceId, canonicalCustomerId);
+    if (sourceCustomerIds.length === 0) {
+      return [];
+    }
+
+    const rows = await this.database.client
+      .select({
+        variantId: commerceProductVariants.id,
+        productId: commerceProductVariants.productId,
+        price: commerceProductVariants.price,
+        orderSourceUpdatedAt: commerceOrders.sourceUpdatedAt,
+        orderCreatedAt: commerceOrders.createdAt,
+      })
+      .from(commerceOrderLineItems)
+      .innerJoin(commerceOrders, eq(commerceOrderLineItems.orderId, commerceOrders.id))
+      .innerJoin(commerceProductVariants, eq(commerceOrderLineItems.variantId, commerceProductVariants.id))
+      .where(and(eq(commerceOrderLineItems.workspaceId, workspaceId), inArray(commerceOrders.customerId, sourceCustomerIds)));
+
+    const byVariant = new Map<string, { variantId: string; productId: string; price: string | null; purchasedAt: Date }>();
+    for (const row of rows) {
+      const purchasedAt = row.orderSourceUpdatedAt ?? row.orderCreatedAt;
+      const existing = byVariant.get(row.variantId);
+      if (!existing || purchasedAt > existing.purchasedAt) {
+        byVariant.set(row.variantId, { variantId: row.variantId, productId: row.productId, price: row.price, purchasedAt });
+      }
+    }
+
+    return [...byVariant.values()].sort((a, b) => b.purchasedAt.getTime() - a.purchasedAt.getTime());
+  }
+}
+
+/** Same convention as commerce_orders.totalPrice/commerce_product_variants.price — raw provider text, no currency unit tracked. */
+function parsePrice(value: string | null): number | null {
+  if (value === null) {
+    return null;
+  }
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
 }
 
 function averageOrderValue(customer: CustomerRecord): number | null {

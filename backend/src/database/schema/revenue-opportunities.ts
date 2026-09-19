@@ -4,13 +4,15 @@ import { canonicalCustomers } from './canonical-customers';
 
 /**
  * A detected revenue opportunity (doc10 — Revenue Opportunity Detector).
- * Phase 1: only the three types computable from Commerce data alone —
- * `reorder`, `win_back`, `vip_recognition` — see RevenueOpportunityService's
- * doc comment for why cross_sell/upsell/bundle/review_request/referral
- * aren't produced yet (product-affinity logic and data sources that
- * don't exist). Extending the `type`/`status`/`priority` enums is a
- * trivial migration once a real signal source exists — not scoped ahead
- * of need (doc18 — no speculative build-ahead).
+ * Phase 1: six of doc10's eight types are computable from Commerce data
+ * alone — `reorder`, `win_back`, `vip_recognition` (original slice) plus
+ * `cross_sell`, `bundle`, `upsell` (product-affinity/price-tier slice,
+ * approved heuristics — see RevenueOpportunityService's doc comment).
+ * `review_request`/`referral` still aren't produced — no review or
+ * referral data exists anywhere in BRAYN yet. Extending the
+ * `type`/`status`/`priority` enums further is a trivial migration once a
+ * real signal source exists — not scoped ahead of need (doc18 — no
+ * speculative build-ahead).
  *
  * `status`/`priority` use doc10's full fixed vocabulary even though
  * detection only ever produces `status: 'new'` today — those are doc10's
@@ -23,7 +25,9 @@ export const revenueOpportunities = pgTable('revenue_opportunities', {
   canonicalCustomerId: uuid('canonical_customer_id')
     .notNull()
     .references(() => canonicalCustomers.id),
-  type: text('type', { enum: ['reorder', 'win_back', 'vip_recognition'] }).notNull(),
+  type: text('type', {
+    enum: ['reorder', 'win_back', 'vip_recognition', 'cross_sell', 'bundle', 'upsell'],
+  }).notNull(),
   status: text('status', {
     enum: ['new', 'recommended', 'scheduled', 'executed', 'converted', 'expired', 'ignored'],
   })
