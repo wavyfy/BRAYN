@@ -104,6 +104,7 @@ describe('RateLimitGuard (e2e)', () => {
     RATE_LIMIT_DEFAULT_MAX: process.env.RATE_LIMIT_DEFAULT_MAX,
     RATE_LIMIT_AI_MAX: process.env.RATE_LIMIT_AI_MAX,
     RATE_LIMIT_PUBLIC_MAX: process.env.RATE_LIMIT_PUBLIC_MAX,
+    BRAYN_ENV: process.env.BRAYN_ENV,
   };
 
   beforeAll(() => {
@@ -114,6 +115,7 @@ describe('RateLimitGuard (e2e)', () => {
     process.env.RATE_LIMIT_DEFAULT_MAX = '2';
     process.env.RATE_LIMIT_AI_MAX = '1';
     process.env.RATE_LIMIT_PUBLIC_MAX = '1';
+    process.env.BRAYN_ENV = 'development';
   });
 
   afterAll(() => {
@@ -197,7 +199,7 @@ describe('RateLimitGuard (e2e)', () => {
 
     expect(res1.statusCode).toBe(200);
     expect(res2.statusCode).toBe(429); // public max is 1
-    expect(redis.keysSeen.every((key) => key.startsWith('ratelimit:public:ip:'))).toBe(true);
+    expect(redis.keysSeen.every((key) => key.startsWith('ratelimit:development:public:ip:'))).toBe(true);
   });
 
   it('never rate-limits a @SkipRateLimit() route, no matter how many requests', async () => {
@@ -239,5 +241,93 @@ describe('RateLimitGuard (e2e)', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ ok: true });
+  });
+
+  describe('environment namespacing (BRAYN_ENV)', () => {
+    it('produces the exact key format ratelimit:<environment>:<tier>:<identity>:<bucket>', async () => {
+      await app.inject({ method: 'GET', url: '/rl/secure/ws_1', headers: { authorization: 'Bearer user-a' } });
+
+      expect(redis.keysSeen).toHaveLength(1);
+      expect(redis.keysSeen[0]).toMatch(/^ratelimit:development:default:user:user_a:\d+$/);
+    });
+
+    it('development and production generate different Redis keys for the same tier/identity/bucket', async () => {
+      process.env.BRAYN_ENV = 'development';
+      const devRedis = new FakeRedisService();
+      const devApp = await buildApp(devRedis);
+
+      process.env.BRAYN_ENV = 'production';
+      const prodRedis = new FakeRedisService();
+      const prodApp = await buildApp(prodRedis);
+      process.env.BRAYN_ENV = 'development'; // restore for other tests in this file
+
+      await devApp.inject({ method: 'GET', url: '/rl/secure/ws_1', headers: { authorization: 'Bearer user-a' } });
+      await prodApp.inject({ method: 'GET', url: '/rl/secure/ws_1', headers: { authorization: 'Bearer user-a' } });
+
+      expect(devRedis.keysSeen).toHaveLength(1);
+      expect(prodRedis.keysSeen).toHaveLength(1);
+      // Same tier/identity/bucket shape (same user, same second-granularity window) — only the environment segment differs.
+      const devKey = devRedis.keysSeen[0];
+      const prodKey = prodRedis.keysSeen[0];
+      expect(devKey).not.toBe(prodKey);
+      expect(devKey.replace('development', 'production')).toBe(prodKey);
+
+      await devApp.close();
+      await prodApp.close();
+    });
+
+    it('a development deployment cannot consume a production deployment\'s counter, and vice versa', async () => {
+      process.env.BRAYN_ENV = 'development';
+      const devRedis = new FakeRedisService();
+      const devApp = await buildApp(devRedis);
+
+      process.env.BRAYN_ENV = 'production';
+      const prodRedis = new FakeRedisService();
+      const prodApp = await buildApp(prodRedis);
+      process.env.BRAYN_ENV = 'development';
+
+      // Exhaust the "default" tier's budget (max 2) on the development deployment only.
+      await devApp.inject({ method: 'GET', url: '/rl/secure/ws_1', headers: { authorization: 'Bearer user-a' } });
+      await devApp.inject({ method: 'GET', url: '/rl/secure/ws_1', headers: { authorization: 'Bearer user-a' } });
+      const devBlocked = await devApp.inject({ method: 'GET', url: '/rl/secure/ws_1', headers: { authorization: 'Bearer user-a' } });
+
+      // Same user, same tier, same real-world instant — production must be unaffected.
+      const prodAllowed = await prodApp.inject({ method: 'GET', url: '/rl/secure/ws_1', headers: { authorization: 'Bearer user-a' } });
+
+      expect(devBlocked.statusCode).toBe(429);
+      expect(prodAllowed.statusCode).toBe(200);
+
+      await devApp.close();
+      await prodApp.close();
+    });
+
+    it('fails open (allows the request, writes no key) when BRAYN_ENV is missing — never falls back to an unnamespaced shared key', async () => {
+      delete process.env.BRAYN_ENV;
+      const noEnvRedis = new FakeRedisService();
+      const noEnvApp = await buildApp(noEnvRedis);
+      process.env.BRAYN_ENV = 'development';
+
+      for (let i = 0; i < 5; i++) {
+        const res = await noEnvApp.inject({ method: 'GET', url: '/rl/secure/ws_1', headers: { authorization: 'Bearer user-a' } });
+        expect(res.statusCode).toBe(200);
+      }
+      // Never reached the Redis call at all — no key of any shape was written.
+      expect(noEnvRedis.keysSeen).toHaveLength(0);
+
+      await noEnvApp.close();
+    });
+
+    it('rejects an invalid BRAYN_ENV value at config-load time rather than silently accepting an arbitrary namespace', async () => {
+      process.env.BRAYN_ENV = 'staging'; // not one of the two accepted values
+      let threw = false;
+      try {
+        await buildApp(new FakeRedisService());
+      } catch {
+        threw = true;
+      }
+      process.env.BRAYN_ENV = 'development';
+
+      expect(threw).toBe(true);
+    });
   });
 });

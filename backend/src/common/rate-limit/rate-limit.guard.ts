@@ -43,19 +43,33 @@ type LimitTier = RateLimitTier | 'public';
  * client-suppliable header) as a secondary, explicitly non-user-level
  * protection — never conflated with a real user identity.
  *
- * Fails open — on missing Redis configuration, or any Redis error at
- * runtime (network hiccup, Upstash outage) — logged, never thrown. Rate
- * limiting is an availability/hardening concern (doc18 Reliability), not
- * a security boundary; it must never become a new single point of
- * failure that takes the whole API down. A production deploy missing
- * Redis configuration is separately, loudly surfaced at startup by
+ * Fails open — on missing Redis configuration, any Redis error at runtime
+ * (network hiccup, Upstash outage), or a missing `BRAYN_ENV` — logged
+ * (except the missing-config cases, silent same as missing Redis was
+ * already silent), never thrown. Rate limiting is an availability/
+ * hardening concern (doc18 Reliability), not a security boundary; it
+ * must never become a new single point of failure that takes the whole
+ * API down. A production deploy missing Redis configuration or
+ * `BRAYN_ENV` is separately, loudly surfaced at startup by
  * `warnOnMissingProductionSecrets` — this guard silently failing open at
  * request time is not the only signal an operator gets.
+ *
+ * Environment namespacing (doc19 Phase 17 hardening follow-up): every key
+ * is prefixed with `BRAYN_ENV` (`development`/`production` — deliberately
+ * not `NODE_ENV`, since more than one Render service can run
+ * `NODE_ENV=production`), so one Upstash Redis database can safely be
+ * shared across BRAYN deployments — a Development and a Production
+ * counter for the same tier/identity/bucket are different keys. A
+ * missing `BRAYN_ENV` is treated exactly like missing Redis
+ * configuration (fails open) rather than guessing a namespace — writing
+ * an un-namespaced key would be exactly the unsafe shared-namespace
+ * outcome this change exists to prevent.
  */
 @Injectable()
 export class RateLimitGuard implements CanActivate {
   private readonly windowSeconds: number;
   private readonly maxByTier: Record<LimitTier, number>;
+  private readonly environment: Env['BRAYN_ENV'];
 
   constructor(
     private readonly reflector: Reflector,
@@ -69,6 +83,7 @@ export class RateLimitGuard implements CanActivate {
       ai: config.get('RATE_LIMIT_AI_MAX', { infer: true }),
       public: config.get('RATE_LIMIT_PUBLIC_MAX', { infer: true }),
     };
+    this.environment = config.get('BRAYN_ENV', { infer: true });
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -77,7 +92,7 @@ export class RateLimitGuard implements CanActivate {
       return true;
     }
 
-    if (!this.redis.isConfigured()) {
+    if (!this.redis.isConfigured() || !this.environment) {
       return true;
     }
 
@@ -92,7 +107,7 @@ export class RateLimitGuard implements CanActivate {
     const max = this.maxByTier[tier];
 
     const bucket = Math.floor(Date.now() / 1000 / this.windowSeconds);
-    const key = `ratelimit:${tier}:${identity}:${bucket}`;
+    const key = `ratelimit:${this.environment}:${tier}:${identity}:${bucket}`;
 
     let count: number;
     try {

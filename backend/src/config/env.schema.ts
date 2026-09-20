@@ -80,6 +80,15 @@ export const envSchema = z.object({
   RATE_LIMIT_DEFAULT_MAX: z.coerce.number().int().positive().default(120),
   RATE_LIMIT_AI_MAX: z.coerce.number().int().positive().default(10),
   RATE_LIMIT_PUBLIC_MAX: z.coerce.number().int().positive().default(20),
+
+  // Explicit deployment identifier for rate-limit Redis key namespacing
+  // (doc19 Phase 17 hardening) — deliberately NOT NODE_ENV: Render can run
+  // more than one BRAYN service (e.g. a staging deploy) with
+  // NODE_ENV=production, which would otherwise collapse distinct
+  // deployments into the same Redis key namespace. No default: RateLimitGuard
+  // treats a missing value the same as missing Redis config (fails open)
+  // rather than guessing a namespace — see RateLimitGuard's own doc comment.
+  BRAYN_ENV: z.enum(['development', 'production']).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -17,6 +17,11 @@ const REQUIRED_IN_PRODUCTION: ReadonlyArray<keyof Env> = [
   // Doc19 Phase 17 hardening — without this, RateLimitGuard fails open
   // (see its own doc comment) and production silently runs unprotected.
   'UPSTASH_REDIS_REST_URL',
+  // Doc19 Phase 17 hardening follow-up — without this, RateLimitGuard also
+  // fails open (no environment to namespace the Redis key with), same as
+  // missing Redis itself — deliberately not inferred from NODE_ENV, since
+  // more than one Render service can run NODE_ENV=production.
+  'BRAYN_ENV',
 ];
 
 export function warnOnMissingProductionSecrets(env: Env, logger: StructuredLoggerService): void {
