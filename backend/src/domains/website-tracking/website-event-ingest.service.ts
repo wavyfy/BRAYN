@@ -1,12 +1,14 @@
 import { Injectable } from '@nestjs/common';
+import { timingSafeEqual } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { DatabaseService } from '../../database/database.service';
 import { integrations } from '../../database/schema/integrations';
 import { websiteVisitors } from '../../database/schema/website-visitors';
 import { websiteSessions } from '../../database/schema/website-sessions';
 import { websiteEvents } from '../../database/schema/website-events';
-import { ConflictError, NotFoundError } from '../../common/errors/app-error';
+import { ConflictError, NotFoundError, UnauthenticatedError } from '../../common/errors/app-error';
 import { IdempotencyService } from '../../common/idempotency/idempotency.service';
+import { IntegrationService } from '../integration/integration.service';
 import type { IngestWebsiteEventInput } from './dto/ingest-website-event.schema';
 
 export type WebsiteEventIngestResult = { status: 'accepted' } | { status: 'duplicate' };
@@ -15,21 +17,22 @@ export type WebsiteEventIngestResult = { status: 'accepted' } | { status: 'dupli
  * Minimal event intake for the Website Behaviour domain (doc06/doc20
  * "Website Tracking"; doc22 "Website Behaviour"). Mirrors
  * WebhookIngestService's shape — workspace/integration resolution,
- * idempotency reservation, persist — but there is no signed provider
- * delivery to verify here: no capture mechanism (a Shopify Web Pixel, a
- * tracking SDK) exists yet, so per-request authenticity (e.g. a write
- * key that client would embed) is intentionally deferred to that part,
- * not guessed here.
+ * authenticity check, idempotency reservation, persist.
  *
- * This part's tenant-isolation gate is the same "must have a connected
- * integration for this (workspace, provider)" check every other
- * provider's webhook path already requires (see
- * WebhookIngestService.findIntegration()) — an ingest for a workspace
- * that never connected `website_tracking` is rejected the same way. A
- * merchant connects it through the existing generic
- * `POST /workspaces/:workspaceId/integrations` endpoint
- * (`{ provider: 'website_tracking' }`) — no new connect flow needed,
- * `IntegrationService.connect()` is already provider-agnostic.
+ * Tenant isolation is two layers, same spirit as a provider webhook:
+ * (1) a `connected` `website_tracking` integration must exist for this
+ * workspace (see `findIntegration()` — same shape as
+ * `WebhookIngestService.findIntegration()`; a merchant connects it via
+ * the existing generic `POST /workspaces/:workspaceId/integrations`,
+ * `{ provider: 'website_tracking' }`), and (2) the request's write key
+ * (Part 2 — `WebsiteTrackingKeyService`) must match the one stored for
+ * that integration via `IntegrationService.setCredentials()`/
+ * `getCredentials()` — the same encrypted-credential mechanism every
+ * other provider uses, reused here for a client-embeddable key rather
+ * than a server-side API secret. Fail-closed: a missing or unmatched
+ * key is always rejected, including when no key has been generated
+ * yet — unlike RateLimitGuard's fail-open, this is a security boundary
+ * (doc18), not an availability one.
  *
  * Deliberately does not implement anonymous → known identity linking
  * (doc09/doc20), UCIR wiring (doc08), Customer Activity History, or
@@ -41,9 +44,10 @@ export class WebsiteEventIngestService {
   constructor(
     private readonly database: DatabaseService,
     private readonly idempotency: IdempotencyService,
+    private readonly integrationService: IntegrationService,
   ) {}
 
-  async ingest(workspaceId: string, input: IngestWebsiteEventInput): Promise<WebsiteEventIngestResult> {
+  async ingest(workspaceId: string, input: IngestWebsiteEventInput, writeKey: string | null): Promise<WebsiteEventIngestResult> {
     const integration = await this.findIntegration(workspaceId);
     if (!integration) {
       throw new NotFoundError('This workspace has no connection for the website_tracking provider.');
@@ -51,6 +55,8 @@ export class WebsiteEventIngestService {
     if (integration.status === 'disconnected') {
       throw new ConflictError('Cannot ingest a website event for a disconnected integration.');
     }
+
+    await this.verifyWriteKey(workspaceId, writeKey);
 
     const idempotencyKey = `website-event:${workspaceId}:${input.eventId}`;
     const reserved = await this.idempotency.reserve(idempotencyKey);
@@ -96,6 +102,22 @@ export class WebsiteEventIngestService {
 
     await this.idempotency.complete(idempotencyKey);
     return { status: 'accepted' };
+  }
+
+  private async verifyWriteKey(workspaceId: string, writeKey: string | null): Promise<void> {
+    const credentials = await this.integrationService.getCredentials(workspaceId, 'website_tracking');
+    const expected = credentials?.writeKey;
+
+    if (!expected || !writeKey) {
+      throw new UnauthenticatedError('Missing or invalid write key.');
+    }
+
+    const expectedBuffer = Buffer.from(expected);
+    const suppliedBuffer = Buffer.from(writeKey);
+    // timingSafeEqual throws on a length mismatch rather than returning false.
+    if (expectedBuffer.length !== suppliedBuffer.length || !timingSafeEqual(expectedBuffer, suppliedBuffer)) {
+      throw new UnauthenticatedError('Missing or invalid write key.');
+    }
   }
 
   private async findIntegration(workspaceId: string) {

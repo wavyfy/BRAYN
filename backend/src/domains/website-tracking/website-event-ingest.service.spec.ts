@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { WebsiteEventIngestService } from './website-event-ingest.service';
 import type { DatabaseService } from '../../database/database.service';
 import type { IdempotencyService } from '../../common/idempotency/idempotency.service';
+import type { IntegrationService } from '../integration/integration.service';
 import type { IngestWebsiteEventInput } from './dto/ingest-website-event.schema';
 
 function makeChain(finalResult: unknown) {
@@ -18,6 +19,7 @@ function makeChain(finalResult: unknown) {
 }
 
 const connectedIntegration = { id: 'int_1', status: 'connected' };
+const VALID_KEY = 'valid_write_key';
 
 const baseInput: IngestWebsiteEventInput = {
   visitorId: 'visitor_abc',
@@ -32,13 +34,13 @@ function makeDeps(
     reserve?: boolean;
     visitorRow?: unknown;
     sessionRow?: unknown;
+    credentials?: Record<string, string> | null;
   } = {},
 ) {
   const selectResults = overrides.select ?? [[connectedIntegration]];
   let selectCall = 0;
   const selectChains = selectResults.map((result) => makeChain(result));
 
-  const insertChains: Record<string, unknown> = {};
   const insertCallOrder: string[] = [];
 
   const visitorRow = overrides.visitorRow ?? { id: 'visitor_row_1' };
@@ -46,7 +48,7 @@ function makeDeps(
 
   const client = {
     select: vi.fn(() => selectChains[selectCall++] ?? makeChain([])),
-    insert: vi.fn((table: { [x: symbol]: string } | { name?: string }) => {
+    insert: vi.fn(() => {
       // Distinguish target table by call order: visitor upsert, then session upsert, then event insert.
       insertCallOrder.push('insert');
       const n = insertCallOrder.length;
@@ -61,16 +63,20 @@ function makeDeps(
     complete: vi.fn(async () => undefined),
   } as unknown as IdempotencyService;
 
-  const service = new WebsiteEventIngestService({ client } as unknown as DatabaseService, idempotency);
+  const integrationService = {
+    getCredentials: vi.fn(async () => (overrides.credentials === undefined ? { writeKey: VALID_KEY } : overrides.credentials)),
+  } as unknown as IntegrationService;
 
-  return { service, client, idempotency };
+  const service = new WebsiteEventIngestService({ client } as unknown as DatabaseService, idempotency, integrationService);
+
+  return { service, client, idempotency, integrationService };
 }
 
 describe('WebsiteEventIngestService', () => {
-  it('accepts a valid event: upserts visitor + session, inserts the event, completes idempotency', async () => {
+  it('accepts a valid event with a matching write key: upserts visitor + session, inserts the event, completes idempotency', async () => {
     const { service, client, idempotency } = makeDeps();
 
-    const result = await service.ingest('ws_1', baseInput);
+    const result = await service.ingest('ws_1', baseInput, VALID_KEY);
 
     expect(result).toEqual({ status: 'accepted' });
     expect(idempotency.reserve).toHaveBeenCalledWith('website-event:ws_1:evt_1');
@@ -81,19 +87,46 @@ describe('WebsiteEventIngestService', () => {
   it('throws NotFoundError when the workspace has no website_tracking connection', async () => {
     const { service } = makeDeps({ select: [[]] });
 
-    await expect(service.ingest('ws_1', baseInput)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(service.ingest('ws_1', baseInput, VALID_KEY)).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
   it('throws ConflictError when the website_tracking integration is disconnected', async () => {
     const { service } = makeDeps({ select: [[{ id: 'int_1', status: 'disconnected' }]] });
 
-    await expect(service.ingest('ws_1', baseInput)).rejects.toMatchObject({ code: 'CONFLICT' });
+    await expect(service.ingest('ws_1', baseInput, VALID_KEY)).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
+  it('throws UnauthenticatedError when no write key is supplied', async () => {
+    const { service, client } = makeDeps();
+
+    await expect(service.ingest('ws_1', baseInput, null)).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+    expect(client.insert).not.toHaveBeenCalled();
+  });
+
+  it('throws UnauthenticatedError when the supplied write key does not match', async () => {
+    const { service, client } = makeDeps();
+
+    await expect(service.ingest('ws_1', baseInput, 'wrong_key')).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+    expect(client.insert).not.toHaveBeenCalled();
+  });
+
+  it('throws UnauthenticatedError when no write key has been generated for this integration yet', async () => {
+    const { service, client } = makeDeps({ credentials: null });
+
+    await expect(service.ingest('ws_1', baseInput, VALID_KEY)).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+    expect(client.insert).not.toHaveBeenCalled();
+  });
+
+  it('throws UnauthenticatedError when stored credentials have no writeKey field', async () => {
+    const { service } = makeDeps({ credentials: { someOtherField: 'x' } });
+
+    await expect(service.ingest('ws_1', baseInput, VALID_KEY)).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
   });
 
   it('returns duplicate (and persists nothing) on a redelivered eventId', async () => {
     const { service, client } = makeDeps({ reserve: false });
 
-    const result = await service.ingest('ws_1', baseInput);
+    const result = await service.ingest('ws_1', baseInput, VALID_KEY);
 
     expect(result).toEqual({ status: 'duplicate' });
     expect(client.insert).not.toHaveBeenCalled();
@@ -102,7 +135,7 @@ describe('WebsiteEventIngestService', () => {
   it('scopes the visitor upsert to the given workspaceId and visitorId', async () => {
     const { service, client } = makeDeps();
 
-    await service.ingest('ws_1', baseInput);
+    await service.ingest('ws_1', baseInput, VALID_KEY);
 
     const visitorInsertChain = client.insert.mock.results[0].value as { values: ReturnType<typeof vi.fn> };
     expect(visitorInsertChain.values).toHaveBeenCalledWith(
@@ -116,7 +149,7 @@ describe('WebsiteEventIngestService', () => {
       sessionRow: { id: 'session_row_xyz' },
     });
 
-    await service.ingest('ws_1', baseInput);
+    await service.ingest('ws_1', baseInput, VALID_KEY);
 
     const sessionInsertChain = client.insert.mock.results[1].value as { values: ReturnType<typeof vi.fn> };
     expect(sessionInsertChain.values).toHaveBeenCalledWith(
@@ -138,7 +171,7 @@ describe('WebsiteEventIngestService', () => {
   it('uses the client-supplied occurredAt when given', async () => {
     const { service, client } = makeDeps();
 
-    await service.ingest('ws_1', { ...baseInput, occurredAt: '2026-01-01T00:00:00.000Z' });
+    await service.ingest('ws_1', { ...baseInput, occurredAt: '2026-01-01T00:00:00.000Z' }, VALID_KEY);
 
     const eventInsertChain = client.insert.mock.results[2].value as { values: ReturnType<typeof vi.fn> };
     expect(eventInsertChain.values).toHaveBeenCalledWith(
@@ -149,7 +182,7 @@ describe('WebsiteEventIngestService', () => {
   it('falls back to the server receipt time when occurredAt is omitted', async () => {
     const { service, client } = makeDeps();
 
-    await service.ingest('ws_1', baseInput);
+    await service.ingest('ws_1', baseInput, VALID_KEY);
 
     const eventInsertChain = client.insert.mock.results[2].value as { values: ReturnType<typeof vi.fn> };
     const call = eventInsertChain.values.mock.calls[0][0] as { occurredAt: Date };
@@ -159,7 +192,7 @@ describe('WebsiteEventIngestService', () => {
   it('stores the optional payload, defaulting to null when omitted', async () => {
     const { service, client } = makeDeps();
 
-    await service.ingest('ws_1', { ...baseInput, payload: { path: '/products/1' } });
+    await service.ingest('ws_1', { ...baseInput, payload: { path: '/products/1' } }, VALID_KEY);
 
     const eventInsertChain = client.insert.mock.results[2].value as { values: ReturnType<typeof vi.fn> };
     expect(eventInsertChain.values).toHaveBeenCalledWith(expect.objectContaining({ payload: { path: '/products/1' } }));

@@ -9,7 +9,7 @@ import { AuthGuard } from '../../common/auth/auth.guard';
 import { AllExceptionsFilter } from '../../common/errors/all-exceptions.filter';
 import { registerHttpLogging } from '../../common/logging/http-logging.hook';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
-import { ConflictError, NotFoundError } from '../../common/errors/app-error';
+import { ConflictError, NotFoundError, UnauthenticatedError } from '../../common/errors/app-error';
 
 describe('WebsiteEventController (e2e)', () => {
   let app: NestFastifyApplication;
@@ -53,16 +53,47 @@ describe('WebsiteEventController (e2e)', () => {
     websiteEventIngestService.ingest.mockClear();
   });
 
-  it('accepts a valid event with no bearer token — @Public(), no Clerk session exists for an anonymous visitor', async () => {
+  it('accepts a valid application/json event with no bearer token — @Public(), no Clerk session exists for an anonymous visitor', async () => {
     const res = await app.inject({
       method: 'POST',
-      url: '/workspaces/ws_1/website-events',
+      url: '/workspaces/ws_1/website-events?key=write_key_1',
       payload: validBody,
     });
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ status: 'accepted' });
-    expect(websiteEventIngestService.ingest).toHaveBeenCalledWith('ws_1', validBody);
+    expect(websiteEventIngestService.ingest).toHaveBeenCalledWith('ws_1', validBody, 'write_key_1');
+  });
+
+  it('passes null when no write key is supplied in the query string', async () => {
+    const res = await app.inject({ method: 'POST', url: '/workspaces/ws_1/website-events', payload: validBody });
+
+    expect(res.statusCode).toBe(200);
+    expect(websiteEventIngestService.ingest).toHaveBeenCalledWith('ws_1', validBody, null);
+  });
+
+  it('accepts a text/plain body — the SDK sends this content type deliberately to stay CORS-simple', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/website-events?key=write_key_1',
+      headers: { 'content-type': 'text/plain' },
+      payload: JSON.stringify(validBody),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(websiteEventIngestService.ingest).toHaveBeenCalledWith('ws_1', validBody, 'write_key_1');
+  });
+
+  it('rejects a malformed text/plain body with 400', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/website-events',
+      headers: { 'content-type': 'text/plain' },
+      payload: '{not valid json',
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(websiteEventIngestService.ingest).not.toHaveBeenCalled();
   });
 
   it('rejects a payload missing required fields with 400', async () => {
@@ -105,6 +136,14 @@ describe('WebsiteEventController (e2e)', () => {
     const res = await app.inject({ method: 'POST', url: '/workspaces/ws_1/website-events', payload: validBody });
 
     expect(res.statusCode).toBe(409);
+  });
+
+  it('surfaces a missing/invalid write key as 401', async () => {
+    websiteEventIngestService.ingest.mockRejectedValueOnce(new UnauthenticatedError('Missing or invalid write key.'));
+
+    const res = await app.inject({ method: 'POST', url: '/workspaces/ws_1/website-events', payload: validBody });
+
+    expect(res.statusCode).toBe(401);
   });
 
   it('returns duplicate for a redelivered eventId', async () => {
