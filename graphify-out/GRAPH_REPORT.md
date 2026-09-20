@@ -1,11 +1,11 @@
-# Graph Report - .  (2026-09-14)
+# Graph Report - .  (2026-09-20)
 
 ## Corpus Check
-- 0 files · ~99,999 words
+- 396 files · ~271,594 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 11137 nodes · 14116 edges · 600 communities (569 shown, 31 thin omitted)
+- 11216 nodes · 14252 edges · 605 communities (572 shown, 33 thin omitted)
 - Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS · INFERRED: 51 edges (avg confidence: 0.84)
 - Token cost: 0 input · 0 output
 
@@ -563,19 +563,19 @@
 - [[_COMMUNITY_Community 550|Community 550]]
 - [[_COMMUNITY_Community 551|Community 551]]
 - [[_COMMUNITY_Community 552|Community 552]]
+- [[_COMMUNITY_Community 553|Community 553]]
+- [[_COMMUNITY_Community 554|Community 554]]
 - [[_COMMUNITY_Community 555|Community 555]]
 - [[_COMMUNITY_Community 556|Community 556]]
+- [[_COMMUNITY_Community 558|Community 558]]
 - [[_COMMUNITY_Community 559|Community 559]]
-- [[_COMMUNITY_Community 560|Community 560]]
-- [[_COMMUNITY_Community 568|Community 568]]
-- [[_COMMUNITY_Community 569|Community 569]]
-- [[_COMMUNITY_Community 570|Community 570]]
-- [[_COMMUNITY_Community 575|Community 575]]
+- [[_COMMUNITY_Community 562|Community 562]]
+- [[_COMMUNITY_Community 563|Community 563]]
+- [[_COMMUNITY_Community 565|Community 565]]
 - [[_COMMUNITY_Community 577|Community 577]]
-- [[_COMMUNITY_Community 582|Community 582]]
-- [[_COMMUNITY_Community 583|Community 583]]
-- [[_COMMUNITY_Community 584|Community 584]]
-- [[_COMMUNITY_Community 585|Community 585]]
+- [[_COMMUNITY_Community 578|Community 578]]
+- [[_COMMUNITY_Community 580|Community 580]]
+- [[_COMMUNITY_Community 581|Community 581]]
 - [[_COMMUNITY_Community 586|Community 586]]
 - [[_COMMUNITY_Community 587|Community 587]]
 - [[_COMMUNITY_Community 588|Community 588]]
@@ -588,6 +588,11 @@
 - [[_COMMUNITY_Community 595|Community 595]]
 - [[_COMMUNITY_Community 596|Community 596]]
 - [[_COMMUNITY_Community 597|Community 597]]
+- [[_COMMUNITY_Community 598|Community 598]]
+- [[_COMMUNITY_Community 599|Community 599]]
+- [[_COMMUNITY_Community 600|Community 600]]
+- [[_COMMUNITY_Community 601|Community 601]]
+- [[_COMMUNITY_Community 604|Community 604]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `StructuredLoggerService` - 64 edges
@@ -595,11 +600,11 @@
 3. `IntegrationProvider` - 45 edges
 4. `apiFetch()` - 44 edges
 5. `CustomerIntelligenceService` - 36 edges
-6. `WorkspaceMembershipGuard` - 32 edges
-7. `ProviderAdapter` - 32 edges
-8. `WorkspaceMembershipService` - 30 edges
-9. `RecommendationService` - 30 edges
-10. `MerchantKnowledgeService` - 27 edges
+6. `RevenueOpportunityService` - 35 edges
+7. `WorkspaceMembershipGuard` - 32 edges
+8. `ProviderAdapter` - 32 edges
+9. `WorkspaceMembershipService` - 31 edges
+10. `RecommendationService` - 30 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `AI Action Control` --semantically_similar_to--> `agent-browser SKILL (.agents)`  [INFERRED] [semantically similar]
@@ -630,87 +635,87 @@
 - **Optimistic pending/error form pattern** — create_workspace_form_CreateWorkspaceForm, rename_workspace_form_RenameWorkspaceForm, add_member_form_AddMemberForm, member_row_actions_MemberRowActions [INFERRED 0.85]
 - **Shared role catalog (doc 28)** — roles_workspaceRoles, badge_RoleBadge, add_member_form_AddMemberForm, member_row_actions_MemberRowActions [INFERRED 0.75]
 
-## Communities (600 total, 31 thin omitted)
+## Communities (605 total, 33 thin omitted)
 
 ### Community 0 - "Community 0"
-Cohesion: 0.04
-Nodes (62): aiActionControlService, membershipService, userService, membershipService, merchantBusinessAnalystService, userService, NO_ARGS_SCHEMA, AuthGuard (+54 more)
+Cohesion: 0.03
+Nodes (62): ApprovalState, AuditFields, ExecutionOutcome, ExecutionStatus, aiActionControlService, membershipService, userService, membershipService (+54 more)
 
 ### Community 1 - "Community 1"
 Cohesion: 0.03
-Nodes (66): ActionDefinition, ActionExecutionContext, ActionRiskLevel, ACTION_REGISTRY, ActionRegistry, buildActionRegistry(), completeInputSchema, dismissInputSchema (+58 more)
+Nodes (53): AiActionControlModule, AiAgentsModule, AutomationModule, CommerceModule, CustomerIntelligenceModule, CustomerRecord, DashboardController, DashboardModule (+45 more)
 
 ### Community 2 - "Community 2"
 Cohesion: 0.03
-Nodes (48): CollectionService, client, collections, insertChain, select, service, updatedAt, CustomerService (+40 more)
+Nodes (64): MerchantBusinessAnalystController, buildDerivedIntelligenceBlock(), buildMerchantKnowledgeBlock(), buildMerchantPolicyBlock(), buildRecommendationsBlock(), buildVerifiedCustomerFactsBlock(), KnowledgeEntryRow, MerchantBusinessAnalystService (+56 more)
 
 ### Community 3 - "Community 3"
-Cohesion: 0.03
-Nodes (47): LogsProtectedAccess(), ProtectedDataAccessMeta, ProtectedResourceType, ProtectedDataAccessInterceptor, ConversationController, accessLogInsert, accessLogValues, conversationService (+39 more)
+Cohesion: 0.04
+Nodes (66): AgentResult, buildCustomerFactsBlock(), buildEscalationTool(), buildMerchantKnowledgeBlock(), buildMerchantPolicyBlock(), buildRecommendationsBlock(), buildRevenueOpportunitiesBlock(), KnowledgeEntryRow (+58 more)
 
 ### Community 4 - "Community 4"
 Cohesion: 0.04
-Nodes (57): buildDerivedIntelligenceBlock(), buildMerchantKnowledgeBlock(), buildMerchantPolicyBlock(), buildRecommendationsBlock(), buildVerifiedCustomerFactsBlock(), KnowledgeEntryRow, MerchantBusinessAnalystService, RecommendationRow (+49 more)
+Nodes (49): ActionDefinition, ActionExecutionContext, ActionRiskLevel, ACTION_REGISTRY, ActionRegistry, buildActionRegistry(), completeInputSchema, dismissInputSchema (+41 more)
 
 ### Community 5 - "Community 5"
 Cohesion: 0.04
-Nodes (45): ActivityEntry, CommerceContext, CustomerIntelligenceService, CustomerListItem, CustomerListPage, CustomerProfile, CustomerRecord, RecentOrder (+37 more)
+Nodes (43): ProtectedDataAccessInterceptor, context, database, failingHandler, insert, interceptor, logger, reflector (+35 more)
 
 ### Community 6 - "Community 6"
-Cohesion: 0.04
-Nodes (40): loadConfiguration(), config, originalEnv, Env, envSchema, REQUIRED_IN_PRODUCTION, logger, warnOnMissingProductionSecrets() (+32 more)
+Cohesion: 0.08
+Nodes (36): auditRow, customerBody, customerExternalId, orderBody, orderUpdatedAt, recommendationForOpportunity, winBack, workspaceId (+28 more)
 
 ### Community 7 - "Community 7"
-Cohesion: 0.06
-Nodes (47): AgentResult, buildCustomerFactsBlock(), buildEscalationTool(), buildMerchantKnowledgeBlock(), buildMerchantPolicyBlock(), buildRecommendationsBlock(), buildRevenueOpportunitiesBlock(), KnowledgeEntryRow (+39 more)
+Cohesion: 0.04
+Nodes (33): loadConfiguration(), config, originalEnv, Env, envSchema, REQUIRED_IN_PRODUCTION, logger, warnOnMissingProductionSecrets() (+25 more)
 
 ### Community 8 - "Community 8"
 Cohesion: 0.06
-Nodes (40): NormalizedCollect, NormalizedCollection, NormalizedCustomer, NormalizedOrder, NormalizedRefund, NormalizedProduct, CollectionPage, CollectPage (+32 more)
+Nodes (42): NormalizedCollect, NormalizedCollection, NormalizedCustomer, client, conflictArg, customer, insertChain, service (+34 more)
 
 ### Community 9 - "Community 9"
-Cohesion: 0.09
-Nodes (31): CommerceModule, NormalizedFulfillment, NormalizedOrderLineItem, NormalizedRefundLineItem, NormalizedVariant, connectIntegrationSchema, integrationProviders, ConflictError (+23 more)
+Cohesion: 0.05
+Nodes (27): CollectionService, CustomerService, OrderService, ProductService, IdentityResolutionService, isWebhookResourceEvent(), collection, customer (+19 more)
 
 ### Community 10 - "Community 10"
-Cohesion: 0.06
-Nodes (28): AutomationController, AutomationConditions, AutomationService, matchesConditions(), aiActionControl, automation, created, current (+20 more)
+Cohesion: 0.05
+Nodes (27): CreateEntryInput, createEntrySchema, merchantKnowledgeEntryTypes, UpdateEntryInput, updateEntrySchema, MerchantKnowledgeController, MerchantKnowledgeService, client (+19 more)
 
 ### Community 11 - "Community 11"
-Cohesion: 0.04
-Nodes (48): completed_at, created_at, key, status, name, notNull, primaryKey, type (+40 more)
+Cohesion: 0.05
+Nodes (33): requestShopifyClientCredentialsToken(), AuthorizeUrlResult, decodeShopifyCallbackQuery(), OAuthState, SHOPIFY_OAUTH_SCOPES, ShopifyOAuthService, adapter, attackerFlow (+25 more)
 
 ### Community 12 - "Community 12"
 Cohesion: 0.05
 Nodes (48): adapter, chain, client, client2, completed, created, disconnected, disconnectedIntegration (+40 more)
 
 ### Community 13 - "Community 13"
-Cohesion: 0.07
-Nodes (21): CreateEntryInput, createEntrySchema, merchantKnowledgeEntryTypes, UpdateEntryInput, updateEntrySchema, MerchantKnowledgeController, MerchantKnowledgeService, created (+13 more)
+Cohesion: 0.04
+Nodes (48): completed_at, created_at, key, status, name, notNull, primaryKey, type (+40 more)
 
 ### Community 14 - "Community 14"
-Cohesion: 0.08
-Nodes (15): IntegrationProvider, IntegrationService, ProviderRegistry, boom, deadLetterRow, integration, makeChain(), makeDeps() (+7 more)
+Cohesion: 0.05
+Nodes (43): name, notNull, primaryKey, type, collection_id, external_id, integration_id, product_id (+35 more)
 
 ### Community 15 - "Community 15"
-Cohesion: 0.06
-Nodes (29): decodeShopifyCallbackQuery(), ShopifyOAuthService, adapter, attackerFlow, base, before, exchangeCall, fetchMock (+21 more)
+Cohesion: 0.09
+Nodes (10): connectIntegrationSchema, IntegrationProvider, integrationProviders, ImportRequestedPayload, IntegrationService, ProviderRegistry, adapter, registry (+2 more)
 
 ### Community 16 - "Community 16"
 Cohesion: 0.05
-Nodes (44): name, notNull, primaryKey, type, collection_id, customer_id, external_id, id (+36 more)
+Nodes (42): name, notNull, primaryKey, type, collection_id, external_id, integration_id, product_id (+34 more)
 
 ### Community 17 - "Community 17"
-Cohesion: 0.05
-Nodes (43): name, notNull, primaryKey, type, collection_id, created_at, external_id, integration_id (+35 more)
+Cohesion: 0.07
+Nodes (16): ConnectIntegrationInput, IntegrationController, deriveIntegrationHealth(), IntegrationHealth, IntegrationHealthInput, IntegrationHealthService, client, importRunService (+8 more)
 
 ### Community 18 - "Community 18"
 Cohesion: 0.05
-Nodes (43): name, notNull, primaryKey, type, collection_id, created_at, external_id, integration_id (+35 more)
+Nodes (41): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+33 more)
 
 ### Community 19 - "Community 19"
 Cohesion: 0.05
-Nodes (43): name, notNull, primaryKey, type, collection_id, created_at, external_id, integration_id (+35 more)
+Nodes (41): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+33 more)
 
 ### Community 20 - "Community 20"
 Cohesion: 0.05
@@ -718,11 +723,11 @@ Nodes (41): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+3
 
 ### Community 21 - "Community 21"
 Cohesion: 0.05
-Nodes (41): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+33 more)
+Nodes (40): name, notNull, primaryKey, type, collection_id, created_at, id, primary_email (+32 more)
 
 ### Community 22 - "Community 22"
-Cohesion: 0.09
-Nodes (22): auditRow, customerBody, customerExternalId, orderBody, orderUpdatedAt, recommendationForOpportunity, winBack, workspaceId (+14 more)
+Cohesion: 0.08
+Nodes (25): assertCursorMatchesStore(), authHeader(), isPrivateOrLoopbackHost(), modifiedAfterParam(), normalizeCustomer(), normalizeOrder(), normalizeProduct(), parseGmtDate() (+17 more)
 
 ### Community 23 - "Community 23"
 Cohesion: 0.05
@@ -734,167 +739,167 @@ Nodes (38): name, notNull, primaryKey, type, collection_id, external_id, id, int
 
 ### Community 25 - "Community 25"
 Cohesion: 0.06
-Nodes (36): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+28 more)
+Nodes (29): alreadyApproved, contextFor(), database, { database, insert, values }, { database, setCalls }, { database, values }, decided, definition (+21 more)
 
 ### Community 26 - "Community 26"
-Cohesion: 0.09
-Nodes (23): { apiFetch, refresh, approveAiActionRequest, denyAiActionRequest }, pendingRequest, createKnowledgeEntry(), updateKnowledgeEntry(), CustomerListItem, CustomerListPage, CustomersPage(), EditEntryForm() (+15 more)
+Cohesion: 0.10
+Nodes (16): AutomationController, AutomationConditions, AutomationService, matchesConditions(), matchesHealthConditions(), automationConditionsSchema, automationTriggerTypes, CreateAutomationInput (+8 more)
 
 ### Community 27 - "Community 27"
 Cohesion: 0.06
-Nodes (35): completed_at, created_at, cursor, key, records_failed, status, name, notNull (+27 more)
+Nodes (37): customer_id, external_id, integration_id, provider, source_updated_at, title, total_price, name (+29 more)
 
 ### Community 28 - "Community 28"
+Cohesion: 0.09
+Nodes (23): { apiFetch, refresh, approveAiActionRequest, denyAiActionRequest }, pendingRequest, createKnowledgeEntry(), updateKnowledgeEntry(), CustomerListItem, CustomerListPage, CustomersPage(), EditEntryForm() (+15 more)
+
+### Community 29 - "Community 29"
+Cohesion: 0.06
+Nodes (35): completed_at, created_at, cursor, key, records_failed, status, name, notNull (+27 more)
+
+### Community 30 - "Community 30"
 Cohesion: 0.11
 Nodes (34): CommerceModule, Domain Data Ownership After Normalization, Idempotent Import/Reconciliation Dedupe, Identity Resolution (canonical customer identity), Run-Per-Attempt Progress Tracking, Credential Cipher (common/crypto/credential-cipher.ts), CustomerService, NormalizedCustomer interface (+26 more)
 
-### Community 29 - "Community 29"
-Cohesion: 0.08
-Nodes (21): disconnectIntegration(), startIntegrationImport(), ConnectForm(), CredentialField, { refresh, connectProviderWithCredentials }, shopifyFields, formatDate(), ImportRun (+13 more)
-
-### Community 30 - "Community 30"
-Cohesion: 0.06
-Nodes (32): error, event_type, external_event_id, processed_at, received_at, workspace_id, name, notNull (+24 more)
-
 ### Community 31 - "Community 31"
-Cohesion: 0.06
-Nodes (32): name, notNull, primaryKey, type, collection_id, external_id, integration_id, product_id (+24 more)
+Cohesion: 0.08
+Nodes (18): customerDataRequests, verifyShopifyHmac(), ShopifyComplianceController, SHOPIFY_COMPLIANCE_TOPICS, ShopifyComplianceCustomer, ShopifyComplianceService, ShopifyComplianceTopic, ShopifyCustomersRedactPayload (+10 more)
 
 ### Community 32 - "Community 32"
 Cohesion: 0.08
-Nodes (15): ImportRunService, client, created, integration, runningRun, service, setArg, updateChain (+7 more)
+Nodes (21): disconnectIntegration(), startIntegrationImport(), ConnectForm(), CredentialField, { refresh, connectProviderWithCredentials }, shopifyFields, formatDate(), ImportRun (+13 more)
 
 ### Community 33 - "Community 33"
-Cohesion: 0.14
-Nodes (14): AiActionControlModule, AiActionRequestController, AiAgentsModule, MerchantBusinessAnalystController, AiModule, AutomationModule, ConversationModule, CustomerIntelligenceModule (+6 more)
+Cohesion: 0.06
+Nodes (32): error, event_type, external_event_id, processed_at, received_at, workspace_id, name, notNull (+24 more)
 
 ### Community 34 - "Community 34"
+Cohesion: 0.07
+Nodes (32): customer_id, external_id, integration_id, provider, title, workspace_id, name, notNull (+24 more)
+
+### Community 35 - "Community 35"
 Cohesion: 0.06
 Nodes (31): email, external_id, first_name, last_name, phone, source_updated_at, name, notNull (+23 more)
 
-### Community 35 - "Community 35"
-Cohesion: 0.09
-Nodes (9): DatabaseService, IdempotencyModule, IdempotencyService, chain, client, service, idempotencyKeys, AppController (+1 more)
-
 ### Community 36 - "Community 36"
-Cohesion: 0.07
-Nodes (29): dependencies, @clerk/nextjs, clsx, next, react, react-dom, tailwind-merge, zod (+21 more)
+Cohesion: 0.09
+Nodes (12): LogsProtectedAccess(), ProtectedDataAccessMeta, ProtectedResourceType, ConversationController, ConversationModule, CustomerIntelligenceController, SendMessageInput, sendMessageSchema (+4 more)
 
 ### Community 37 - "Community 37"
 Cohesion: 0.07
-Nodes (30): name, notNull, primaryKey, type, clerk_user_id, created_at, id, name (+22 more)
+Nodes (23): callOrder, collectionPage, collectionService, collectPage, credentials, customerPage, customerService, fetchCollections (+15 more)
 
 ### Community 38 - "Community 38"
 Cohesion: 0.07
-Nodes (30): name, notNull, primaryKey, type, clerk_user_id, created_at, id, name (+22 more)
+Nodes (29): dependencies, @clerk/nextjs, clsx, next, react, react-dom, tailwind-merge, zod (+21 more)
 
 ### Community 39 - "Community 39"
 Cohesion: 0.07
-Nodes (30): discrepancies_found, discrepancies_repaired, id, records_checked, triggered_by, default, name, notNull (+22 more)
+Nodes (30): name, notNull, primaryKey, type, clerk_user_id, created_at, id, name (+22 more)
 
 ### Community 40 - "Community 40"
 Cohesion: 0.07
-Nodes (23): callOrder, collectionPage, collectionService, collectPage, credentials, customerPage, customerService, fetchCollections (+15 more)
+Nodes (30): name, notNull, primaryKey, type, clerk_user_id, created_at, id, name (+22 more)
 
 ### Community 41 - "Community 41"
-Cohesion: 0.08
-Nodes (16): ShopifyOAuthHandoffGuard, { context }, { context, request }, guard, handoffService, ConsumedHandoffToken, hashToken(), MintedHandoffToken (+8 more)
+Cohesion: 0.07
+Nodes (23): callOrder, collectionPage, collectionService, collectPage, credentials, customerPage, customerService, fetchCollections (+15 more)
 
 ### Community 42 - "Community 42"
-Cohesion: 0.07
-Nodes (29): cursor, error, records_failed, records_imported, started_at, name, notNull, primaryKey (+21 more)
+Cohesion: 0.10
+Nodes (22): auditChain, chain, client, created, database, deleteChain, demoteChain, insert (+14 more)
 
 ### Community 43 - "Community 43"
 Cohesion: 0.07
-Nodes (29): cursor, error, records_failed, records_imported, started_at, name, notNull, primaryKey (+21 more)
+Nodes (29): cursor, integration_id, records_failed, records_imported, started_at, name, notNull, primaryKey (+21 more)
 
 ### Community 44 - "Community 44"
 Cohesion: 0.07
-Nodes (29): discrepancies_found, discrepancies_repaired, integration_id, started_at, triggered_by, default, name, notNull (+21 more)
+Nodes (29): cursor, error, records_failed, records_imported, started_at, name, notNull, primaryKey (+21 more)
 
 ### Community 45 - "Community 45"
 Cohesion: 0.07
-Nodes (29): cursor, error, records_failed, records_imported, started_at, name, notNull, primaryKey (+21 more)
+Nodes (29): discrepancies_found, discrepancies_repaired, integration_id, started_at, triggered_by, default, name, notNull (+21 more)
 
 ### Community 46 - "Community 46"
 Cohesion: 0.07
-Nodes (23): callOrder, collectionPage, collectionService, collectPage, credentials, customerPage, customerService, fetchCollections (+15 more)
+Nodes (29): discrepancies_found, error, records_checked, started_at, triggered_by, default, name, notNull (+21 more)
 
 ### Community 47 - "Community 47"
-Cohesion: 0.11
-Nodes (14): UpdateWorkspaceInput, updateWorkspaceSchema, membershipService, userService, workspaceService, WorkspaceController, chain, client (+6 more)
-
-### Community 48 - "Community 48"
-Cohesion: 0.08
-Nodes (11): RecommendationController, RecommendationService, client, insert, insertChain, OPPORTUNITY, rows, select (+3 more)
-
-### Community 49 - "Community 49"
-Cohesion: 0.07
-Nodes (28): integration_reconciliation_runs_integration_id_integrations_id_fk, integration_reconciliation_runs_integration_idx, integration_reconciliation_runs_workspace_idx, columnsFrom, columnsTo, name, onDelete, onUpdate (+20 more)
-
-### Community 50 - "Community 50"
 Cohesion: 0.07
 Nodes (21): callOrder, collectionPage, collectionService, customerPage, customerService, fetchCollections, fetchCollects, fetchCustomers (+13 more)
 
-### Community 51 - "Community 51"
-Cohesion: 0.13
-Nodes (18): assertCursorMatchesStore(), authHeader(), isPrivateOrLoopbackHost(), modifiedAfterParam(), normalizeCustomer(), normalizeOrder(), normalizeProduct(), parseGmtDate() (+10 more)
-
-### Community 52 - "Community 52"
+### Community 48 - "Community 48"
 Cohesion: 0.07
-Nodes (27): name, notNull, primaryKey, type, action_type, conditions, enabled, name (+19 more)
+Nodes (28): integration_reconciliation_runs_integration_id_integrations_id_fk, integration_reconciliation_runs_integration_idx, integration_reconciliation_runs_workspace_idx, columnsFrom, columnsTo, name, onDelete, onUpdate (+20 more)
 
-### Community 53 - "Community 53"
-Cohesion: 0.07
-Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
-
-### Community 54 - "Community 54"
+### Community 49 - "Community 49"
 Cohesion: 0.16
 Nodes (17): addMember(), connectIntegration(), connectIntegrationCredentials(), connectProviderWithCredentials(), createWorkspace(), removeMember(), renameWorkspace(), transferOwnership() (+9 more)
 
-### Community 55 - "Community 55"
+### Community 50 - "Community 50"
 Cohesion: 0.07
 Nodes (27): completed_at, key, status, name, notNull, primaryKey, type, name (+19 more)
 
-### Community 56 - "Community 56"
-Cohesion: 0.07
-Nodes (27): event_type, external_event_id, integration_id, processed_at, received_at, name, notNull, primaryKey (+19 more)
-
-### Community 57 - "Community 57"
+### Community 51 - "Community 51"
 Cohesion: 0.07
 Nodes (27): completed_at, key, status, name, notNull, primaryKey, type, name (+19 more)
 
-### Community 58 - "Community 58"
+### Community 52 - "Community 52"
+Cohesion: 0.07
+Nodes (27): error, event_type, external_event_id, processed_at, received_at, name, notNull, primaryKey (+19 more)
+
+### Community 53 - "Community 53"
 Cohesion: 0.07
 Nodes (27): event_type, external_event_id, integration_id, processed_at, received_at, name, notNull, primaryKey (+19 more)
 
-### Community 59 - "Community 59"
+### Community 54 - "Community 54"
 Cohesion: 0.07
 Nodes (27): credentials, last_sync_error, last_synced_at, provider, updated_at, name, notNull, primaryKey (+19 more)
 
+### Community 55 - "Community 55"
+Cohesion: 0.07
+Nodes (27): external_id, integration_id, provider, title, updated_at, name, notNull, primaryKey (+19 more)
+
+### Community 56 - "Community 56"
+Cohesion: 0.07
+Nodes (27): id, inventory_quantity, price, product_id, sku, default, name, notNull (+19 more)
+
+### Community 57 - "Community 57"
+Cohesion: 0.07
+Nodes (27): email, first_name, last_name, phone, updated_at, name, notNull, primaryKey (+19 more)
+
+### Community 58 - "Community 58"
+Cohesion: 0.07
+Nodes (27): order_id, price, quantity, updated_at, variant_id, name, notNull, primaryKey (+19 more)
+
+### Community 59 - "Community 59"
+Cohesion: 0.07
+Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
+
 ### Community 60 - "Community 60"
 Cohesion: 0.07
-Nodes (27): inventory_quantity, price, product_id, sku, updated_at, name, notNull, primaryKey (+19 more)
+Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
 
 ### Community 61 - "Community 61"
 Cohesion: 0.07
-Nodes (27): email, first_name, last_name, phone, updated_at, name, notNull, primaryKey (+19 more)
+Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
 
 ### Community 62 - "Community 62"
 Cohesion: 0.07
-Nodes (27): email, first_name, last_name, phone, updated_at, name, notNull, primaryKey (+19 more)
+Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
 
 ### Community 63 - "Community 63"
 Cohesion: 0.07
-Nodes (27): email, first_name, last_name, phone, updated_at, name, notNull, primaryKey (+19 more)
+Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
 
 ### Community 64 - "Community 64"
 Cohesion: 0.07
-Nodes (27): created_at, inventory_quantity, price, product_id, sku, default, name, notNull (+19 more)
+Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
 
 ### Community 65 - "Community 65"
 Cohesion: 0.07
-Nodes (27): order_id, price, quantity, updated_at, variant_id, name, notNull, primaryKey (+19 more)
+Nodes (27): name, notNull, primaryKey, type, action_type, conditions, enabled, name (+19 more)
 
 ### Community 66 - "Community 66"
 Cohesion: 0.07
@@ -902,7 +907,7 @@ Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+1
 
 ### Community 67 - "Community 67"
 Cohesion: 0.07
-Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
+Nodes (27): name, notNull, primaryKey, type, action_type, conditions, enabled, name (+19 more)
 
 ### Community 68 - "Community 68"
 Cohesion: 0.07
@@ -910,7 +915,7 @@ Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+1
 
 ### Community 69 - "Community 69"
 Cohesion: 0.07
-Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
+Nodes (27): name, notNull, primaryKey, type, action_type, conditions, enabled, name (+19 more)
 
 ### Community 70 - "Community 70"
 Cohesion: 0.07
@@ -918,71 +923,71 @@ Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+1
 
 ### Community 71 - "Community 71"
 Cohesion: 0.07
-Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
+Nodes (27): name, notNull, primaryKey, type, action_type, conditions, enabled, name (+19 more)
 
 ### Community 72 - "Community 72"
 Cohesion: 0.07
-Nodes (27): name, notNull, primaryKey, type, action_type, conditions, enabled, name (+19 more)
+Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
 
 ### Community 73 - "Community 73"
 Cohesion: 0.07
-Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
+Nodes (27): name, notNull, primaryKey, type, action_type, conditions, enabled, name (+19 more)
 
 ### Community 74 - "Community 74"
 Cohesion: 0.07
-Nodes (27): name, notNull, primaryKey, type, action_type, conditions, enabled, name (+19 more)
+Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
 
 ### Community 75 - "Community 75"
 Cohesion: 0.07
-Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
+Nodes (27): name, notNull, primaryKey, type, action_type, conditions, enabled, name (+19 more)
 
 ### Community 76 - "Community 76"
 Cohesion: 0.07
-Nodes (27): name, notNull, primaryKey, type, action_type, conditions, enabled, name (+19 more)
+Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
 
 ### Community 77 - "Community 77"
 Cohesion: 0.07
-Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
+Nodes (27): name, notNull, primaryKey, type, action_type, conditions, enabled, name (+19 more)
 
 ### Community 78 - "Community 78"
 Cohesion: 0.07
-Nodes (27): name, notNull, primaryKey, type, action_type, conditions, enabled, name (+19 more)
+Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
 
 ### Community 79 - "Community 79"
-Cohesion: 0.07
-Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
+Cohesion: 0.09
+Nodes (22): activityCall, activityFixture, call, customerIntelligence, database, { database, insert, values }, logger, makeCustomerIntelligence() (+14 more)
 
 ### Community 80 - "Community 80"
-Cohesion: 0.07
-Nodes (27): name, notNull, primaryKey, type, action_type, conditions, enabled, name (+19 more)
+Cohesion: 0.08
+Nodes (25): dependencies, zod, devDependencies, eslint, eslint-config-prettier, prettier, turbo, @types/node (+17 more)
 
 ### Community 81 - "Community 81"
-Cohesion: 0.07
-Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
-
-### Community 82 - "Community 82"
-Cohesion: 0.07
-Nodes (27): name, notNull, primaryKey, type, action_type, conditions, enabled, name (+19 more)
-
-### Community 83 - "Community 83"
-Cohesion: 0.07
-Nodes (27): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+19 more)
-
-### Community 84 - "Community 84"
-Cohesion: 0.08
-Nodes (26): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+18 more)
-
-### Community 85 - "Community 85"
-Cohesion: 0.08
-Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+18 more)
-
-### Community 86 - "Community 86"
 Cohesion: 0.08
 Nodes (26): email, first_name, last_name, phone, source_updated_at, name, notNull, primaryKey (+18 more)
 
+### Community 82 - "Community 82"
+Cohesion: 0.08
+Nodes (26): email, first_name, last_name, phone, source_updated_at, name, notNull, primaryKey (+18 more)
+
+### Community 83 - "Community 83"
+Cohesion: 0.08
+Nodes (26): inventory_quantity, price, product_id, provider, sku, name, notNull, primaryKey (+18 more)
+
+### Community 84 - "Community 84"
+Cohesion: 0.08
+Nodes (26): shipment_status, status, tracking_company, tracking_number, tracking_url, columns, name, notNull (+18 more)
+
+### Community 85 - "Community 85"
+Cohesion: 0.08
+Nodes (26): email, first_name, last_name, phone, source_updated_at, name, notNull, primaryKey (+18 more)
+
+### Community 86 - "Community 86"
+Cohesion: 0.08
+Nodes (26): shipment_status, status, tracking_company, tracking_number, tracking_url, columns, name, notNull (+18 more)
+
 ### Community 87 - "Community 87"
 Cohesion: 0.08
-Nodes (26): external_id, integration_id, provider, title, workspace_id, name, notNull, primaryKey (+18 more)
+Nodes (26): name, notNull, primaryKey, type, canonical_customer_id, email, first_name, last_name (+18 more)
 
 ### Community 88 - "Community 88"
 Cohesion: 0.08
@@ -990,15 +995,15 @@ Nodes (26): shipment_status, status, tracking_company, tracking_number, tracking
 
 ### Community 89 - "Community 89"
 Cohesion: 0.08
-Nodes (26): integration_id, order_id, provider, quantity, variant_id, name, notNull, primaryKey (+18 more)
+Nodes (26): name, notNull, primaryKey, type, canonical_customer_id, email, first_name, last_name (+18 more)
 
 ### Community 90 - "Community 90"
 Cohesion: 0.08
-Nodes (26): email, first_name, last_name, phone, source_updated_at, name, notNull, primaryKey (+18 more)
+Nodes (26): order_id, shipment_status, tracking_company, tracking_number, tracking_url, name, notNull, primaryKey (+18 more)
 
 ### Community 91 - "Community 91"
 Cohesion: 0.08
-Nodes (26): shipment_status, status, tracking_company, tracking_number, tracking_url, columns, name, notNull (+18 more)
+Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+18 more)
 
 ### Community 92 - "Community 92"
 Cohesion: 0.08
@@ -1006,63 +1011,63 @@ Nodes (26): name, notNull, primaryKey, type, canonical_customer_id, email, first
 
 ### Community 93 - "Community 93"
 Cohesion: 0.08
-Nodes (26): shipment_status, status, tracking_company, tracking_number, tracking_url, columns, name, notNull (+18 more)
+Nodes (26): order_id, shipment_status, tracking_company, tracking_number, tracking_url, name, notNull, primaryKey (+18 more)
 
 ### Community 94 - "Community 94"
 Cohesion: 0.08
-Nodes (26): name, notNull, primaryKey, type, canonical_customer_id, email, first_name, last_name (+18 more)
+Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+18 more)
 
 ### Community 95 - "Community 95"
 Cohesion: 0.08
-Nodes (26): order_id, shipment_status, tracking_company, tracking_number, tracking_url, name, notNull, primaryKey (+18 more)
+Nodes (26): name, notNull, primaryKey, type, canonical_customer_id, email, first_name, last_name (+18 more)
 
 ### Community 96 - "Community 96"
 Cohesion: 0.08
-Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+18 more)
+Nodes (26): order_id, shipment_status, tracking_company, tracking_number, tracking_url, name, notNull, primaryKey (+18 more)
 
 ### Community 97 - "Community 97"
 Cohesion: 0.08
-Nodes (26): name, notNull, primaryKey, type, canonical_customer_id, email, first_name, last_name (+18 more)
+Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+18 more)
 
 ### Community 98 - "Community 98"
 Cohesion: 0.08
-Nodes (26): order_id, shipment_status, tracking_company, tracking_number, tracking_url, name, notNull, primaryKey (+18 more)
+Nodes (26): name, notNull, primaryKey, type, canonical_customer_id, email, first_name, last_name (+18 more)
 
 ### Community 99 - "Community 99"
 Cohesion: 0.08
-Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+18 more)
+Nodes (26): order_id, shipment_status, tracking_company, tracking_number, tracking_url, name, notNull, primaryKey (+18 more)
 
 ### Community 100 - "Community 100"
 Cohesion: 0.08
-Nodes (26): name, notNull, primaryKey, type, canonical_customer_id, email, first_name, last_name (+18 more)
+Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+18 more)
 
 ### Community 101 - "Community 101"
 Cohesion: 0.08
-Nodes (26): order_id, shipment_status, tracking_company, tracking_number, tracking_url, name, notNull, primaryKey (+18 more)
+Nodes (26): name, notNull, primaryKey, type, canonical_customer_id, email, first_name, last_name (+18 more)
 
 ### Community 102 - "Community 102"
 Cohesion: 0.08
-Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+18 more)
+Nodes (26): order_id, shipment_status, tracking_company, tracking_number, tracking_url, name, notNull, primaryKey (+18 more)
 
 ### Community 103 - "Community 103"
 Cohesion: 0.08
-Nodes (26): name, notNull, primaryKey, type, canonical_customer_id, email, first_name, last_name (+18 more)
+Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+18 more)
 
 ### Community 104 - "Community 104"
 Cohesion: 0.08
-Nodes (26): order_id, shipment_status, tracking_company, tracking_number, tracking_url, name, notNull, primaryKey (+18 more)
+Nodes (26): name, notNull, primaryKey, type, canonical_customer_id, email, first_name, last_name (+18 more)
 
 ### Community 105 - "Community 105"
 Cohesion: 0.08
-Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+18 more)
+Nodes (26): order_id, shipment_status, tracking_company, tracking_number, tracking_url, name, notNull, primaryKey (+18 more)
 
 ### Community 106 - "Community 106"
 Cohesion: 0.08
-Nodes (26): name, notNull, primaryKey, type, canonical_customer_id, email, first_name, last_name (+18 more)
+Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+18 more)
 
 ### Community 107 - "Community 107"
 Cohesion: 0.08
-Nodes (26): order_id, shipment_status, tracking_company, tracking_number, tracking_url, name, notNull, primaryKey (+18 more)
+Nodes (26): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+18 more)
 
 ### Community 108 - "Community 108"
 Cohesion: 0.08
@@ -1070,11 +1075,11 @@ Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 109 - "Community 109"
 Cohesion: 0.08
-Nodes (26): name, notNull, primaryKey, type, canonical_customer_id, email, first_name, last_name (+18 more)
+Nodes (26): email, first_name, integration_id, last_name, phone, name, notNull, primaryKey (+18 more)
 
 ### Community 110 - "Community 110"
 Cohesion: 0.08
-Nodes (26): order_id, shipment_status, tracking_company, tracking_number, tracking_url, name, notNull, primaryKey (+18 more)
+Nodes (26): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+18 more)
 
 ### Community 111 - "Community 111"
 Cohesion: 0.08
@@ -1090,15 +1095,15 @@ Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 114 - "Community 114"
 Cohesion: 0.08
-Nodes (26): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+18 more)
+Nodes (26): email, first_name, last_name, phone, source_updated_at, name, notNull, primaryKey (+18 more)
 
 ### Community 115 - "Community 115"
 Cohesion: 0.08
-Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+18 more)
+Nodes (26): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+18 more)
 
 ### Community 116 - "Community 116"
 Cohesion: 0.08
-Nodes (26): email, first_name, last_name, phone, source_updated_at, name, notNull, primaryKey (+18 more)
+Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+18 more)
 
 ### Community 117 - "Community 117"
 Cohesion: 0.08
@@ -1114,43 +1119,43 @@ Nodes (26): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+1
 
 ### Community 120 - "Community 120"
 Cohesion: 0.08
-Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+18 more)
+Nodes (26): name, notNull, primaryKey, type, collection_id, external_id, integration_id, product_id (+18 more)
 
 ### Community 121 - "Community 121"
 Cohesion: 0.08
-Nodes (26): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+18 more)
+Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+18 more)
 
 ### Community 122 - "Community 122"
 Cohesion: 0.08
-Nodes (26): name, notNull, primaryKey, type, collection_id, external_id, integration_id, product_id (+18 more)
+Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+18 more)
 
 ### Community 123 - "Community 123"
 Cohesion: 0.08
-Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+18 more)
+Nodes (26): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+18 more)
 
 ### Community 124 - "Community 124"
 Cohesion: 0.08
-Nodes (26): name, notNull, primaryKey, type, name, notNull, primaryKey, type (+18 more)
+Nodes (26): name, notNull, primaryKey, type, collection_id, external_id, integration_id, product_id (+18 more)
 
 ### Community 125 - "Community 125"
 Cohesion: 0.08
 Nodes (26): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+18 more)
 
 ### Community 126 - "Community 126"
-Cohesion: 0.08
-Nodes (25): dependencies, zod, devDependencies, eslint, eslint-config-prettier, prettier, turbo, @types/node (+17 more)
-
-### Community 127 - "Community 127"
-Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
-
-### Community 128 - "Community 128"
 Cohesion: 0.13
 Nodes (25): Agent Browser, Architecture Discipline (Rule 8), Authority (Rule 1), Before Coding (Rule 4), BRAYN, Caveman, Claude-Mem, Claude Responsibility (Rule 2) (+17 more)
 
-### Community 129 - "Community 129"
+### Community 127 - "Community 127"
 Cohesion: 0.14
 Nodes (18): HomePage(), WorkspaceSummary, ApiErrorState(), TITLE_BY_STATUS, RoleBadge(), roleStyles, Card(), CardContent() (+10 more)
+
+### Community 128 - "Community 128"
+Cohesion: 0.09
+Nodes (19): AFFINITY_UNAVAILABLE, client, createdRow, customer, eventBus, insert, insertChain, lastOrderAt (+11 more)
+
+### Community 129 - "Community 129"
+Cohesion: 0.08
+Nodes (25): integrations_workspace_id_workspaces_id_fk, integrations_workspace_provider_unique, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom (+17 more)
 
 ### Community 130 - "Community 130"
 Cohesion: 0.08
@@ -1158,7 +1163,7 @@ Nodes (25): integrations_workspace_id_workspaces_id_fk, integrations_workspace_p
 
 ### Community 131 - "Community 131"
 Cohesion: 0.08
-Nodes (25): integrations_workspace_id_workspaces_id_fk, integrations_workspace_provider_unique, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
 
 ### Community 132 - "Community 132"
 Cohesion: 0.08
@@ -1178,7 +1183,7 @@ Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 136 - "Community 136"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
 
 ### Community 137 - "Community 137"
 Cohesion: 0.08
@@ -1198,7 +1203,7 @@ Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 141 - "Community 141"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
 
 ### Community 142 - "Community 142"
 Cohesion: 0.08
@@ -1214,7 +1219,7 @@ Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 145 - "Community 145"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
 
 ### Community 146 - "Community 146"
 Cohesion: 0.08
@@ -1222,7 +1227,7 @@ Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 147 - "Community 147"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
 
 ### Community 148 - "Community 148"
 Cohesion: 0.08
@@ -1230,67 +1235,67 @@ Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 149 - "Community 149"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
 
 ### Community 150 - "Community 150"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
 
 ### Community 151 - "Community 151"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
 
 ### Community 152 - "Community 152"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
 
 ### Community 153 - "Community 153"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
 
 ### Community 154 - "Community 154"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
 
 ### Community 155 - "Community 155"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
 
 ### Community 156 - "Community 156"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
 
 ### Community 157 - "Community 157"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
 
 ### Community 158 - "Community 158"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
 
 ### Community 159 - "Community 159"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
 
 ### Community 160 - "Community 160"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
 
 ### Community 161 - "Community 161"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
 
 ### Community 162 - "Community 162"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
 
 ### Community 163 - "Community 163"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
 
 ### Community 164 - "Community 164"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
 
 ### Community 165 - "Community 165"
 Cohesion: 0.08
@@ -1302,39 +1307,39 @@ Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 167 - "Community 167"
 Cohesion: 0.08
-Nodes (24): columns, concurrently, isUnique, method, name, with, dialect, id (+16 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
 
 ### Community 168 - "Community 168"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
+Nodes (24): columns, concurrently, isUnique, method, name, with, dialect, id (+16 more)
 
 ### Community 169 - "Community 169"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
 
 ### Community 170 - "Community 170"
 Cohesion: 0.08
-Nodes (24): columns, concurrently, isUnique, method, name, with, dialect, id (+16 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
 
 ### Community 171 - "Community 171"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
+Nodes (24): columns, concurrently, isUnique, method, name, with, dialect, id (+16 more)
 
 ### Community 172 - "Community 172"
 Cohesion: 0.08
-Nodes (24): columns, concurrently, isUnique, method, name, with, dialect, id (+16 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
 
 ### Community 173 - "Community 173"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columns (+17 more)
 
 ### Community 174 - "Community 174"
 Cohesion: 0.08
-Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
+Nodes (24): columns, concurrently, isUnique, method, name, with, dialect, id (+16 more)
 
 ### Community 175 - "Community 175"
 Cohesion: 0.08
-Nodes (24): dialect, id, prevId, checkConstraints, compositePrimaryKeys, indexes, isRLSEnabled, name (+16 more)
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
 
 ### Community 176 - "Community 176"
 Cohesion: 0.08
@@ -1345,100 +1350,100 @@ Cohesion: 0.08
 Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
 
 ### Community 178 - "Community 178"
-Cohesion: 0.12
-Nodes (12): users, UserController, client, created, existing, initialSelect, insertChain, raceSelect (+4 more)
+Cohesion: 0.08
+Nodes (25): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+17 more)
 
 ### Community 179 - "Community 179"
 Cohesion: 0.08
-Nodes (24): external_id, provider, source_updated_at, title, name, notNull, primaryKey, type (+16 more)
+Nodes (24): dialect, id, prevId, checkConstraints, compositePrimaryKeys, indexes, isRLSEnabled, name (+16 more)
 
 ### Community 180 - "Community 180"
+Cohesion: 0.19
+Nodes (6): ImportProcessorService, FetchOptions, ProviderAdapter, ReconciliationProcessorService, SyncProcessorService, SyncRequestedPayload
+
+### Community 181 - "Community 181"
+Cohesion: 0.11
+Nodes (7): DatabaseService, IdempotencyModule, IdempotencyService, chain, client, service, idempotencyKeys
+
+### Community 182 - "Community 182"
 Cohesion: 0.09
 Nodes (24): name, notNull, primaryKey, type, clerk_user_id, id, name, updated_at (+16 more)
 
-### Community 181 - "Community 181"
+### Community 183 - "Community 183"
 Cohesion: 0.08
 Nodes (24): discrepancies_found, discrepancies_repaired, records_checked, triggered_by, default, name, notNull, primaryKey (+16 more)
 
-### Community 182 - "Community 182"
+### Community 184 - "Community 184"
 Cohesion: 0.08
 Nodes (24): integrations_workspace_id_workspaces_id_fk, integrations_workspace_provider_unique, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom (+16 more)
 
-### Community 183 - "Community 183"
+### Community 185 - "Community 185"
 Cohesion: 0.08
 Nodes (24): order_line_item_id, quantity, refund_id, workspace_id, name, notNull, primaryKey, type (+16 more)
 
-### Community 184 - "Community 184"
+### Community 186 - "Community 186"
 Cohesion: 0.08
-Nodes (24): created_at, id, primary_email, updated_at, default, name, notNull, primaryKey (+16 more)
+Nodes (24): external_id, provider, source_updated_at, title, name, notNull, primaryKey, type (+16 more)
 
-### Community 185 - "Community 185"
+### Community 187 - "Community 187"
 Cohesion: 0.11
 Nodes (18): detectRevenueOpportunities(), dismissRecommendation(), generateRecommendations(), recalculateCustomerHealth(), DetectOpportunitiesButton(), DismissRecommendationButton(), GenerateRecommendationsButton(), ActivityEntry (+10 more)
 
-### Community 186 - "Community 186"
-Cohesion: 0.09
-Nodes (23): completed_at, created_at, key, status, name, notNull, primaryKey, type (+15 more)
-
-### Community 187 - "Community 187"
-Cohesion: 0.09
-Nodes (23): customer_id, id, total_price, workspace_id, name, notNull, primaryKey, type (+15 more)
-
 ### Community 188 - "Community 188"
 Cohesion: 0.09
-Nodes (23): completed_at, created_at, key, status, name, notNull, primaryKey, type (+15 more)
+Nodes (23): cursor, records_failed, records_imported, workspace_id, name, notNull, primaryKey, type (+15 more)
 
 ### Community 189 - "Community 189"
 Cohesion: 0.09
-Nodes (23): customer_id, id, total_price, workspace_id, name, notNull, primaryKey, type (+15 more)
+Nodes (23): completed_at, created_at, key, status, name, notNull, primaryKey, type (+15 more)
 
 ### Community 190 - "Community 190"
 Cohesion: 0.09
-Nodes (23): completed_at, created_at, key, status, name, notNull, primaryKey, type (+15 more)
+Nodes (23): customer_id, id, total_price, workspace_id, name, notNull, primaryKey, type (+15 more)
 
 ### Community 191 - "Community 191"
 Cohesion: 0.09
-Nodes (23): id, primary_email, updated_at, workspace_id, default, name, notNull, primaryKey (+15 more)
+Nodes (23): completed_at, created_at, key, status, name, notNull, primaryKey, type (+15 more)
 
 ### Community 192 - "Community 192"
 Cohesion: 0.09
-Nodes (23): id, primary_email, updated_at, workspace_id, default, name, notNull, primaryKey (+15 more)
+Nodes (23): completed_at, created_at, key, status, name, notNull, primaryKey, type (+15 more)
 
 ### Community 193 - "Community 193"
 Cohesion: 0.09
-Nodes (23): id, primary_email, updated_at, workspace_id, default, name, notNull, primaryKey (+15 more)
+Nodes (23): name, notNull, primaryKey, type, collection_id, created_at, id, product_id (+15 more)
 
 ### Community 194 - "Community 194"
 Cohesion: 0.09
-Nodes (22): name, notNull, primaryKey, type, collection_id, integration_id, product_id, updated_at (+14 more)
+Nodes (23): created_at, id, primary_email, workspace_id, default, name, notNull, primaryKey (+15 more)
 
 ### Community 195 - "Community 195"
 Cohesion: 0.09
-Nodes (22): cursor, error, integration_id, records_imported, name, notNull, primaryKey, type (+14 more)
+Nodes (16): client, fulfilledOrder, fulfillmentChain, guestOrder, insert, lineItemChain, lineItemValues, order (+8 more)
 
 ### Community 196 - "Community 196"
-Cohesion: 0.09
-Nodes (22): role, updated_at, user_id, workspace_id, columns, name, notNull, primaryKey (+14 more)
+Cohesion: 0.12
+Nodes (9): ImportRunService, client, created, integration, runningRun, service, setArg, updateChain (+1 more)
 
 ### Community 197 - "Community 197"
-Cohesion: 0.09
-Nodes (21): columns, concurrently, isUnique, method, name, with, dialect, id (+13 more)
+Cohesion: 0.12
+Nodes (10): ReconciliationRunService, client, created, fullyRepaired, integration, partiallyRepaired, runningRun, service (+2 more)
 
 ### Community 198 - "Community 198"
-Cohesion: 0.09
-Nodes (22): order_id, price, updated_at, variant_id, name, notNull, primaryKey, type (+14 more)
+Cohesion: 0.15
+Nodes (7): UpdateMemberRoleInput, updateMemberRoleSchema, RequireWorkspaceRole(), MEMBERSHIP_MANAGE_ROLES, membershipService, userService, WorkspaceMembershipController
 
 ### Community 199 - "Community 199"
 Cohesion: 0.09
-Nodes (21): columns, concurrently, isUnique, method, name, with, dialect, id (+13 more)
+Nodes (22): cursor, error, integration_id, records_imported, name, notNull, primaryKey, type (+14 more)
 
 ### Community 200 - "Community 200"
 Cohesion: 0.09
-Nodes (22): name, notNull, primaryKey, type, collection_id, integration_id, product_id, updated_at (+14 more)
+Nodes (22): role, updated_at, user_id, workspace_id, columns, name, notNull, primaryKey (+14 more)
 
 ### Community 201 - "Community 201"
 Cohesion: 0.09
-Nodes (21): columns, concurrently, isUnique, method, name, with, dialect, id (+13 more)
+Nodes (22): order_id, quantity, updated_at, variant_id, name, notNull, primaryKey, type (+14 more)
 
 ### Community 202 - "Community 202"
 Cohesion: 0.09
@@ -1446,15 +1451,15 @@ Nodes (21): columns, concurrently, isUnique, method, name, with, dialect, id (+1
 
 ### Community 203 - "Community 203"
 Cohesion: 0.09
-Nodes (21): columns, concurrently, isUnique, method, name, with, dialect, id (+13 more)
+Nodes (22): order_id, price, updated_at, variant_id, name, notNull, primaryKey, type (+14 more)
 
 ### Community 204 - "Community 204"
 Cohesion: 0.09
-Nodes (21): columns, concurrently, isUnique, method, name, with, dialect, id (+13 more)
+Nodes (22): created_at, customer_id, integration_id, total_price, default, name, notNull, primaryKey (+14 more)
 
 ### Community 205 - "Community 205"
 Cohesion: 0.09
-Nodes (22): name, notNull, primaryKey, type, collection_id, id, integration_id, product_id (+14 more)
+Nodes (22): order_id, quantity, updated_at, variant_id, name, notNull, primaryKey, type (+14 more)
 
 ### Community 206 - "Community 206"
 Cohesion: 0.09
@@ -1462,7 +1467,7 @@ Nodes (21): columns, concurrently, isUnique, method, name, with, dialect, id (+1
 
 ### Community 207 - "Community 207"
 Cohesion: 0.09
-Nodes (22): name, notNull, primaryKey, type, collection_id, id, integration_id, product_id (+14 more)
+Nodes (22): name, notNull, primaryKey, type, collection_id, integration_id, product_id, updated_at (+14 more)
 
 ### Community 208 - "Community 208"
 Cohesion: 0.09
@@ -1478,71 +1483,71 @@ Nodes (21): columns, concurrently, isUnique, method, name, with, dialect, id (+1
 
 ### Community 211 - "Community 211"
 Cohesion: 0.09
-Nodes (16): client, fulfilledOrder, fulfillmentChain, guestOrder, insert, lineItemChain, lineItemValues, order (+8 more)
+Nodes (21): columns, concurrently, isUnique, method, name, with, dialect, id (+13 more)
 
 ### Community 212 - "Community 212"
-Cohesion: 0.12
-Nodes (10): ReconciliationRunService, client, created, fullyRepaired, integration, partiallyRepaired, runningRun, service (+2 more)
+Cohesion: 0.09
+Nodes (22): name, notNull, primaryKey, type, collection_id, product_id, provider, updated_at (+14 more)
 
 ### Community 213 - "Community 213"
+Cohesion: 0.09
+Nodes (21): columns, concurrently, isUnique, method, name, with, dialect, id (+13 more)
+
+### Community 214 - "Community 214"
+Cohesion: 0.09
+Nodes (22): name, notNull, primaryKey, type, collection_id, id, integration_id, product_id (+14 more)
+
+### Community 215 - "Community 215"
+Cohesion: 0.09
+Nodes (21): columns, concurrently, isUnique, method, name, with, dialect, id (+13 more)
+
+### Community 216 - "Community 216"
+Cohesion: 0.09
+Nodes (22): name, notNull, primaryKey, type, collection_id, id, integration_id, product_id (+14 more)
+
+### Community 217 - "Community 217"
+Cohesion: 0.09
+Nodes (22): name, notNull, primaryKey, type, collection_id, id, integration_id, product_id (+14 more)
+
+### Community 218 - "Community 218"
+Cohesion: 0.09
+Nodes (21): columns, concurrently, isUnique, method, name, with, dialect, id (+13 more)
+
+### Community 219 - "Community 219"
+Cohesion: 0.09
+Nodes (21): columns, concurrently, isUnique, method, name, with, dialect, id (+13 more)
+
+### Community 220 - "Community 220"
+Cohesion: 0.09
+Nodes (22): name, notNull, primaryKey, type, collection_id, id, integration_id, product_id (+14 more)
+
+### Community 221 - "Community 221"
+Cohesion: 0.09
+Nodes (22): name, notNull, primaryKey, type, collection_id, integration_id, product_id, updated_at (+14 more)
+
+### Community 222 - "Community 222"
 Cohesion: 0.15
 Nodes (13): createEvent(), CreateEventInput, DomainEvent, EventBus, app, bus, event, listener (+5 more)
 
-### Community 214 - "Community 214"
-Cohesion: 0.10
-Nodes (21): credentials, last_sync_error, provider, workspace_id, name, notNull, primaryKey, type (+13 more)
-
-### Community 215 - "Community 215"
-Cohesion: 0.10
-Nodes (21): credentials, last_sync_error, last_synced_at, provider, name, notNull, primaryKey, type (+13 more)
-
-### Community 216 - "Community 216"
-Cohesion: 0.10
-Nodes (21): credentials, last_sync_error, last_synced_at, provider, name, notNull, primaryKey, type (+13 more)
-
-### Community 217 - "Community 217"
-Cohesion: 0.10
-Nodes (21): credentials, last_sync_error, last_synced_at, provider, name, notNull, primaryKey, type (+13 more)
-
-### Community 218 - "Community 218"
-Cohesion: 0.10
-Nodes (21): order_id, price, quantity, variant_id, name, notNull, primaryKey, type (+13 more)
-
-### Community 219 - "Community 219"
-Cohesion: 0.10
-Nodes (21): external_id, provider, source_updated_at, title, name, notNull, primaryKey, type (+13 more)
-
-### Community 220 - "Community 220"
-Cohesion: 0.10
-Nodes (21): integration_id, inventory_quantity, product_id, sku, name, notNull, primaryKey, type (+13 more)
-
-### Community 221 - "Community 221"
-Cohesion: 0.10
-Nodes (21): order_id, price, quantity, variant_id, name, notNull, primaryKey, type (+13 more)
-
-### Community 222 - "Community 222"
-Cohesion: 0.10
-Nodes (21): external_id, provider, source_updated_at, title, name, notNull, primaryKey, type (+13 more)
-
 ### Community 223 - "Community 223"
-Cohesion: 0.10
-Nodes (21): integration_id, inventory_quantity, product_id, sku, name, notNull, primaryKey, type (+13 more)
+Cohesion: 0.12
+Nodes (12): users, userService, client, created, existing, initialSelect, insertChain, raceSelect (+4 more)
 
 ### Community 224 - "Community 224"
 Cohesion: 0.10
-Nodes (21): customer_id, external_id, integration_id, total_price, name, notNull, primaryKey, type (+13 more)
+Nodes (21): credentials, last_sync_error, provider, workspace_id, name, notNull, primaryKey, type (+13 more)
 
 ### Community 225 - "Community 225"
 Cohesion: 0.10
-Nodes (21): email, first_name, last_name, phone, name, notNull, primaryKey, type (+13 more)
+Nodes (21): credentials, last_sync_error, last_synced_at, provider, name, notNull, primaryKey, type (+13 more)
 
 ### Community 226 - "Community 226"
 Cohesion: 0.10
-Nodes (21): inventory_quantity, product_id, provider, sku, name, notNull, primaryKey, type (+13 more)
+Nodes (21): credentials, last_sync_error, last_synced_at, provider, name, notNull, primaryKey, type (+13 more)
 
 ### Community 227 - "Community 227"
 Cohesion: 0.10
-Nodes (21): customer_id, external_id, source_updated_at, total_price, name, notNull, primaryKey, type (+13 more)
+Nodes (21): credentials, last_sync_error, last_synced_at, provider, name, notNull, primaryKey, type (+13 more)
 
 ### Community 228 - "Community 228"
 Cohesion: 0.10
@@ -1554,35 +1559,35 @@ Nodes (21): external_id, provider, source_updated_at, title, name, notNull, prim
 
 ### Community 230 - "Community 230"
 Cohesion: 0.10
-Nodes (21): name, notNull, primaryKey, type, collection_id, external_id, product_id, provider (+13 more)
+Nodes (21): integration_id, inventory_quantity, product_id, sku, name, notNull, primaryKey, type (+13 more)
 
 ### Community 231 - "Community 231"
 Cohesion: 0.10
-Nodes (21): integration_id, source_updated_at, title, workspace_id, name, notNull, primaryKey, type (+13 more)
+Nodes (21): email, first_name, last_name, phone, name, notNull, primaryKey, type (+13 more)
 
 ### Community 232 - "Community 232"
 Cohesion: 0.10
-Nodes (21): name, notNull, primaryKey, type, collection_id, integration_id, product_id, workspace_id (+13 more)
+Nodes (21): inventory_quantity, price, product_id, sku, name, notNull, primaryKey, type (+13 more)
 
 ### Community 233 - "Community 233"
 Cohesion: 0.10
-Nodes (21): external_id, provider, source_updated_at, title, name, notNull, primaryKey, type (+13 more)
+Nodes (21): customer_id, external_id, integration_id, total_price, name, notNull, primaryKey, type (+13 more)
 
 ### Community 234 - "Community 234"
 Cohesion: 0.10
-Nodes (21): external_id, provider, source_updated_at, title, name, notNull, primaryKey, type (+13 more)
+Nodes (21): email, first_name, last_name, phone, name, notNull, primaryKey, type (+13 more)
 
 ### Community 235 - "Community 235"
 Cohesion: 0.10
-Nodes (21): external_id, provider, source_updated_at, title, name, notNull, primaryKey, type (+13 more)
+Nodes (21): inventory_quantity, product_id, provider, sku, name, notNull, primaryKey, type (+13 more)
 
 ### Community 236 - "Community 236"
 Cohesion: 0.10
-Nodes (21): external_id, provider, source_updated_at, title, name, notNull, primaryKey, type (+13 more)
+Nodes (21): order_id, price, quantity, variant_id, name, notNull, primaryKey, type (+13 more)
 
 ### Community 237 - "Community 237"
 Cohesion: 0.10
-Nodes (21): name, notNull, primaryKey, type, collection_id, integration_id, product_id, workspace_id (+13 more)
+Nodes (21): external_id, provider, source_updated_at, title, name, notNull, primaryKey, type (+13 more)
 
 ### Community 238 - "Community 238"
 Cohesion: 0.10
@@ -1590,59 +1595,59 @@ Nodes (21): external_id, provider, source_updated_at, title, name, notNull, prim
 
 ### Community 239 - "Community 239"
 Cohesion: 0.10
-Nodes (21): email, first_name, last_name, phone, name, notNull, primaryKey, type (+13 more)
+Nodes (21): external_id, integration_id, source_updated_at, title, name, notNull, primaryKey, type (+13 more)
 
 ### Community 240 - "Community 240"
 Cohesion: 0.10
-Nodes (21): email, first_name, last_name, phone, name, notNull, primaryKey, type (+13 more)
+Nodes (21): external_id, provider, source_updated_at, title, name, notNull, primaryKey, type (+13 more)
 
 ### Community 241 - "Community 241"
 Cohesion: 0.10
-Nodes (21): email, first_name, last_name, phone, name, notNull, primaryKey, type (+13 more)
+Nodes (21): external_id, provider, source_updated_at, title, name, notNull, primaryKey, type (+13 more)
 
 ### Community 242 - "Community 242"
 Cohesion: 0.10
-Nodes (20): id, workspace_id, dialect, id, default, name, notNull, primaryKey (+12 more)
+Nodes (21): external_id, provider, source_updated_at, title, name, notNull, primaryKey, type (+13 more)
 
 ### Community 243 - "Community 243"
 Cohesion: 0.10
-Nodes (21): id, primary_email, workspace_id, default, name, notNull, primaryKey, type (+13 more)
+Nodes (21): external_id, provider, source_updated_at, title, name, notNull, primaryKey, type (+13 more)
 
 ### Community 244 - "Community 244"
-Cohesion: 0.18
-Nodes (7): ImportProcessorService, ProviderAdapter, adapter, registry, shopify, woocommerce, ReconciliationProcessorService
+Cohesion: 0.10
+Nodes (21): email, first_name, last_name, phone, name, notNull, primaryKey, type (+13 more)
 
 ### Community 245 - "Community 245"
-Cohesion: 0.15
-Nodes (17): chain, client, created, database, deleteChain, demoteChain, makeChain(), members (+9 more)
+Cohesion: 0.10
+Nodes (21): external_id, provider, source_updated_at, title, name, notNull, primaryKey, type (+13 more)
 
 ### Community 246 - "Community 246"
-Cohesion: 0.16
-Nodes (7): AddMemberInput, addMemberSchema, WorkspaceRole, workspaceRoles, workspaceMemberships, membershipService, WorkspaceMembershipService
+Cohesion: 0.10
+Nodes (21): email, first_name, last_name, phone, name, notNull, primaryKey, type (+13 more)
 
 ### Community 247 - "Community 247"
-Cohesion: 0.13
-Nodes (18): call, customerFixture, customerIntelligence, gateway, generate, makeCustomerIntelligence(), makeGateway(), makeMerchantKnowledge() (+10 more)
-
-### Community 248 - "Community 248"
 Cohesion: 0.12
 Nodes (9): ConversationService, created, existing, insert, message, rows, select, service (+1 more)
+
+### Community 248 - "Community 248"
+Cohesion: 0.19
+Nodes (5): AddMemberInput, addMemberSchema, WorkspaceRole, workspaceRoles, WorkspaceMembershipService
 
 ### Community 249 - "Community 249"
 Cohesion: 0.17
 Nodes (20): ImportProcessorService, ImportProcessorService Test Suite, ImportRunService, ImportRunService Test Suite, IntegrationController, IntegrationController Test Suite, deriveIntegrationHealth, IntegrationHealthService (+12 more)
 
 ### Community 250 - "Community 250"
-Cohesion: 0.13
-Nodes (5): ConnectIntegrationInput, IntegrationController, webhookIngestService, [workspaceId, provider, rawBody, headers], WebhookController
+Cohesion: 0.11
+Nodes (13): readShopifyErrorField(), adapter, before, fetchMock, first, onDiagnostic, rawBody, registry (+5 more)
 
 ### Community 251 - "Community 251"
 Cohesion: 0.16
 Nodes (19): agent-browser Observability Dashboard, agent-browser SKILL (.agents), agent-browser SKILL (.claude), AI Action Control, Business Action Automation, Customer Activity History, Customer Intelligence View, Customer Risk & Engagement State (+11 more)
 
 ### Community 252 - "Community 252"
-Cohesion: 0.11
-Nodes (18): dialect, id, prevId, checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled (+10 more)
+Cohesion: 0.17
+Nodes (7): UpdateWorkspaceInput, updateWorkspaceSchema, membershipService, userService, workspaceService, WorkspaceController, WorkspaceService
 
 ### Community 253 - "Community 253"
 Cohesion: 0.11
@@ -1650,87 +1655,87 @@ Nodes (18): dialect, id, prevId, checkConstraints, compositePrimaryKeys, foreign
 
 ### Community 254 - "Community 254"
 Cohesion: 0.11
-Nodes (18): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, ai_action_requests_actor_user_id_users_id_fk (+10 more)
+Nodes (18): integration_webhook_events_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+10 more)
 
 ### Community 255 - "Community 255"
 Cohesion: 0.11
-Nodes (18): integration_import_runs_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+10 more)
+Nodes (18): name, notNull, primaryKey, type, clerk_user_id, created_at, id, default (+10 more)
 
 ### Community 256 - "Community 256"
 Cohesion: 0.11
-Nodes (18): integration_webhook_events_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+10 more)
+Nodes (18): id, primary_email, updated_at, default, name, notNull, primaryKey, type (+10 more)
 
 ### Community 257 - "Community 257"
 Cohesion: 0.11
-Nodes (18): name, notNull, primaryKey, type, clerk_user_id, created_at, id, default (+10 more)
+Nodes (18): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, ai_action_requests_actor_user_id_users_id_fk (+10 more)
 
 ### Community 258 - "Community 258"
 Cohesion: 0.11
-Nodes (18): created_at, id, primary_email, default, name, notNull, primaryKey, type (+10 more)
+Nodes (18): created_at, primary_email, updated_at, default, name, notNull, primaryKey, type (+10 more)
 
 ### Community 259 - "Community 259"
 Cohesion: 0.11
-Nodes (18): created_at, id, primary_email, default, name, notNull, primaryKey, type (+10 more)
-
-### Community 260 - "Community 260"
-Cohesion: 0.11
 Nodes (18): created_at, primary_email, updated_at, default, name, notNull, primaryKey, type (+10 more)
 
-### Community 261 - "Community 261"
+### Community 260 - "Community 260"
 Cohesion: 0.13
 Nodes (18): SHOPIFY_WEBHOOK_TOPICS, assertCursorMatchesShop, ShopifyAdapter.fetchCustomers, ShopifyAdapter.fetchOrders, ShopifyAdapter.fetchPage, ShopifyAdapter.fetchProducts, normalizeCustomer, normalizeOrder (+10 more)
 
-### Community 262 - "Community 262"
-Cohesion: 0.14
-Nodes (14): activityCall, activityFixture, call, customerIntelligence, database, { database, insert, values }, logger, makeCustomerIntelligence() (+6 more)
-
-### Community 263 - "Community 263"
-Cohesion: 0.12
-Nodes (17): id, primary_email, workspace_id, default, name, notNull, primaryKey, type (+9 more)
-
-### Community 264 - "Community 264"
-Cohesion: 0.12
-Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
-
-### Community 265 - "Community 265"
-Cohesion: 0.12
-Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
-
-### Community 266 - "Community 266"
+### Community 261 - "Community 261"
 Cohesion: 0.12
 Nodes (16): compilerOptions, allowJs, declaration, incremental, jsx, lib, module, moduleResolution (+8 more)
 
-### Community 267 - "Community 267"
+### Community 262 - "Community 262"
 Cohesion: 0.12
 Nodes (17): completed_at, key, status, name, notNull, primaryKey, type, name (+9 more)
 
-### Community 268 - "Community 268"
+### Community 263 - "Community 263"
 Cohesion: 0.12
 Nodes (17): workspace_memberships_user_id_users_id_fk, workspace_memberships_workspace_id_workspaces_id_fk, foreignKeys, columnsFrom, columnsTo, name, onDelete, onUpdate (+9 more)
 
-### Community 269 - "Community 269"
+### Community 264 - "Community 264"
 Cohesion: 0.12
 Nodes (17): completed_at, key, status, name, notNull, primaryKey, type, name (+9 more)
 
-### Community 270 - "Community 270"
+### Community 265 - "Community 265"
 Cohesion: 0.12
 Nodes (17): created_at, role, user_id, default, name, notNull, primaryKey, type (+9 more)
 
-### Community 271 - "Community 271"
+### Community 266 - "Community 266"
 Cohesion: 0.12
 Nodes (17): workspace_memberships_user_id_users_id_fk, workspace_memberships_workspace_id_workspaces_id_fk, foreignKeys, columnsFrom, columnsTo, name, onDelete, onUpdate (+9 more)
 
-### Community 272 - "Community 272"
+### Community 267 - "Community 267"
 Cohesion: 0.12
 Nodes (17): integrations_workspace_provider_unique, columns, concurrently, isUnique, method, name, with, checkConstraints (+9 more)
 
-### Community 273 - "Community 273"
+### Community 268 - "Community 268"
 Cohesion: 0.12
 Nodes (17): completed_at, created_at, key, name, notNull, primaryKey, type, default (+9 more)
 
-### Community 274 - "Community 274"
+### Community 269 - "Community 269"
 Cohesion: 0.12
 Nodes (17): credentials, provider, status, name, notNull, primaryKey, type, name (+9 more)
+
+### Community 270 - "Community 270"
+Cohesion: 0.12
+Nodes (17): workspace_memberships_user_id_users_id_fk, workspace_memberships_workspace_id_workspaces_id_fk, foreignKeys, columnsFrom, columnsTo, name, onDelete, onUpdate (+9 more)
+
+### Community 271 - "Community 271"
+Cohesion: 0.12
+Nodes (17): integrations_workspace_provider_unique, columns, concurrently, isUnique, method, name, with, checkConstraints (+9 more)
+
+### Community 272 - "Community 272"
+Cohesion: 0.12
+Nodes (17): created_at, role, user_id, default, name, notNull, primaryKey, type (+9 more)
+
+### Community 273 - "Community 273"
+Cohesion: 0.12
+Nodes (17): integrations_workspace_provider_unique, columns, concurrently, isUnique, method, name, with, checkConstraints (+9 more)
+
+### Community 274 - "Community 274"
+Cohesion: 0.12
+Nodes (17): completed_at, key, status, name, notNull, primaryKey, type, name (+9 more)
 
 ### Community 275 - "Community 275"
 Cohesion: 0.12
@@ -1742,59 +1747,59 @@ Nodes (17): integrations_workspace_provider_unique, columns, concurrently, isUni
 
 ### Community 277 - "Community 277"
 Cohesion: 0.12
-Nodes (17): created_at, role, user_id, default, name, notNull, primaryKey, type (+9 more)
+Nodes (17): integration_import_runs_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+9 more)
 
 ### Community 278 - "Community 278"
 Cohesion: 0.12
-Nodes (17): integrations_workspace_provider_unique, columns, concurrently, isUnique, method, name, with, checkConstraints (+9 more)
+Nodes (17): workspace_memberships_user_id_users_id_fk, workspace_memberships_workspace_id_workspaces_id_fk, foreignKeys, columnsFrom, columnsTo, name, onDelete, onUpdate (+9 more)
 
 ### Community 279 - "Community 279"
 Cohesion: 0.12
-Nodes (17): completed_at, key, status, name, notNull, primaryKey, type, name (+9 more)
+Nodes (17): workspace_memberships_user_id_users_id_fk, workspace_memberships_workspace_id_workspaces_id_fk, foreignKeys, columnsFrom, columnsTo, name, onDelete, onUpdate (+9 more)
 
 ### Community 280 - "Community 280"
 Cohesion: 0.12
-Nodes (17): workspace_memberships_user_id_users_id_fk, workspace_memberships_workspace_id_workspaces_id_fk, foreignKeys, columnsFrom, columnsTo, name, onDelete, onUpdate (+9 more)
+Nodes (17): integration_import_runs_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+9 more)
 
 ### Community 281 - "Community 281"
 Cohesion: 0.12
-Nodes (17): workspace_memberships_user_id_users_id_fk, workspace_memberships_workspace_id_workspaces_id_fk, foreignKeys, columnsFrom, columnsTo, name, onDelete, onUpdate (+9 more)
+Nodes (17): completed_at, key, status, name, notNull, primaryKey, type, name (+9 more)
 
 ### Community 282 - "Community 282"
 Cohesion: 0.12
-Nodes (17): workspace_memberships_user_id_users_id_fk, workspace_memberships_workspace_id_workspaces_id_fk, foreignKeys, columnsFrom, columnsTo, name, onDelete, onUpdate (+9 more)
+Nodes (17): integration_webhook_events_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+9 more)
 
 ### Community 283 - "Community 283"
 Cohesion: 0.12
-Nodes (17): integration_import_runs_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+9 more)
+Nodes (17): integration_reconciliation_runs_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+9 more)
 
 ### Community 284 - "Community 284"
 Cohesion: 0.12
-Nodes (17): completed_at, key, status, name, notNull, primaryKey, type, name (+9 more)
+Nodes (17): integration_import_runs_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+9 more)
 
 ### Community 285 - "Community 285"
 Cohesion: 0.12
-Nodes (17): integration_webhook_events_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+9 more)
+Nodes (17): integration_import_runs_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+9 more)
 
 ### Community 286 - "Community 286"
 Cohesion: 0.12
-Nodes (17): integration_import_runs_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+9 more)
+Nodes (17): integration_reconciliation_runs_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+9 more)
 
 ### Community 287 - "Community 287"
 Cohesion: 0.12
-Nodes (17): integration_reconciliation_runs_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+9 more)
+Nodes (17): integration_webhook_events_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+9 more)
 
 ### Community 288 - "Community 288"
 Cohesion: 0.12
-Nodes (17): integration_import_runs_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+9 more)
+Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
 
 ### Community 289 - "Community 289"
 Cohesion: 0.12
-Nodes (17): integration_reconciliation_runs_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+9 more)
+Nodes (17): integration_import_runs_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+9 more)
 
 ### Community 290 - "Community 290"
 Cohesion: 0.12
-Nodes (17): integration_webhook_events_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+9 more)
+Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
 
 ### Community 291 - "Community 291"
 Cohesion: 0.12
@@ -1802,7 +1807,7 @@ Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 292 - "Community 292"
 Cohesion: 0.12
-Nodes (17): integration_import_runs_integration_id_integrations_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+9 more)
+Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
 
 ### Community 293 - "Community 293"
 Cohesion: 0.12
@@ -1818,7 +1823,7 @@ Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 296 - "Community 296"
 Cohesion: 0.12
-Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
+Nodes (17): created_at, source_updated_at, title, default, name, notNull, primaryKey, type (+9 more)
 
 ### Community 297 - "Community 297"
 Cohesion: 0.12
@@ -1830,7 +1835,7 @@ Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 299 - "Community 299"
 Cohesion: 0.12
-Nodes (17): created_at, source_updated_at, title, default, name, notNull, primaryKey, type (+9 more)
+Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
 
 ### Community 300 - "Community 300"
 Cohesion: 0.12
@@ -1846,19 +1851,19 @@ Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 303 - "Community 303"
 Cohesion: 0.12
-Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
+Nodes (17): columnsFrom, name, tableFrom, tableTo, columns, concurrently, isUnique, method (+9 more)
 
 ### Community 304 - "Community 304"
 Cohesion: 0.12
-Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
+Nodes (17): created_at, primary_email, workspace_id, default, name, notNull, primaryKey, type (+9 more)
 
 ### Community 305 - "Community 305"
 Cohesion: 0.12
-Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
+Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
 
 ### Community 306 - "Community 306"
 Cohesion: 0.12
-Nodes (17): columnsFrom, name, tableFrom, tableTo, columns, concurrently, isUnique, method (+9 more)
+Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
 
 ### Community 307 - "Community 307"
 Cohesion: 0.12
@@ -1866,11 +1871,11 @@ Nodes (17): created_at, primary_email, workspace_id, default, name, notNull, pri
 
 ### Community 308 - "Community 308"
 Cohesion: 0.12
-Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
+Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
 
 ### Community 309 - "Community 309"
 Cohesion: 0.12
-Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
+Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
 
 ### Community 310 - "Community 310"
 Cohesion: 0.12
@@ -1878,11 +1883,11 @@ Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 311 - "Community 311"
 Cohesion: 0.12
-Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
+Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
 
 ### Community 312 - "Community 312"
 Cohesion: 0.12
-Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
+Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
 
 ### Community 313 - "Community 313"
 Cohesion: 0.12
@@ -1890,7 +1895,7 @@ Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 314 - "Community 314"
 Cohesion: 0.12
-Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
+Nodes (17): created_at, primary_email, workspace_id, default, name, notNull, primaryKey, type (+9 more)
 
 ### Community 315 - "Community 315"
 Cohesion: 0.12
@@ -1898,7 +1903,7 @@ Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 316 - "Community 316"
 Cohesion: 0.12
-Nodes (17): created_at, primary_email, workspace_id, default, name, notNull, primaryKey, type (+9 more)
+Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
 
 ### Community 317 - "Community 317"
 Cohesion: 0.12
@@ -1906,7 +1911,7 @@ Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 318 - "Community 318"
 Cohesion: 0.12
-Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
+Nodes (17): created_at, primary_email, workspace_id, default, name, notNull, primaryKey, type (+9 more)
 
 ### Community 319 - "Community 319"
 Cohesion: 0.12
@@ -1914,7 +1919,7 @@ Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 320 - "Community 320"
 Cohesion: 0.12
-Nodes (17): created_at, primary_email, workspace_id, default, name, notNull, primaryKey, type (+9 more)
+Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
 
 ### Community 321 - "Community 321"
 Cohesion: 0.12
@@ -1922,7 +1927,7 @@ Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 322 - "Community 322"
 Cohesion: 0.12
-Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
+Nodes (17): created_at, primary_email, workspace_id, default, name, notNull, primaryKey, type (+9 more)
 
 ### Community 323 - "Community 323"
 Cohesion: 0.12
@@ -1930,7 +1935,7 @@ Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 324 - "Community 324"
 Cohesion: 0.12
-Nodes (17): created_at, primary_email, workspace_id, default, name, notNull, primaryKey, type (+9 more)
+Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
 
 ### Community 325 - "Community 325"
 Cohesion: 0.12
@@ -1938,7 +1943,7 @@ Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 326 - "Community 326"
 Cohesion: 0.12
-Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
+Nodes (17): created_at, primary_email, workspace_id, default, name, notNull, primaryKey, type (+9 more)
 
 ### Community 327 - "Community 327"
 Cohesion: 0.12
@@ -1946,43 +1951,43 @@ Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 328 - "Community 328"
 Cohesion: 0.12
-Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
+Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
 
 ### Community 329 - "Community 329"
 Cohesion: 0.12
-Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
+Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
 
 ### Community 330 - "Community 330"
 Cohesion: 0.12
-Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
+Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
 
 ### Community 331 - "Community 331"
 Cohesion: 0.12
-Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
+Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
 
 ### Community 332 - "Community 332"
 Cohesion: 0.12
-Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
+Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
 
 ### Community 333 - "Community 333"
 Cohesion: 0.12
-Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
+Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
 
 ### Community 334 - "Community 334"
 Cohesion: 0.12
-Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
+Nodes (17): created_at, primary_email, workspace_id, default, name, notNull, primaryKey, type (+9 more)
 
 ### Community 335 - "Community 335"
 Cohesion: 0.12
-Nodes (17): primary_email, updated_at, workspace_id, name, notNull, primaryKey, type, columns (+9 more)
+Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
 
 ### Community 336 - "Community 336"
 Cohesion: 0.12
-Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
+Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
 
 ### Community 337 - "Community 337"
 Cohesion: 0.12
-Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
+Nodes (17): primary_email, updated_at, workspace_id, name, notNull, primaryKey, type, columns (+9 more)
 
 ### Community 338 - "Community 338"
 Cohesion: 0.12
@@ -1990,7 +1995,7 @@ Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_custo
 
 ### Community 339 - "Community 339"
 Cohesion: 0.12
-Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
+Nodes (17): id, primary_email, workspace_id, default, name, notNull, primaryKey, type (+9 more)
 
 ### Community 340 - "Community 340"
 Cohesion: 0.12
@@ -2002,35 +2007,35 @@ Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo
 
 ### Community 342 - "Community 342"
 Cohesion: 0.12
-Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
+Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
 
 ### Community 343 - "Community 343"
-Cohesion: 0.18
-Nodes (5): UpdateMemberRoleInput, updateMemberRoleSchema, userService, WorkspaceMembershipController, WorkspaceModule
+Cohesion: 0.12
+Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
 
 ### Community 344 - "Community 344"
 Cohesion: 0.12
-Nodes (11): client, customerIntelligenceService, eventBus, fortyFiveDaysAgo, historyInsert, insert, row, select (+3 more)
+Nodes (17): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, columnsFrom (+9 more)
 
 ### Community 345 - "Community 345"
 Cohesion: 0.12
-Nodes (15): dialect, enums, id, _meta, columns, schemas, tables, policies (+7 more)
+Nodes (17): columns, concurrently, isUnique, method, name, with, canonical_customers_workspace_email_unique, checkConstraints (+9 more)
 
 ### Community 346 - "Community 346"
-Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_collection_products_workspace_provider_external_unique, checkConstraints (+8 more)
+Cohesion: 0.16
+Nodes (5): ProtectedController, Public(), AppController, DependencyStatus, controller
 
 ### Community 347 - "Community 347"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, canonical_customer_duplicates_pair_signal_unique, checkConstraints (+8 more)
+Nodes (15): compilerOptions, declaration, esModuleInterop, forceConsistentCasingInFileNames, isolatedModules, lib, module, moduleResolution (+7 more)
 
 ### Community 348 - "Community 348"
 Cohesion: 0.12
-Nodes (15): dialect, id, prevId, checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled (+7 more)
+Nodes (11): client, customerIntelligenceService, eventBus, fortyFiveDaysAgo, historyInsert, insert, row, select (+3 more)
 
 ### Community 349 - "Community 349"
 Cohesion: 0.12
-Nodes (15): compilerOptions, declaration, esModuleInterop, forceConsistentCasingInFileNames, isolatedModules, lib, module, moduleResolution (+7 more)
+Nodes (15): dialect, enums, id, _meta, columns, schemas, tables, policies (+7 more)
 
 ### Community 350 - "Community 350"
 Cohesion: 0.12
@@ -2062,15 +2067,15 @@ Nodes (16): workspace_memberships_workspace_user_unique, checkConstraints, compo
 
 ### Community 357 - "Community 357"
 Cohesion: 0.12
-Nodes (16): integrations_workspace_provider_unique, columns, concurrently, isUnique, method, name, with, checkConstraints (+8 more)
+Nodes (16): role, user_id, workspace_id, columns, name, notNull, primaryKey, type (+8 more)
 
 ### Community 358 - "Community 358"
 Cohesion: 0.12
-Nodes (16): role, user_id, workspace_id, columns, name, notNull, primaryKey, type (+8 more)
+Nodes (16): workspace_memberships_workspace_user_unique, checkConstraints, compositePrimaryKeys, indexes, isRLSEnabled, name, policies, schema (+8 more)
 
 ### Community 359 - "Community 359"
 Cohesion: 0.12
-Nodes (16): workspace_memberships_workspace_user_unique, checkConstraints, compositePrimaryKeys, indexes, isRLSEnabled, name, policies, schema (+8 more)
+Nodes (16): workspace_memberships_workspace_id_workspaces_id_fk, workspace_memberships_workspace_user_unique, foreignKeys, indexes, name, schema, public.workspace_memberships, name (+8 more)
 
 ### Community 360 - "Community 360"
 Cohesion: 0.12
@@ -2078,47 +2083,47 @@ Nodes (15): dialect, id, prevId, checkConstraints, compositePrimaryKeys, foreign
 
 ### Community 361 - "Community 361"
 Cohesion: 0.12
-Nodes (16): workspace_memberships_workspace_id_workspaces_id_fk, workspace_memberships_workspace_user_unique, foreignKeys, indexes, name, schema, public.workspace_memberships, name (+8 more)
+Nodes (15): dialect, id, prevId, checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled (+7 more)
 
 ### Community 362 - "Community 362"
 Cohesion: 0.12
-Nodes (15): dialect, id, prevId, checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled (+7 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_product_variants_workspace_provider_external_unique, checkConstraints (+8 more)
 
 ### Community 363 - "Community 363"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_product_variants_workspace_provider_external_unique, checkConstraints (+8 more)
+Nodes (15): dialect, id, prevId, checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled (+7 more)
 
 ### Community 364 - "Community 364"
 Cohesion: 0.12
-Nodes (15): dialect, id, prevId, checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled (+7 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_product_variants_workspace_provider_external_unique, checkConstraints (+8 more)
 
 ### Community 365 - "Community 365"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_product_variants_workspace_provider_external_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_order_line_items_workspace_provider_external_unique, checkConstraints (+8 more)
 
 ### Community 366 - "Community 366"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_order_line_items_workspace_provider_external_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_orders_workspace_provider_external_unique, checkConstraints (+8 more)
 
 ### Community 367 - "Community 367"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_orders_workspace_provider_external_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_order_line_items_workspace_provider_external_unique, checkConstraints (+8 more)
 
 ### Community 368 - "Community 368"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_product_variants_workspace_provider_external_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_orders_workspace_provider_external_unique, checkConstraints (+8 more)
 
 ### Community 369 - "Community 369"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_order_line_items_workspace_provider_external_unique, checkConstraints (+8 more)
+Nodes (15): dialect, id, prevId, checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled (+7 more)
 
 ### Community 370 - "Community 370"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_orders_workspace_provider_external_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_product_variants_workspace_provider_external_unique, checkConstraints (+8 more)
 
 ### Community 371 - "Community 371"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_order_line_items_workspace_provider_external_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_orders_workspace_provider_external_unique, checkConstraints (+8 more)
 
 ### Community 372 - "Community 372"
 Cohesion: 0.12
@@ -2126,15 +2131,15 @@ Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_produc
 
 ### Community 373 - "Community 373"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_order_line_items_workspace_provider_external_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_product_variants_workspace_provider_external_unique, checkConstraints (+8 more)
 
 ### Community 374 - "Community 374"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_orders_workspace_provider_external_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_fulfillments_workspace_provider_external_unique, checkConstraints (+8 more)
 
 ### Community 375 - "Community 375"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_product_variants_workspace_provider_external_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_orders_workspace_provider_external_unique, checkConstraints (+8 more)
 
 ### Community 376 - "Community 376"
 Cohesion: 0.12
@@ -2150,7 +2155,7 @@ Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_collec
 
 ### Community 379 - "Community 379"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_customers_workspace_provider_external_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_collection_products_workspace_provider_external_unique, checkConstraints (+8 more)
 
 ### Community 380 - "Community 380"
 Cohesion: 0.12
@@ -2158,7 +2163,7 @@ Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_fulfil
 
 ### Community 381 - "Community 381"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_customers_workspace_provider_external_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, canonical_customer_duplicates_pair_signal_unique, checkConstraints (+8 more)
 
 ### Community 382 - "Community 382"
 Cohesion: 0.12
@@ -2166,11 +2171,11 @@ Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_collec
 
 ### Community 383 - "Community 383"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, canonical_customer_duplicates_pair_signal_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_customers_workspace_provider_external_unique, checkConstraints (+8 more)
 
 ### Community 384 - "Community 384"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_customers_workspace_provider_external_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_collection_products_workspace_provider_external_unique, checkConstraints (+8 more)
 
 ### Community 385 - "Community 385"
 Cohesion: 0.12
@@ -2190,11 +2195,11 @@ Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_collec
 
 ### Community 389 - "Community 389"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_customers_workspace_provider_external_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, canonical_customer_duplicates_pair_signal_unique, checkConstraints (+8 more)
 
 ### Community 390 - "Community 390"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_collection_products_workspace_provider_external_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_customers_workspace_provider_external_unique, checkConstraints (+8 more)
 
 ### Community 391 - "Community 391"
 Cohesion: 0.12
@@ -2206,7 +2211,7 @@ Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_collec
 
 ### Community 393 - "Community 393"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, canonical_customer_duplicates_pair_signal_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_collection_products_workspace_provider_external_unique, checkConstraints (+8 more)
 
 ### Community 394 - "Community 394"
 Cohesion: 0.12
@@ -2214,7 +2219,7 @@ Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_collec
 
 ### Community 395 - "Community 395"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, canonical_customer_duplicates_pair_signal_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_collection_products_workspace_provider_external_unique, checkConstraints (+8 more)
 
 ### Community 396 - "Community 396"
 Cohesion: 0.12
@@ -2230,27 +2235,27 @@ Nodes (16): columns, concurrently, isUnique, method, name, with, canonical_custo
 
 ### Community 399 - "Community 399"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_collection_products_workspace_provider_external_unique, checkConstraints (+8 more)
+Nodes (15): dialect, id, prevId, checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled (+7 more)
 
 ### Community 400 - "Community 400"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, canonical_customer_duplicates_pair_signal_unique, checkConstraints (+8 more)
+Nodes (15): dialect, id, prevId, checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled (+7 more)
 
 ### Community 401 - "Community 401"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_collection_products_workspace_provider_external_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, canonical_customer_duplicates_pair_signal_unique, checkConstraints (+8 more)
 
 ### Community 402 - "Community 402"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, canonical_customer_duplicates_pair_signal_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_collection_products_workspace_provider_external_unique, checkConstraints (+8 more)
 
 ### Community 403 - "Community 403"
 Cohesion: 0.12
-Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_collection_products_workspace_provider_external_unique, checkConstraints (+8 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, canonical_customer_duplicates_pair_signal_unique, checkConstraints (+8 more)
 
 ### Community 404 - "Community 404"
 Cohesion: 0.12
-Nodes (11): adapter, before, fetchMock, first, rawBody, registry, result, second (+3 more)
+Nodes (16): columns, concurrently, isUnique, method, name, with, commerce_collection_products_workspace_provider_external_unique, checkConstraints (+8 more)
 
 ### Community 405 - "Community 405"
 Cohesion: 0.13
@@ -2302,15 +2307,15 @@ Nodes (14): dialect, enums, id, _meta, columns, schemas, tables, policies (+6 mo
 
 ### Community 417 - "Community 417"
 Cohesion: 0.13
-Nodes (15): integration_reconciliation_runs_integration_idx, integration_reconciliation_runs_workspace_idx, columns, concurrently, isUnique, method, name, with (+7 more)
+Nodes (15): integration_import_runs_integration_idx, integration_import_runs_workspace_idx, columns, concurrently, isUnique, method, name, with (+7 more)
 
 ### Community 418 - "Community 418"
 Cohesion: 0.13
-Nodes (15): integration_import_runs_integration_idx, integration_import_runs_workspace_idx, columns, concurrently, isUnique, method, name, with (+7 more)
+Nodes (15): integration_webhook_events_integration_event_unique, integration_webhook_events_workspace_idx, columns, concurrently, isUnique, method, name, with (+7 more)
 
 ### Community 419 - "Community 419"
 Cohesion: 0.13
-Nodes (15): integration_webhook_events_integration_event_unique, integration_webhook_events_workspace_idx, columns, concurrently, isUnique, method, name, with (+7 more)
+Nodes (15): integration_reconciliation_runs_integration_idx, integration_reconciliation_runs_workspace_idx, columns, concurrently, isUnique, method, name, with (+7 more)
 
 ### Community 420 - "Community 420"
 Cohesion: 0.13
@@ -2333,28 +2338,28 @@ Cohesion: 0.13
 Nodes (15): id, workspace_id, default, name, notNull, primaryKey, type, columns (+7 more)
 
 ### Community 425 - "Community 425"
+Cohesion: 0.13
+Nodes (15): id, workspace_id, default, name, notNull, primaryKey, type, columns (+7 more)
+
+### Community 426 - "Community 426"
+Cohesion: 0.13
+Nodes (15): id, workspace_id, default, name, notNull, primaryKey, type, columns (+7 more)
+
+### Community 427 - "Community 427"
+Cohesion: 0.13
+Nodes (15): id, workspace_id, default, name, notNull, primaryKey, type, columns (+7 more)
+
+### Community 428 - "Community 428"
 Cohesion: 0.19
 Nodes (15): Migration 0005: create integrations table, Migration 0006: add integrations.credentials, Migration 0007: add integrations sync status columns, Migration 0008: create integration_import_runs table, Migration 0009: create integration_webhook_events table, Migration 0010: create integration_reconciliation_runs table, Migration 0011: create commerce_customers table, Migration 0012: create commerce_products/commerce_product_variants tables (+7 more)
 
-### Community 426 - "Community 426"
-Cohesion: 0.15
-Nodes (9): context, database, failingHandler, insert, interceptor, logger, reflector, values (+1 more)
-
-### Community 427 - "Community 427"
-Cohesion: 0.14
-Nodes (13): aliases, components, utils, rsc, $schema, style, tailwind, baseColor (+5 more)
-
-### Community 428 - "Community 428"
-Cohesion: 0.14
-Nodes (14): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies, schema (+6 more)
-
 ### Community 429 - "Community 429"
 Cohesion: 0.14
-Nodes (14): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies, schema (+6 more)
+Nodes (9): client, duplicateInsertChain, insert, insertChain, rows, select, selectDistinct, service (+1 more)
 
 ### Community 430 - "Community 430"
 Cohesion: 0.14
-Nodes (14): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies, schema (+6 more)
+Nodes (13): aliases, components, utils, rsc, $schema, style, tailwind, baseColor (+5 more)
 
 ### Community 431 - "Community 431"
 Cohesion: 0.14
@@ -2374,75 +2379,75 @@ Nodes (14): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSE
 
 ### Community 435 - "Community 435"
 Cohesion: 0.14
-Nodes (9): client, duplicateInsertChain, insert, insertChain, rows, select, selectDistinct, service (+1 more)
+Nodes (14): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies, schema (+6 more)
 
 ### Community 436 - "Community 436"
-Cohesion: 0.18
-Nodes (8): createAutomation(), CreateAutomationForm(), PRIORITIES, TYPES, Automation, AutomationsPage(), WorkspaceSummary, Checkbox
+Cohesion: 0.14
+Nodes (14): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies, schema (+6 more)
 
 ### Community 437 - "Community 437"
-Cohesion: 0.15
-Nodes (12): dependsOn, env, outputs, cache, persistent, $schema, tasks, build (+4 more)
+Cohesion: 0.14
+Nodes (14): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies, schema (+6 more)
 
 ### Community 438 - "Community 438"
-Cohesion: 0.23
+Cohesion: 0.21
 Nodes (5): createWidgetSchema, WidgetController, ZodValidationPipe, CreateWorkspaceInput, createWorkspaceSchema
 
 ### Community 439 - "Community 439"
+Cohesion: 0.18
+Nodes (11): boom, deadLetterRow, integration, makeChain(), makeDeps(), makeSelectQueue(), { service }, { service, client } (+3 more)
+
+### Community 440 - "Community 440"
+Cohesion: 0.15
+Nodes (12): dependsOn, env, outputs, cache, persistent, $schema, tasks, build (+4 more)
+
+### Community 441 - "Community 441"
+Cohesion: 0.18
+Nodes (8): createAutomation(), CreateAutomationForm(), PRIORITIES, TYPES, Automation, AutomationsPage(), WorkspaceSummary, Checkbox
+
+### Community 442 - "Community 442"
 Cohesion: 0.20
 Nodes (8): AiActionDecisionButtons(), { refresh, approveAiActionRequest, denyAiActionRequest }, AiActionRequest, AiActionsPage(), riskStyles, statusStyles, approveAiActionRequest(), denyAiActionRequest()
 
-### Community 440 - "Community 440"
-Cohesion: 0.17
-Nodes (12): name, notNull, primaryKey, type, clerk_user_id, id, default, name (+4 more)
-
-### Community 441 - "Community 441"
-Cohesion: 0.17
-Nodes (12): name, updated_at, name, notNull, primaryKey, type, columns, default (+4 more)
-
-### Community 442 - "Community 442"
-Cohesion: 0.17
-Nodes (12): name, notNull, primaryKey, type, clerk_user_id, updated_at, columns, default (+4 more)
-
 ### Community 443 - "Community 443"
 Cohesion: 0.17
-Nodes (12): id, name, default, name, notNull, primaryKey, type, name (+4 more)
+Nodes (12): name, notNull, primaryKey, type, clerk_user_id, id, default, name (+4 more)
 
 ### Community 444 - "Community 444"
 Cohesion: 0.17
-Nodes (12): name, notNull, primaryKey, type, clerk_user_id, id, default, name (+4 more)
+Nodes (12): name, updated_at, name, notNull, primaryKey, type, columns, default (+4 more)
 
 ### Community 445 - "Community 445"
 Cohesion: 0.17
-Nodes (12): name, updated_at, name, notNull, primaryKey, type, columns, default (+4 more)
+Nodes (12): name, notNull, primaryKey, type, clerk_user_id, updated_at, columns, default (+4 more)
 
 ### Community 446 - "Community 446"
 Cohesion: 0.17
-Nodes (12): name, notNull, primaryKey, type, clerk_user_id, id, default, name (+4 more)
+Nodes (12): id, name, default, name, notNull, primaryKey, type, name (+4 more)
 
 ### Community 447 - "Community 447"
 Cohesion: 0.17
-Nodes (12): name, updated_at, name, notNull, primaryKey, type, columns, default (+4 more)
+Nodes (12): name, notNull, primaryKey, type, clerk_user_id, id, default, name (+4 more)
 
 ### Community 448 - "Community 448"
-Cohesion: 0.26
-Nodes (4): RequireWorkspaceRole(), membershipService, userService, MEMBERSHIP_MANAGE_ROLES
+Cohesion: 0.17
+Nodes (12): name, updated_at, name, notNull, primaryKey, type, columns, default (+4 more)
 
 ### Community 449 - "Community 449"
+Cohesion: 0.17
+Nodes (12): name, notNull, primaryKey, type, clerk_user_id, id, default, name (+4 more)
+
+### Community 450 - "Community 450"
+Cohesion: 0.17
+Nodes (12): name, updated_at, name, notNull, primaryKey, type, columns, default (+4 more)
+
+### Community 451 - "Community 451"
 Cohesion: 0.24
 Nodes (11): ApiError, apiFetch, ApiErrorState, apiFetch test suite, toApiError, RootLayout, frontend package.json dependencies, HomePage (+3 more)
 
-### Community 450 - "Community 450"
-Cohesion: 0.18
-Nodes (10): dialect, enums, id, policies, prevId, roles, schemas, sequences (+2 more)
-
-### Community 451 - "Community 451"
-Cohesion: 0.18
-Nodes (11): completed_at, key, name, notNull, primaryKey, type, name, notNull (+3 more)
-
 ### Community 452 - "Community 452"
 Cohesion: 0.18
-Nodes (11): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies, schema (+3 more)
+Nodes (10): dialect, enums, id, policies, prevId, roles, schemas, sequences (+2 more)
 
 ### Community 453 - "Community 453"
 Cohesion: 0.18
@@ -2450,27 +2455,27 @@ Nodes (11): completed_at, key, name, notNull, primaryKey, type, name, notNull (+
 
 ### Community 454 - "Community 454"
 Cohesion: 0.18
-Nodes (11): provider, workspace_id, name, notNull, primaryKey, type, columns, name (+3 more)
+Nodes (11): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies, schema (+3 more)
 
 ### Community 455 - "Community 455"
 Cohesion: 0.18
-Nodes (7): adapter, creds, fetchMock, rawBody, registry, result, signature
+Nodes (11): completed_at, key, name, notNull, primaryKey, type, name, notNull (+3 more)
 
 ### Community 456 - "Community 456"
-Cohesion: 0.20
-Nodes (10): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies, schema (+2 more)
+Cohesion: 0.18
+Nodes (11): provider, workspace_id, name, notNull, primaryKey, type, columns, name (+3 more)
 
 ### Community 457 - "Community 457"
 Cohesion: 0.20
-Nodes (10): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies, schema (+2 more)
+Nodes (7): client, insert, product, productChain, service, variantChain, variantValues
 
 ### Community 458 - "Community 458"
 Cohesion: 0.20
-Nodes (10): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies, schema (+2 more)
+Nodes (6): client, collections, insertChain, select, service, updatedAt
 
 ### Community 459 - "Community 459"
 Cohesion: 0.20
-Nodes (10): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies, schema (+2 more)
+Nodes (7): createdAt, customerCreatedAt, lastOrderAt, orderCreatedAt, orderSourceUpdatedAt, select, service
 
 ### Community 460 - "Community 460"
 Cohesion: 0.20
@@ -2533,164 +2538,160 @@ Cohesion: 0.20
 Nodes (10): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies, schema (+2 more)
 
 ### Community 475 - "Community 475"
+Cohesion: 0.20
+Nodes (10): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies, schema (+2 more)
+
+### Community 476 - "Community 476"
+Cohesion: 0.20
+Nodes (10): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies, schema (+2 more)
+
+### Community 477 - "Community 477"
+Cohesion: 0.20
+Nodes (10): checkConstraints, compositePrimaryKeys, foreignKeys, indexes, isRLSEnabled, name, policies, schema (+2 more)
+
+### Community 478 - "Community 478"
+Cohesion: 0.20
+Nodes (7): after, before, client, insertChain, insertedValues, service, updateChain
+
+### Community 479 - "Community 479"
 Cohesion: 0.28
 Nodes (9): Documentation Authority, Context Efficiency, Git/GitHub Workflow, Human Approval Gates, Part-by-Part Implementation, BRAYN Claude Code Rules, Scope Control, Security Requirements (+1 more)
 
-### Community 476 - "Community 476"
+### Community 480 - "Community 480"
+Cohesion: 0.39
+Nodes (5): id(), timestamps(), workspaceId(), workspaceMemberships, workspaces
+
+### Community 482 - "Community 482"
+Cohesion: 0.36
+Nodes (7): chain, client, created, found, makeChain(), renamed, service
+
+### Community 483 - "Community 483"
 Cohesion: 0.25
 Nodes (7): setAutomationEnabled(), Automation, AutomationDetailPage(), AutomationRun, statusStyles, WorkspaceSummary, ToggleAutomationButton()
 
-### Community 477 - "Community 477"
+### Community 484 - "Community 484"
 Cohesion: 0.22
 Nodes (9): checkConstraints, compositePrimaryKeys, isRLSEnabled, name, policies, schema, uniqueConstraints, tables (+1 more)
 
-### Community 478 - "Community 478"
-Cohesion: 0.22
-Nodes (9): integrations_workspace_id_workspaces_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+1 more)
-
-### Community 479 - "Community 479"
-Cohesion: 0.22
-Nodes (9): integrations_workspace_id_workspaces_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+1 more)
-
-### Community 480 - "Community 480"
-Cohesion: 0.22
-Nodes (9): integrations_workspace_id_workspaces_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+1 more)
-
-### Community 481 - "Community 481"
-Cohesion: 0.22
-Nodes (9): integrations_workspace_id_workspaces_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+1 more)
-
-### Community 482 - "Community 482"
-Cohesion: 0.22
-Nodes (8): dialect, id, prevId, name, schema, tables, public.commerce_orders, version
-
-### Community 483 - "Community 483"
-Cohesion: 0.22
-Nodes (9): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, commerce_collections_integration_id_integrations_id_fk (+1 more)
-
-### Community 484 - "Community 484"
-Cohesion: 0.22
-Nodes (9): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, commerce_collections_integration_id_integrations_id_fk (+1 more)
-
 ### Community 485 - "Community 485"
 Cohesion: 0.22
-Nodes (9): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, commerce_collections_integration_id_integrations_id_fk (+1 more)
+Nodes (9): integrations_workspace_id_workspaces_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+1 more)
 
 ### Community 486 - "Community 486"
 Cohesion: 0.22
-Nodes (9): checkConstraints, compositePrimaryKeys, indexes, isRLSEnabled, name, policies, schema, uniqueConstraints (+1 more)
+Nodes (9): integrations_workspace_id_workspaces_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+1 more)
 
 ### Community 487 - "Community 487"
-Cohesion: 0.42
-Nodes (4): id(), timestamps(), workspaceId(), workspaces
+Cohesion: 0.22
+Nodes (9): integrations_workspace_id_workspaces_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+1 more)
 
 ### Community 488 - "Community 488"
-Cohesion: 0.25
-Nodes (7): computedHash, skillPath, source, sourceType, skills, agent-browser, version
+Cohesion: 0.22
+Nodes (9): integrations_workspace_id_workspaces_id_fk, columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo (+1 more)
 
 ### Community 489 - "Community 489"
-Cohesion: 0.25
-Nodes (8): workspace_memberships_workspace_user_unique, indexes, columns, concurrently, isUnique, method, name, with
+Cohesion: 0.22
+Nodes (8): dialect, id, prevId, name, schema, tables, public.commerce_orders, version
 
 ### Community 490 - "Community 490"
 Cohesion: 0.25
-Nodes (8): NormalizedOrder, NormalizedOrderLineItem, NormalizedProduct, NormalizedVariant, CustomerPage, OrderPage, ProductPage, WebhookResourceEvent
+Nodes (7): computedHash, skillPath, source, sourceType, skills, agent-browser, version
 
 ### Community 491 - "Community 491"
+Cohesion: 0.25
+Nodes (8): workspace_memberships_workspace_user_unique, indexes, columns, concurrently, isUnique, method, name, with
+
+### Community 492 - "Community 492"
+Cohesion: 0.25
+Nodes (8): columnsFrom, columnsTo, name, onDelete, onUpdate, tableFrom, tableTo, ai_action_requests_customer_id_canonical_customers_id_fk
+
+### Community 493 - "Community 493"
+Cohesion: 0.25
+Nodes (8): NormalizedOrder, NormalizedOrderLineItem, NormalizedProduct, NormalizedVariant, CustomerPage, OrderPage, ProductPage, WebhookResourceEvent
+
+### Community 494 - "Community 494"
 Cohesion: 0.29
 Nodes (8): removeMember action, updateMemberRole action, WorkspaceMembershipController.removeMember, WorkspaceMembershipController.updateRole, WorkspaceMembershipService.assertNotLastOwner, WorkspaceMembershipService.findMembership, WorkspaceMembershipService.removeMember, WorkspaceMembershipService.updateRole
 
-### Community 492 - "Community 492"
+### Community 495 - "Community 495"
+Cohesion: 0.48
+Nodes (5): { context, reflector }, guard, makeContext(), membershipService, userService
+
+### Community 496 - "Community 496"
 Cohesion: 0.43
 Nodes (5): RetryOptions, sleep(), fn, promise, withRetry()
 
-### Community 493 - "Community 493"
+### Community 497 - "Community 497"
 Cohesion: 0.29
 Nodes (6): collection, compilerOptions, deleteOutDir, tsConfigPath, $schema, sourceRoot
 
-### Community 494 - "Community 494"
-Cohesion: 0.33
-Nodes (6): created_at, default, name, notNull, primaryKey, type
-
-### Community 495 - "Community 495"
+### Community 498 - "Community 498"
 Cohesion: 0.40
 Nodes (6): AppModule, envSchema / Env type, bootstrap(), REQUIRED_IN_PRODUCTION, warnOnMissingProductionSecrets(), warnOnMissingProductionSecrets test suite
 
-### Community 496 - "Community 496"
-Cohesion: 0.33
-Nodes (6): id, default, name, notNull, primaryKey, type
-
-### Community 497 - "Community 497"
-Cohesion: 0.33
-Nodes (6): name, name, notNull, primaryKey, type, columns
-
-### Community 498 - "Community 498"
-Cohesion: 0.33
-Nodes (6): status, default, name, notNull, primaryKey, type
-
 ### Community 499 - "Community 499"
 Cohesion: 0.33
-Nodes (6): created_at, default, name, notNull, primaryKey, type
+Nodes (6): id, default, name, notNull, primaryKey, type
 
 ### Community 500 - "Community 500"
 Cohesion: 0.33
-Nodes (6): updated_at, default, name, notNull, primaryKey, type
+Nodes (6): name, name, notNull, primaryKey, type, columns
 
 ### Community 501 - "Community 501"
 Cohesion: 0.33
-Nodes (6): created_at, default, name, notNull, primaryKey, type
+Nodes (6): status, default, name, notNull, primaryKey, type
 
 ### Community 502 - "Community 502"
 Cohesion: 0.33
-Nodes (6): status, default, name, notNull, primaryKey, type
+Nodes (6): created_at, default, name, notNull, primaryKey, type
 
 ### Community 503 - "Community 503"
 Cohesion: 0.33
-Nodes (6): created_at, default, name, notNull, primaryKey, type
+Nodes (6): updated_at, default, name, notNull, primaryKey, type
 
 ### Community 504 - "Community 504"
 Cohesion: 0.33
-Nodes (6): records_failed, default, name, notNull, primaryKey, type
+Nodes (6): created_at, default, name, notNull, primaryKey, type
 
 ### Community 505 - "Community 505"
 Cohesion: 0.33
-Nodes (6): started_at, default, name, notNull, primaryKey, type
+Nodes (6): status, default, name, notNull, primaryKey, type
 
 ### Community 506 - "Community 506"
 Cohesion: 0.33
-Nodes (6): records_imported, default, name, notNull, primaryKey, type
+Nodes (6): created_at, default, name, notNull, primaryKey, type
 
 ### Community 507 - "Community 507"
 Cohesion: 0.33
-Nodes (6): id, default, name, notNull, primaryKey, type
+Nodes (6): records_failed, default, name, notNull, primaryKey, type
 
 ### Community 508 - "Community 508"
 Cohesion: 0.33
-Nodes (6): records_checked, default, name, notNull, primaryKey, type
+Nodes (6): started_at, default, name, notNull, primaryKey, type
 
 ### Community 509 - "Community 509"
 Cohesion: 0.33
-Nodes (6): id, default, name, notNull, primaryKey, type
+Nodes (6): records_imported, default, name, notNull, primaryKey, type
 
 ### Community 510 - "Community 510"
 Cohesion: 0.33
-Nodes (6): created_at, default, name, notNull, primaryKey, type
+Nodes (6): id, default, name, notNull, primaryKey, type
 
 ### Community 511 - "Community 511"
 Cohesion: 0.33
-Nodes (6): id, default, name, notNull, primaryKey, type
+Nodes (6): records_checked, default, name, notNull, primaryKey, type
 
 ### Community 512 - "Community 512"
 Cohesion: 0.33
-Nodes (6): updated_at, default, name, notNull, primaryKey, type
+Nodes (6): discrepancies_repaired, default, name, notNull, primaryKey, type
 
 ### Community 513 - "Community 513"
 Cohesion: 0.33
-Nodes (6): updated_at, default, name, notNull, primaryKey, type
+Nodes (6): id, default, name, notNull, primaryKey, type
 
 ### Community 514 - "Community 514"
 Cohesion: 0.33
-Nodes (6): updated_at, default, name, notNull, primaryKey, type
+Nodes (6): id, default, name, notNull, primaryKey, type
 
 ### Community 515 - "Community 515"
 Cohesion: 0.33
@@ -2702,143 +2703,159 @@ Nodes (6): updated_at, default, name, notNull, primaryKey, type
 
 ### Community 517 - "Community 517"
 Cohesion: 0.33
-Nodes (6): created_at, default, name, notNull, primaryKey, type
+Nodes (6): updated_at, default, name, notNull, primaryKey, type
 
 ### Community 518 - "Community 518"
 Cohesion: 0.33
-Nodes (6): created_at, default, name, notNull, primaryKey, type
+Nodes (6): updated_at, default, name, notNull, primaryKey, type
+
+### Community 519 - "Community 519"
+Cohesion: 0.33
+Nodes (6): updated_at, default, name, notNull, primaryKey, type
 
 ### Community 520 - "Community 520"
-Cohesion: 0.40
-Nodes (5): name, notNull, primaryKey, type, approval_state
+Cohesion: 0.33
+Nodes (6): created_at, default, name, notNull, primaryKey, type
 
 ### Community 521 - "Community 521"
-Cohesion: 0.40
-Nodes (5): execution_status, name, notNull, primaryKey, type
+Cohesion: 0.33
+Nodes (6): id, default, name, notNull, primaryKey, type
 
 ### Community 522 - "Community 522"
-Cohesion: 0.40
-Nodes (5): input_summary, name, notNull, primaryKey, type
+Cohesion: 0.33
+Nodes (6): created_at, default, name, notNull, primaryKey, type
 
 ### Community 523 - "Community 523"
-Cohesion: 0.40
-Nodes (5): uniqueConstraints, users_clerk_user_id_unique, columns, name, nullsNotDistinct
-
-### Community 524 - "Community 524"
-Cohesion: 0.40
-Nodes (5): last_synced_at, name, notNull, primaryKey, type
+Cohesion: 0.33
+Nodes (6): created_at, default, name, notNull, primaryKey, type
 
 ### Community 525 - "Community 525"
-Cohesion: 0.40
-Nodes (5): product_id, name, notNull, primaryKey, type
-
-### Community 526 - "Community 526"
-Cohesion: 0.40
-Nodes (5): name, notNull, primaryKey, type, actor_role
-
-### Community 527 - "Community 527"
-Cohesion: 0.40
-Nodes (5): name, notNull, primaryKey, type, approval_state
-
-### Community 528 - "Community 528"
-Cohesion: 0.40
-Nodes (5): execution_status, name, notNull, primaryKey, type
-
-### Community 529 - "Community 529"
-Cohesion: 0.40
-Nodes (5): input_summary, name, notNull, primaryKey, type
-
-### Community 530 - "Community 530"
-Cohesion: 0.40
-Nodes (5): result_summary, name, notNull, primaryKey, type
-
-### Community 531 - "Community 531"
-Cohesion: 0.40
-Nodes (5): customer_id, name, notNull, primaryKey, type
-
-### Community 532 - "Community 532"
-Cohesion: 0.40
-Nodes (5): decided_by_user_id, name, notNull, primaryKey, type
-
-### Community 533 - "Community 533"
-Cohesion: 0.40
-Nodes (5): name, notNull, primaryKey, type, approval_state
-
-### Community 534 - "Community 534"
-Cohesion: 0.40
-Nodes (5): correlation_id, name, notNull, primaryKey, type
-
-### Community 535 - "Community 535"
-Cohesion: 0.40
-Nodes (5): decided_at, name, notNull, primaryKey, type
-
-### Community 536 - "Community 536"
-Cohesion: 0.40
-Nodes (5): decided_by_user_id, name, notNull, primaryKey, type
-
-### Community 537 - "Community 537"
-Cohesion: 0.40
-Nodes (5): input_summary, name, notNull, primaryKey, type
-
-### Community 538 - "Community 538"
-Cohesion: 0.40
-Nodes (5): risk_level, name, notNull, primaryKey, type
-
-### Community 539 - "Community 539"
 Cohesion: 0.60
 Nodes (3): dialect, entries, version
 
+### Community 526 - "Community 526"
+Cohesion: 0.40
+Nodes (5): uniqueConstraints, users_clerk_user_id_unique, columns, name, nullsNotDistinct
+
+### Community 527 - "Community 527"
+Cohesion: 0.40
+Nodes (5): last_synced_at, name, notNull, primaryKey, type
+
+### Community 528 - "Community 528"
+Cohesion: 0.40
+Nodes (5): external_id, name, notNull, primaryKey, type
+
+### Community 529 - "Community 529"
+Cohesion: 0.40
+Nodes (5): name, notNull, primaryKey, type, approval_state
+
+### Community 530 - "Community 530"
+Cohesion: 0.40
+Nodes (5): execution_status, name, notNull, primaryKey, type
+
+### Community 531 - "Community 531"
+Cohesion: 0.40
+Nodes (5): input_summary, name, notNull, primaryKey, type
+
+### Community 532 - "Community 532"
+Cohesion: 0.40
+Nodes (5): name, notNull, primaryKey, type, approval_state
+
+### Community 533 - "Community 533"
+Cohesion: 0.40
+Nodes (5): decided_by_user_id, name, notNull, primaryKey, type
+
+### Community 534 - "Community 534"
+Cohesion: 0.40
+Nodes (5): failure_reason, name, notNull, primaryKey, type
+
+### Community 535 - "Community 535"
+Cohesion: 0.40
+Nodes (5): result_summary, name, notNull, primaryKey, type
+
+### Community 536 - "Community 536"
+Cohesion: 0.40
+Nodes (5): risk_level, name, notNull, primaryKey, type
+
+### Community 537 - "Community 537"
+Cohesion: 0.40
+Nodes (5): customer_id, name, notNull, primaryKey, type
+
+### Community 538 - "Community 538"
+Cohesion: 0.40
+Nodes (5): name, notNull, primaryKey, type, approval_state
+
+### Community 539 - "Community 539"
+Cohesion: 0.40
+Nodes (5): name, notNull, primaryKey, type, actor_role
+
 ### Community 540 - "Community 540"
 Cohesion: 0.40
-Nodes (4): printWidth, semi, singleQuote, trailingComma
+Nodes (5): customer_id, name, notNull, primaryKey, type
 
 ### Community 541 - "Community 541"
 Cohesion: 0.40
-Nodes (5): Next.js Clerk middleware, WebhookController, WorkspaceMembershipController, WorkspaceMembershipService, WorkspaceModule
+Nodes (5): decided_by_user_id, name, notNull, primaryKey, type
 
 ### Community 542 - "Community 542"
+Cohesion: 0.40
+Nodes (5): execution_status, name, notNull, primaryKey, type
+
+### Community 543 - "Community 543"
+Cohesion: 0.40
+Nodes (5): input_summary, name, notNull, primaryKey, type
+
+### Community 544 - "Community 544"
+Cohesion: 0.40
+Nodes (4): printWidth, semi, singleQuote, trailingComma
+
+### Community 545 - "Community 545"
+Cohesion: 0.40
+Nodes (5): Next.js Clerk middleware, WebhookController, WorkspaceMembershipController, WorkspaceMembershipService, WorkspaceModule
+
+### Community 546 - "Community 546"
 Cohesion: 0.67
 Nodes (4): AddMemberForm, RoleBadge, MemberRowActions, workspaceRoles catalog
 
-### Community 543 - "Community 543"
-Cohesion: 0.50
-Nodes (3): handle, modules, name
-
-### Community 544 - "Community 544"
+### Community 547 - "Community 547"
 Cohesion: 0.50
 Nodes (4): _meta, columns, schemas, tables
 
-### Community 545 - "Community 545"
-Cohesion: 0.67
-Nodes (3): addMember action, WorkspaceMembershipController.addMember, WorkspaceMembershipService.addMember
-
 ### Community 548 - "Community 548"
+Cohesion: 0.50
+Nodes (3): handle, modules, name
+
+### Community 550 - "Community 550"
 Cohesion: 0.67
 Nodes (3): Button, buttonClassName, LinkButton
 
-### Community 552 - "Community 552"
+### Community 555 - "Community 555"
+Cohesion: 0.67
+Nodes (3): addMember action, WorkspaceMembershipController.addMember, WorkspaceMembershipService.addMember
+
+### Community 556 - "Community 556"
 Cohesion: 0.67
 Nodes (3): transferOwnership action, WorkspaceMembershipController.transferOwnership, WorkspaceMembershipService.transferOwnership
 
 ## Knowledge Gaps
-- **7884 isolated node(s):** `Obsidian`, `Ponytail`, `Agent Browser`, `pr-review-toolkit`, `BRAYN (README)` (+7879 more)
+- **7908 isolated node(s):** `Obsidian`, `Ponytail`, `Agent Browser`, `pr-review-toolkit`, `BRAYN (README)` (+7903 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **31 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **33 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `StructuredLoggerService` connect `Community 0` to `Community 1`, `Community 2`, `Community 3`, `Community 4`, `Community 6`, `Community 7`, `Community 262`, `Community 8`, `Community 426`, `Community 10`, `Community 15`, `Community 213`, `Community 438`?**
+- **Why does `StructuredLoggerService` connect `Community 5` to `Community 0`, `Community 1`, `Community 2`, `Community 3`, `Community 4`, `Community 26`, `Community 7`, `Community 9`, `Community 11`, `Community 79`, `Community 438`, `Community 25`, `Community 346`, `Community 222`, `Community 31`?**
   _High betweenness centrality (0.003) - this node is a cross-community bridge._
-- **Why does `ImportRunService` connect `Community 32` to `Community 0`, `Community 2`, `Community 9`, `Community 12`, `Community 46`, `Community 14`?**
+- **Why does `ImportRunService` connect `Community 196` to `Community 0`, `Community 1`, `Community 6`, `Community 9`, `Community 41`, `Community 12`, `Community 15`, `Community 17`?**
   _High betweenness centrality (0.003) - this node is a cross-community bridge._
-- **Why does `WorkspaceMembershipService` connect `Community 246` to `Community 448`, `Community 0`, `Community 47`, `Community 178`, `Community 245`, `Community 343`?**
+- **Why does `WorkspaceMembershipService` connect `Community 248` to `Community 0`, `Community 1`, `Community 481`, `Community 198`, `Community 42`, `Community 252`, `Community 223`?**
   _High betweenness centrality (0.002) - this node is a cross-community bridge._
 - **What connects `Obsidian`, `Claude Responsibility (Rule 2)`, `Ponytail` to the rest of the system?**
-  _7893 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _7918 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
-  _Cohesion score 0.03587231352718078 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.032616436405070504 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**
-  _Cohesion score 0.033771929824561404 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.032714412024756855 - nodes in this community are weakly interconnected._
 - **Should `Community 2` be split into smaller, more focused modules?**
-  _Cohesion score 0.030525030525030524 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.031220255092328193 - nodes in this community are weakly interconnected._
