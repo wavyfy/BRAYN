@@ -107,6 +107,43 @@ describe('WebsiteEventController (e2e)', () => {
     expect(websiteEventIngestService.ingest).not.toHaveBeenCalled();
   });
 
+  it('rejects an identity_signal event with no payload.email (insufficient signal) with 400', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/website-events',
+      payload: { ...validBody, eventType: 'identity_signal' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(websiteEventIngestService.ingest).not.toHaveBeenCalled();
+  });
+
+  it('rejects an identity_signal event with a blank payload.email with 400', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/website-events',
+      payload: { ...validBody, eventType: 'identity_signal', payload: { email: '   ' } },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(websiteEventIngestService.ingest).not.toHaveBeenCalled();
+  });
+
+  it('accepts an identity_signal event with a reliable email signal', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/website-events?key=write_key_1',
+      payload: { ...validBody, eventType: 'identity_signal', payload: { email: 'shopper@example.com' } },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(websiteEventIngestService.ingest).toHaveBeenCalledWith(
+      'ws_1',
+      { ...validBody, eventType: 'identity_signal', payload: { email: 'shopper@example.com' } },
+      'write_key_1',
+    );
+  });
+
   it('rejects an unknown eventType with 400', async () => {
     const res = await app.inject({
       method: 'POST',

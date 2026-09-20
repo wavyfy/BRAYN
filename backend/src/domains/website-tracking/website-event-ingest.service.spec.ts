@@ -3,6 +3,7 @@ import { WebsiteEventIngestService } from './website-event-ingest.service';
 import type { DatabaseService } from '../../database/database.service';
 import type { IdempotencyService } from '../../common/idempotency/idempotency.service';
 import type { IntegrationService } from '../integration/integration.service';
+import type { IdentityResolutionService } from '../identity-resolution/identity-resolution.service';
 import type { IngestWebsiteEventInput } from './dto/ingest-website-event.schema';
 
 function makeChain(finalResult: unknown) {
@@ -67,9 +68,18 @@ function makeDeps(
     getCredentials: vi.fn(async () => (overrides.credentials === undefined ? { writeKey: VALID_KEY } : overrides.credentials)),
   } as unknown as IntegrationService;
 
-  const service = new WebsiteEventIngestService({ client } as unknown as DatabaseService, idempotency, integrationService);
+  const identityResolutionService = {
+    resolveWebsiteVisitor: vi.fn(async () => undefined),
+  } as unknown as IdentityResolutionService;
 
-  return { service, client, idempotency, integrationService };
+  const service = new WebsiteEventIngestService(
+    { client } as unknown as DatabaseService,
+    idempotency,
+    integrationService,
+    identityResolutionService,
+  );
+
+  return { service, client, idempotency, integrationService, identityResolutionService };
 }
 
 describe('WebsiteEventIngestService', () => {
@@ -196,5 +206,60 @@ describe('WebsiteEventIngestService', () => {
 
     const eventInsertChain = client.insert.mock.results[2].value as { values: ReturnType<typeof vi.fn> };
     expect(eventInsertChain.values).toHaveBeenCalledWith(expect.objectContaining({ payload: { path: '/products/1' } }));
+  });
+
+  describe('identity_signal events (Part 3 — anonymous → known linking)', () => {
+    it('hands the visitor row id and email to IdentityResolutionService.resolveWebsiteVisitor', async () => {
+      const { service, identityResolutionService } = makeDeps({ visitorRow: { id: 'visitor_row_xyz' } });
+
+      await service.ingest(
+        'ws_1',
+        { ...baseInput, eventType: 'identity_signal', payload: { email: 'shopper@example.com' } },
+        VALID_KEY,
+      );
+
+      expect(identityResolutionService.resolveWebsiteVisitor).toHaveBeenCalledWith(
+        'ws_1',
+        'visitor_row_xyz',
+        'shopper@example.com',
+      );
+    });
+
+    it('does not call resolveWebsiteVisitor for a non-identity event', async () => {
+      const { service, identityResolutionService } = makeDeps();
+
+      await service.ingest('ws_1', baseInput, VALID_KEY);
+
+      expect(identityResolutionService.resolveWebsiteVisitor).not.toHaveBeenCalled();
+    });
+
+    it('still records the identity_signal event row itself, same as any other event type', async () => {
+      const { service, client } = makeDeps();
+
+      await service.ingest(
+        'ws_1',
+        { ...baseInput, eventType: 'identity_signal', payload: { email: 'shopper@example.com' } },
+        VALID_KEY,
+      );
+
+      const eventInsertChain = client.insert.mock.results[2].value as { values: ReturnType<typeof vi.fn> };
+      expect(eventInsertChain.values).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'identity_signal' }));
+    });
+  });
+
+  describe('historical activity stays associated after linking (Part 3)', () => {
+    it('never overwrites canonicalCustomerId on the visitor upsert set-clause for a later, unrelated event', async () => {
+      const { service, client } = makeDeps();
+
+      await service.ingest('ws_1', baseInput, VALID_KEY);
+
+      const visitorInsertChain = client.insert.mock.results[0].value as { onConflictDoUpdate: ReturnType<typeof vi.fn> };
+      const conflictArgs = visitorInsertChain.onConflictDoUpdate.mock.calls[0][0] as { set: Record<string, unknown> };
+      // The upsert only ever refreshes lastSeenAt — canonicalCustomerId is
+      // never in this set clause, so a previously linked visitor's link
+      // survives every subsequent event, and every event still points at
+      // the same visitor row regardless of when linking happened.
+      expect(conflictArgs.set).not.toHaveProperty('canonicalCustomerId');
+    });
   });
 });

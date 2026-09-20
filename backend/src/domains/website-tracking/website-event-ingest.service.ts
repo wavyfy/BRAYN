@@ -9,6 +9,7 @@ import { websiteEvents } from '../../database/schema/website-events';
 import { ConflictError, NotFoundError, UnauthenticatedError } from '../../common/errors/app-error';
 import { IdempotencyService } from '../../common/idempotency/idempotency.service';
 import { IntegrationService } from '../integration/integration.service';
+import { IdentityResolutionService } from '../identity-resolution/identity-resolution.service';
 import type { IngestWebsiteEventInput } from './dto/ingest-website-event.schema';
 
 export type WebsiteEventIngestResult = { status: 'accepted' } | { status: 'duplicate' };
@@ -34,10 +35,20 @@ export type WebsiteEventIngestResult = { status: 'accepted' } | { status: 'dupli
  * yet — unlike RateLimitGuard's fail-open, this is a security boundary
  * (doc18), not an availability one.
  *
- * Deliberately does not implement anonymous → known identity linking
- * (doc09/doc20), UCIR wiring (doc08), Customer Activity History, or
- * downstream Health/Opportunity signal integration (doc10) — each is a
- * separate, later part; this part only accepts and stores events.
+ * Anonymous → known identity linking (Part 3): an `identity_signal`
+ * event's `payload.email` (validated non-empty by the DTO) is handed to
+ * `IdentityResolutionService.resolveWebsiteVisitor()` right after the
+ * event itself is persisted — a separate call, not folded into Identity
+ * Resolution's own transaction, same "record the signal, then act on
+ * it" shape `resolveMany` already uses when Integration calls it after
+ * `CustomerService.upsertMany`. Every other event type is stored as
+ * before with no identity side effect.
+ *
+ * Still deliberately does not implement UCIR wiring (doc08), Customer
+ * Activity History, or downstream Health/Opportunity signal integration
+ * (doc10) — each is a separate, later part; this part only accepts and
+ * stores events (plus, now, resolves the one identity signal doc09
+ * names).
  */
 @Injectable()
 export class WebsiteEventIngestService {
@@ -45,6 +56,7 @@ export class WebsiteEventIngestService {
     private readonly database: DatabaseService,
     private readonly idempotency: IdempotencyService,
     private readonly integrationService: IntegrationService,
+    private readonly identityResolutionService: IdentityResolutionService,
   ) {}
 
   async ingest(workspaceId: string, input: IngestWebsiteEventInput, writeKey: string | null): Promise<WebsiteEventIngestResult> {
@@ -99,6 +111,12 @@ export class WebsiteEventIngestService {
       payload: input.payload ?? null,
       occurredAt: input.occurredAt ? new Date(input.occurredAt) : now,
     });
+
+    if (input.eventType === 'identity_signal') {
+      // DTO validation already guarantees a non-empty string here.
+      const email = input.payload?.email as string;
+      await this.identityResolutionService.resolveWebsiteVisitor(workspaceId, visitor.id, email);
+    }
 
     await this.idempotency.complete(idempotencyKey);
     return { status: 'accepted' };

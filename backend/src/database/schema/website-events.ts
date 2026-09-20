@@ -3,8 +3,14 @@ import { id, workspaceId } from './columns';
 import { websiteVisitors } from './website-visitors';
 import { websiteSessions } from './website-sessions';
 
-/** Doc20 Phase 1 storefront interaction events this part accepts and stores. */
-export const websiteEventTypes = ['page_view', 'product_view', 'search', 'cart', 'checkout'] as const;
+/**
+ * Doc20 Phase 1 storefront interaction events this part accepts and
+ * stores. `identity_signal` (Part 3) is doc20's own separate "Identity
+ * signals" bullet — its `payload` carries the one deterministic signal
+ * doc09 names, `email`; see `IdentityResolutionService.
+ * resolveWebsiteVisitor()` for what happens with it.
+ */
+export const websiteEventTypes = ['page_view', 'product_view', 'search', 'cart', 'checkout', 'identity_signal'] as const;
 
 /**
  * Website Behaviour domain (doc22 "Website Behaviour" — owns "Behaviour
@@ -21,11 +27,9 @@ export const websiteEventTypes = ['page_view', 'product_view', 'search', 'cart',
  * `IdempotencyService` key first, so the unique index below is a
  * belt-and-braces DB backstop, not the primary dedup mechanism.
  *
- * `eventType` covers doc20's Phase 1 storefront interaction events only.
- * "Session" and "Identity signals" (also listed in doc20) are not event
- * rows here — a session is `website_sessions` itself, and identity
- * signals are Identity Resolution's concern (doc09), not built by this
- * part.
+ * `eventType` covers doc20's Phase 1 storefront interaction events plus
+ * `identity_signal` (Part 3). "Session" (also listed in doc20) is still
+ * not an event row here — a session is `website_sessions` itself.
  */
 export const websiteEvents = pgTable(
   'website_events',
