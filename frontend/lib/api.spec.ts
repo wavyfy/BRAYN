@@ -72,4 +72,49 @@ describe('apiFetch', () => {
     expect(error.status).toBe(502);
     expect(error.message).toBe('Request failed with status 502.');
   });
+
+  describe('Content-Type header (doc 20 Part 30B)', () => {
+    it('sends Content-Type: application/json when a body is present', async () => {
+      const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => jsonResponse(200, {}));
+      vi.stubGlobal('fetch', fetchMock);
+
+      await apiFetch('/api/v1/workspaces', { method: 'POST', body: JSON.stringify({ name: 'Acme' }) });
+
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/json');
+    });
+
+    it('does NOT send Content-Type: application/json for a bodyless request (e.g. POST .../import) — Fastify rejects that combination', async () => {
+      const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => jsonResponse(202, { id: 'run_1' }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      await apiFetch('/api/v1/workspaces/ws_1/integrations/shopify/import', { method: 'POST' });
+
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect((init.headers as Record<string, string>)['Content-Type']).toBeUndefined();
+    });
+
+    it('still attaches Authorization regardless of whether a body is present', async () => {
+      const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => jsonResponse(202, { id: 'run_1' }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      await apiFetch('/api/v1/workspaces/ws_1/integrations/shopify/import', { method: 'POST' });
+
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect((init.headers as Record<string, string>).Authorization).toBe('Bearer test-token');
+    });
+
+    it('preserves other caller-supplied headers on a bodyless request', async () => {
+      const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => jsonResponse(202, { id: 'run_1' }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      await apiFetch('/api/v1/workspaces/ws_1/integrations/shopify/import', {
+        method: 'POST',
+        headers: { 'X-Custom-Header': 'value' },
+      });
+
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect((init.headers as Record<string, string>)['X-Custom-Header']).toBe('value');
+    });
+  });
 });

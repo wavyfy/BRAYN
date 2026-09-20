@@ -98,6 +98,60 @@ describe('MerchantKnowledgeService', () => {
     });
   });
 
+  describe('findRelevant()', () => {
+    it('scores entries by keyword overlap with the query and returns highest-scoring first', async () => {
+      const shipping = { id: 'entry_1', type: 'knowledge', title: 'Shipping', content: 'We ship worldwide within 3-5 days.' };
+      const returns = { id: 'entry_2', type: 'knowledge', title: 'Returns', content: 'Shipping delays do not extend the return window.' };
+      const unrelated = { id: 'entry_3', type: 'knowledge', title: 'Sizing', content: 'Check the size chart before ordering.' };
+      const select = vi.fn(() => makeSelectChain([shipping, returns, unrelated]));
+      const service = new MerchantKnowledgeService({ client: { select } } as unknown as DatabaseService);
+
+      const result = await service.findRelevant('ws_1', 'knowledge', 'How long does shipping take?');
+
+      // "shipping" matches both entries (score 1 each) via a stable sort; "sizing" matches neither and is excluded.
+      expect(result.map((entry) => entry.id)).toEqual(['entry_1', 'entry_2']);
+    });
+
+    it('returns an empty array when the query has no scoreable words', async () => {
+      const select = vi.fn(() => makeSelectChain([{ id: 'entry_1', title: 'Shipping', content: 'Ships in 3-5 days.' }]));
+      const service = new MerchantKnowledgeService({ client: { select } } as unknown as DatabaseService);
+
+      const result = await service.findRelevant('ws_1', 'knowledge', '??');
+
+      expect(result).toEqual([]);
+    });
+
+    it('returns an empty array when no entry matches any query word', async () => {
+      const select = vi.fn(() => makeSelectChain([{ id: 'entry_1', title: 'Sizing', content: 'Check the size chart.' }]));
+      const service = new MerchantKnowledgeService({ client: { select } } as unknown as DatabaseService);
+
+      const result = await service.findRelevant('ws_1', 'knowledge', 'refund policy');
+
+      expect(result).toEqual([]);
+    });
+
+    it('caps results at 5 entries', async () => {
+      const entries = Array.from({ length: 8 }, (_, i) => ({ id: `entry_${i}`, title: 'Shipping', content: 'shipping shipping shipping' }));
+      const select = vi.fn(() => makeSelectChain(entries));
+      const service = new MerchantKnowledgeService({ client: { select } } as unknown as DatabaseService);
+
+      const result = await service.findRelevant('ws_1', 'knowledge', 'shipping');
+
+      expect(result).toHaveLength(5);
+    });
+
+    it('delegates workspace+type scoping to list() — the same scoping list() itself enforces', async () => {
+      const select = vi.fn(() => makeSelectChain([]));
+      const client = { select };
+      const service = new MerchantKnowledgeService({ client } as unknown as DatabaseService);
+      const listSpy = vi.spyOn(service, 'list');
+
+      await service.findRelevant('ws_2', 'policy', 'refund');
+
+      expect(listSpy).toHaveBeenCalledWith('ws_2', 'policy');
+    });
+  });
+
   describe('getHistory()', () => {
     it('throws NotFoundError when no entry exists in this workspace', async () => {
       const select = makeSelectQueue([[]]);

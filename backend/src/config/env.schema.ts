@@ -6,8 +6,9 @@ import { z } from 'zod';
  * Only variables tied to a locked technology decision (see
  * "29. BRAYN Technology Stack, Engineering Standards & Exclusions") are
  * defined here. Variables tied to an unresolved product/architecture
- * decision (AI provider, cloud/region, billing) must not be added until
- * that decision is locked.
+ * decision (cloud/region, billing) must not be added until that decision
+ * is locked. AI provider/model policy is locked (doc 02 Pre-Implementation
+ * Decisions, Resolved) — OpenAI, default model below.
  *
  * Most external-service variables are optional at this stage: wiring them
  * into actual clients happens in the Database/Security foundation steps,
@@ -56,6 +57,38 @@ export const envSchema = z.object({
   // an OAuth route is actually invoked without them configured.
   SHOPIFY_APP_CLIENT_ID: z.string().optional(),
   SHOPIFY_APP_CLIENT_SECRET: z.string().optional(),
+
+  // AI provider — OpenAI (locked, doc 02 Pre-Implementation Decisions,
+  // doc 12 AI Architecture). Optional, same convention as
+  // SHOPIFY_APP_CLIENT_*: absent in environments that don't need a real AI
+  // call (most test runs); OpenAiAdapter fails closed if generate() is
+  // actually invoked without it configured. Non-empty when present — a
+  // blank secret is a misconfiguration, not "unset".
+  OPENAI_API_KEY: z.string().min(1).optional(),
+  // Default model — doc 12 "Model/provider selection should be
+  // configurable through the AI Gateway", never hard-coded in an adapter.
+  AI_MODEL: z.string().min(1).default('gpt-5.6-luna'),
+
+  // Rate limiting (doc19 Phase 17 hardening; doc29 §13 — Upstash Redis is
+  // approved by name for "rate limiting"). Shared/durable counters via
+  // UPSTASH_REDIS_REST_URL/TOKEN above, not in-memory — this API can run
+  // as more than one instance (doc29 §19 Render), and an in-memory
+  // counter would under-count real traffic across instances. First-pass,
+  // config-overridable limits — see RateLimitGuard's doc comment for the
+  // reasoning behind each default.
+  RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
+  RATE_LIMIT_DEFAULT_MAX: z.coerce.number().int().positive().default(120),
+  RATE_LIMIT_AI_MAX: z.coerce.number().int().positive().default(10),
+  RATE_LIMIT_PUBLIC_MAX: z.coerce.number().int().positive().default(20),
+
+  // Explicit deployment identifier for rate-limit Redis key namespacing
+  // (doc19 Phase 17 hardening) — deliberately NOT NODE_ENV: Render can run
+  // more than one BRAYN service (e.g. a staging deploy) with
+  // NODE_ENV=production, which would otherwise collapse distinct
+  // deployments into the same Redis key namespace. No default: RateLimitGuard
+  // treats a missing value the same as missing Redis config (fails open)
+  // rather than guessing a namespace — see RateLimitGuard's own doc comment.
+  BRAYN_ENV: z.enum(['development', 'production']).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

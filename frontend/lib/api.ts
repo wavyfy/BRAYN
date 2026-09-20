@@ -53,7 +53,9 @@ export async function apiFetch(path: string, init?: RequestInit) {
     headers: {
       ...init?.headers,
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      'Content-Type': 'application/json',
+      // Only bodyless requests (e.g. POST .../import, DELETE .../:provider) skip this —
+      // Fastify rejects a declared JSON content-type paired with a genuinely empty body.
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
     },
     cache: 'no-store',
   });

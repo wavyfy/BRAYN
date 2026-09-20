@@ -3,12 +3,20 @@ import { and, count, eq } from 'drizzle-orm';
 import { DatabaseService } from '../../database/database.service';
 import { workspaceMemberships } from '../../database/schema/workspace-memberships';
 import { workspaces } from '../../database/schema/workspaces';
+import { workspaceMembershipAuditLog } from '../../database/schema/workspace-membership-audit-log';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/errors/app-error';
+import { RequestContext } from '../../common/logging/request-context';
+import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import type { WorkspaceRole } from './dto/add-member.schema';
+
+type WorkspaceAdminAuditAction = 'member_added' | 'member_removed' | 'role_changed' | 'ownership_transferred';
 
 @Injectable()
 export class WorkspaceMembershipService {
-  constructor(private readonly database: DatabaseService) {}
+  constructor(
+    private readonly database: DatabaseService,
+    private readonly logger: StructuredLoggerService,
+  ) {}
 
   async addMember(workspaceId: string, userId: string, role: WorkspaceRole) {
     const [membership] = await this.database.client
@@ -21,6 +29,7 @@ export class WorkspaceMembershipService {
       throw new ConflictError('This user is already a member of the workspace.');
     }
 
+    await this.recordAudit(workspaceId, 'member_added', userId, { role });
     return membership;
   }
 
@@ -63,6 +72,8 @@ export class WorkspaceMembershipService {
     await this.database.client
       .delete(workspaceMemberships)
       .where(and(eq(workspaceMemberships.workspaceId, workspaceId), eq(workspaceMemberships.userId, userId)));
+
+    await this.recordAudit(workspaceId, 'member_removed', userId, { role: membership.role });
   }
 
   /** Doc 28 "User/role management": owner Full, admin Manage. */
@@ -81,6 +92,12 @@ export class WorkspaceMembershipService {
       .where(and(eq(workspaceMemberships.workspaceId, workspaceId), eq(workspaceMemberships.userId, userId)))
       .returning();
 
+    // Only an actual change is an auditable "role changed" event — a caller re-submitting the
+    // same role (e.g. the owner-keeps-owner case below) didn't change anything to record.
+    if (membership.role !== role) {
+      await this.recordAudit(workspaceId, 'role_changed', userId, { fromRole: membership.role, toRole: role });
+    }
+
     return updated;
   }
 
@@ -94,7 +111,7 @@ export class WorkspaceMembershipService {
       throw new ValidationError('You already own this workspace.');
     }
 
-    return this.database.transaction(async (tx) => {
+    const updated = await this.database.transaction(async (tx) => {
       const [target] = await tx
         .select()
         .from(workspaceMemberships)
@@ -109,14 +126,55 @@ export class WorkspaceMembershipService {
         .set({ role: 'admin' })
         .where(and(eq(workspaceMemberships.workspaceId, workspaceId), eq(workspaceMemberships.userId, fromUserId)));
 
-      const [updated] = await tx
+      const [promoted] = await tx
         .update(workspaceMemberships)
         .set({ role: 'owner' })
         .where(and(eq(workspaceMemberships.workspaceId, workspaceId), eq(workspaceMemberships.userId, toUserId)))
         .returning();
 
-      return updated;
+      return promoted;
     });
+
+    // Recorded after the transaction commits, in its own best-effort write — an audit failure
+    // must never roll back an ownership transfer that has already genuinely happened.
+    await this.recordAudit(workspaceId, 'ownership_transferred', toUserId, { fromUserId });
+    return updated;
+  }
+
+  /**
+   * Doc18 Audit — "Permission changes", "Administrative changes". Best-
+   * effort, same convention as `MerchantBusinessAnalystService.recordProtectedAccess`:
+   * caught and logged, never thrown — an audit-trail failure must not
+   * undo or block an administrative change that already succeeded, and
+   * must never become a reason a caller could retry into doing something
+   * they otherwise couldn't (this method runs strictly after success, it
+   * never gates it).
+   */
+  private async recordAudit(
+    workspaceId: string,
+    action: WorkspaceAdminAuditAction,
+    targetUserId: string,
+    metadata: Record<string, unknown>,
+  ): Promise<void> {
+    const store = RequestContext.get();
+    if (!store?.actorUserId || !store?.actorRole) {
+      return;
+    }
+
+    try {
+      await this.database.client.insert(workspaceMembershipAuditLog).values({
+        workspaceId,
+        actorUserId: store.actorUserId,
+        actorRole: store.actorRole as 'owner' | 'admin' | 'marketing' | 'support' | 'analyst',
+        action,
+        targetUserId,
+        metadata,
+      });
+    } catch (error) {
+      this.logger.event('error', 'Failed to record workspace administrative audit event', 'WorkspaceMembershipService', {
+        errorType: error instanceof Error ? error.constructor.name : typeof error,
+      });
+    }
   }
 
   /** A workspace must always keep at least one owner able to manage it. */

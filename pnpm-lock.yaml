@@ -35,7 +35,7 @@ importers:
         version: 8.68.0(eslint@10.9.1(jiti@1.21.7))(typescript@5.9.3)
       vitest:
         specifier: 4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.4.0)(jsdom@25.0.1)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.19.12)(jiti@1.21.7)(terser@5.51.2)(yaml@2.9.0))
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.4.0)(jsdom@25.0.1)(vite@8.2.2(@types/node@26.4.0)(jiti@1.21.7)(terser@5.51.2)(yaml@2.9.0))
 
   backend:
     dependencies:
@@ -60,12 +60,18 @@ importers:
       '@sentry/node':
         specifier: 8.47.0
         version: 8.47.0
+      '@upstash/redis':
+        specifier: 1.38.4
+        version: 1.38.4
       drizzle-orm:
         specifier: 0.36.4
         version: 0.36.4(@opentelemetry/api@1.9.1)(@types/pg@8.11.10)(@types/react@18.3.18)(pg@8.13.1)(react@18.3.1)
       fastify:
         specifier: 4.28.1
         version: 4.28.1
+      openai:
+        specifier: ^7.13.0
+        version: 7.13.0(ws@8.21.3)(zod@4.4.3)
       pg:
         specifier: 8.13.1
         version: 8.13.1
@@ -102,7 +108,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.4.0)(jsdom@25.0.1)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.19.12)(jiti@1.21.7)(terser@5.51.2)(yaml@2.9.0))
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.4.0)(jsdom@25.0.1)(vite@8.2.2(@types/node@26.4.0)(jiti@1.21.7)(terser@5.51.2)(yaml@2.9.0))
 
   frontend:
     dependencies:
@@ -157,7 +163,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.4.0)(jsdom@25.0.1)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.19.12)(jiti@1.21.7)(terser@5.51.2)(yaml@2.9.0))
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.4.0)(jsdom@25.0.1)(vite@8.2.2(@types/node@26.4.0)(jiti@1.21.7)(terser@5.51.2)(yaml@2.9.0))
 
 packages:
 
@@ -1369,6 +1375,9 @@ packages:
   '@typescript-eslint/visitor-keys@8.68.0':
     resolution: {integrity: sha512-YR65gGdGvTUAWLldC3xLOvOzamdGzB4A5/N8rehEaHs3Zvoe39BhgY+u0SPch1OvrVTfLcc55wsSgK2NcnTS/A==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+
+  '@upstash/redis@1.38.4':
+    resolution: {integrity: sha512-ZX69mKReun/yieyHYLoBg0eSiF6hjCQjd8zUKkJ5eCHehDV6P8S8oZOHxGSfkH1spfOhGZk0EGerBrfUsXow8g==}
 
   '@vitest/expect@4.1.11':
     resolution: {integrity: sha512-VX2x5vNJXET47KAFzwERI+KRMtTTCSWTfSMKsW7JsUsXV4psq++e3DvZpuTDOpHcxytiDs6p2nhVb2tVDiiUYw==}
@@ -2731,6 +2740,30 @@ packages:
     resolution: {integrity: sha512-kbpaSSGJTWdAY5KPVeMOKXSrPtr8C8C7wodJbcsd51jRnmD+GZu8Y0VoU6Dm5Z4vWr0Ig/1NKuWRKf7j5aaYSg==}
     engines: {node: '>=6'}
 
+  openai@7.13.0:
+    resolution: {integrity: sha512-KDg/mQgbsDoj0JLL1kVikj5Omz+MuU9/Hn674Z+FFaSs5aFf7mcpLu8vsB1FfSW4q/erMhCza7HZgXN0cPKH0w==}
+    engines: {node: '>=22.0.0'}
+    peerDependencies:
+      '@aws-sdk/credential-provider-node': '>=3.972.0 <4'
+      '@smithy/hash-node': '>=4.3.0 <5'
+      '@smithy/signature-v4': '>=5.4.0 <6'
+      undici: '>=5 <9'
+      ws: ^8.21.0
+      zod: ^3.25 || ^4.0
+    peerDependenciesMeta:
+      '@aws-sdk/credential-provider-node':
+        optional: true
+      '@smithy/hash-node':
+        optional: true
+      '@smithy/signature-v4':
+        optional: true
+      undici:
+        optional: true
+      ws:
+        optional: true
+      zod:
+        optional: true
+
   optionator@0.9.4:
     resolution: {integrity: sha512-6IpQ7mKUxRcZNLIObR0hz7lxsapSSIYNZJwXPGeF0mTVqGKFIXj1DQcMoT22S3ROcLyY/rz0PWaWZ9ayWmad9g==}
     engines: {node: '>= 0.8.0'}
@@ -3445,6 +3478,9 @@ packages:
   uid@2.0.2:
     resolution: {integrity: sha512-u3xV3X7uzvi5b1MncmZo3i2Aw222Zk1keqLA1YkHldREkAhAqi65wuPfe7lHx8H/Wzy+8CE7S7uS3jekIM5s8g==}
     engines: {node: '>=8'}
+
+  uncrypto@0.1.3:
+    resolution: {integrity: sha512-Ql87qFHB3s/De2ClA9e0gsnS6zXG27SkTiSJwjCc9MebbfapQfuPzumMIUMi38ezPZVNFcHI9sUIepeQfw8J8Q==}
 
   undici-types@8.3.0:
     resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
@@ -4855,6 +4891,10 @@ snapshots:
       '@typescript-eslint/types': 8.68.0
       eslint-visitor-keys: 5.0.1
 
+  '@upstash/redis@1.38.4':
+    dependencies:
+      uncrypto: 0.1.3
+
   '@vitest/expect@4.1.11':
     dependencies:
       '@standard-schema/spec': 1.1.0
@@ -4864,7 +4904,7 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.1
 
-  '@vitest/mocker@4.1.11(vite@8.2.2(@types/node@26.4.0)(esbuild@0.19.12)(jiti@1.21.7)(terser@5.51.2)(yaml@2.9.0))':
+  '@vitest/mocker@4.1.11(vite@8.2.2(@types/node@26.4.0)(jiti@1.21.7)(terser@5.51.2)(yaml@2.9.0))':
     dependencies:
       '@vitest/spy': 4.1.11
       estree-walker: 3.0.3
@@ -6179,6 +6219,11 @@ snapshots:
     dependencies:
       mimic-fn: 2.1.0
 
+  openai@7.13.0(ws@8.21.3)(zod@4.4.3):
+    optionalDependencies:
+      ws: 8.21.3
+      zod: 4.4.3
+
   optionator@0.9.4:
     dependencies:
       deep-is: 0.1.4
@@ -6850,6 +6895,8 @@ snapshots:
     dependencies:
       '@lukeed/csprng': 1.1.0
 
+  uncrypto@0.1.3: {}
+
   undici-types@8.3.0: {}
 
   universalify@2.0.1: {}
@@ -6885,10 +6932,10 @@ snapshots:
       terser: 5.51.2
       yaml: 2.9.0
 
-  vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.4.0)(jsdom@25.0.1)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.19.12)(jiti@1.21.7)(terser@5.51.2)(yaml@2.9.0)):
+  vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.4.0)(jsdom@25.0.1)(vite@8.2.2(@types/node@26.4.0)(jiti@1.21.7)(terser@5.51.2)(yaml@2.9.0)):
     dependencies:
       '@vitest/expect': 4.1.11
-      '@vitest/mocker': 4.1.11(vite@8.2.2(@types/node@26.4.0)(esbuild@0.19.12)(jiti@1.21.7)(terser@5.51.2)(yaml@2.9.0))
+      '@vitest/mocker': 4.1.11(vite@8.2.2(@types/node@26.4.0)(jiti@1.21.7)(terser@5.51.2)(yaml@2.9.0))
       '@vitest/pretty-format': 4.1.11
       '@vitest/runner': 4.1.11
       '@vitest/snapshot': 4.1.11

@@ -51,3 +51,25 @@ export class ProviderError extends AppError {
     super(ErrorCode.PROVIDER_ERROR, message, HttpStatus.BAD_GATEWAY);
   }
 }
+
+/**
+ * Doc14 Human Approval flow — the request is understood and permitted in
+ * principle, but its risk tier requires merchant approval before it may
+ * execute (doc03 rule 7 — "Write actions require stronger validation and
+ * authorization"; doc05 — "An unapproved action must not execute"). Not a
+ * client mistake (unlike ValidationError) and not a permission failure
+ * (unlike UnauthorizedError) — 202 Accepted: the request was valid and
+ * accepted, execution is simply not yet authorized.
+ */
+export class ApprovalRequiredError extends AppError {
+  constructor(message = 'This action requires merchant approval before it can execute.') {
+    super(ErrorCode.APPROVAL_REQUIRED, message, HttpStatus.ACCEPTED);
+  }
+}
+
+/** Doc19 Phase 17 hardening — Rate-limit handling. Thrown by RateLimitGuard; carries no per-request detail (never echoes the caller's identity/count back) beyond the standard error envelope. */
+export class RateLimitError extends AppError {
+  constructor(message = 'Too many requests. Please slow down and try again shortly.') {
+    super(ErrorCode.RATE_LIMITED, message, HttpStatus.TOO_MANY_REQUESTS);
+  }
+}

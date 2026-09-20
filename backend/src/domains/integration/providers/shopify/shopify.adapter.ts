@@ -21,6 +21,51 @@ import type { NormalizedCollect, NormalizedCollection } from '../../../commerce/
 import type { Env } from '../../../../config/env.schema';
 
 const SHOPIFY_API_VERSION = '2024-10';
+
+/**
+ * Non-sensitive classification of a verifyConnection() outcome (doc 20
+ * Part 20/22/25) — never a token/domain/full body. `category`
+ * distinguishes 401 from 403 exactly (Part 22 — a combined "401_403"
+ * bucket wasn't enough to tell an invalid/expired token apart from a
+ * scopes/permissions problem). `shopifyError` (Part 25) is Shopify's own
+ * `errors` field from the response body — its explanation for *why* —
+ * extracted on its own, never the complete response body.
+ */
+export interface ShopifyConnectionCheckDiagnostic {
+  category: '200' | '401' | '403' | '404' | 'other_4xx' | 'server_error' | 'network_error';
+  apiVersionHeader: string | null;
+  shopifyError: string | null;
+}
+
+/**
+ * Extracts only the `errors` field from a Shopify error response body
+ * (doc 20 Part 25) — never the full body, never customer/store data.
+ * Shopify's REST API returns `{"errors": "some message"}` for a simple
+ * permission error, or `{"errors": {"field": ["message"]}}` for a
+ * validation error; either shape is reduced to a single string here.
+ * Never throws — a missing/invalid/unparseable body yields `null`, since
+ * this is diagnostic-only and must never break the actual verification
+ * outcome it's attached to.
+ */
+async function readShopifyErrorField(response: Response): Promise<string | null> {
+  try {
+    const body: unknown = await response.clone().json();
+    if (!body || typeof body !== 'object' || !('errors' in body)) {
+      return null;
+    }
+    const errors = (body as { errors?: unknown }).errors;
+    if (typeof errors === 'string') {
+      return errors;
+    }
+    if (errors && typeof errors === 'object') {
+      return JSON.stringify(errors);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 const CUSTOMERS_PAGE_SIZE = 250;
 const PRODUCTS_PAGE_SIZE = 250;
 const ORDERS_PAGE_SIZE = 250;
@@ -77,6 +122,54 @@ export async function requestShopifyClientCredentialsToken(
 
   // shopify.dev: "Always 86399" — falling back to it only if a future API response omits the field.
   return { accessToken: body.access_token, expiresIn: body.expires_in ?? 86399 };
+}
+
+/** Tags a stored credential as having come from the standalone-app authorization-code grant (doc 20 Part 28) — see ShopifyOAuthService.handleCallback and ShopifyAdapter.refreshCredentials. */
+export const SHOPIFY_AUTHORIZATION_CODE_GRANT_TYPE = 'authorization_code';
+
+/**
+ * Refreshes an expiring offline access token (shopify.dev — "Refresh an
+ * expiring offline access token"): same `/admin/oauth/access_token`
+ * endpoint as the initial exchange, but `grant_type=refresh_token` plus
+ * the stored `refresh_token` instead of an authorization `code`. Shopify
+ * rotates the refresh token on every use — the response's `refresh_token`
+ * is a *new* value, and the old one stops working, so callers must
+ * persist both the new access and refresh tokens together, never just
+ * the access token.
+ */
+async function requestShopifyRefreshedToken(
+  shopDomain: string,
+  clientId: string,
+  clientSecret: string,
+  refreshToken: string,
+): Promise<{ accessToken: string; refreshToken: string; expiresIn: number }> {
+  const response = await fetch(`https://${shopDomain}/admin/oauth/access_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+    }).toString(),
+  });
+
+  if (!response.ok) {
+    throw new ProviderError('Shopify rejected the refresh token request.');
+  }
+
+  const body = (await response.json()) as {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+    refresh_token_expires_in?: number;
+  };
+  if (!body.access_token || !body.refresh_token) {
+    throw new ProviderError('Shopify refresh-token response was missing an access or refresh token.');
+  }
+
+  // shopify.dev: access tokens from this grant expire in 1 hour (3600s) — falling back only if a future response omits the field.
+  return { accessToken: body.access_token, refreshToken: body.refresh_token, expiresIn: body.expires_in ?? 3600 };
 }
 
 interface ShopifyCustomer {
@@ -195,13 +288,38 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
   }
 
   /**
-   * Re-mints a client-credentials-grant token before it expires (doc07 —
+   * Re-mints an expiring token before it expires (doc07 —
    * IntegrationService.getCredentials calls this generically off
-   * `credentials.expiresAt`). Returns `null` for any other credential
-   * shape — the authorization-code/manual token has no refresh mechanism
-   * here, same as WooCommerce; nothing to do.
+   * `credentials.expiresAt`). Two grant shapes, dispatched by
+   * `credentials.grantType`; any other shape (WooCommerce, or a Shopify
+   * credential with no expiry) returns `null` — nothing to do. Throws
+   * (never returns partial data) on any failure, matching the existing
+   * client-credentials branch's convention — `IntegrationService.
+   * refreshIfExpiring` never catches this, so a thrown error here leaves
+   * the previously-stored credentials in the database untouched rather
+   * than overwriting them with something invalid (doc 20 Part 28).
    */
   async refreshCredentials(credentials: Record<string, string>): Promise<Record<string, string> | null> {
+    if (credentials.grantType === SHOPIFY_AUTHORIZATION_CODE_GRANT_TYPE) {
+      const { shopDomain, refreshToken } = credentials;
+      const clientId = this.config.get('SHOPIFY_APP_CLIENT_ID', { infer: true });
+      const clientSecret = this.config.get('SHOPIFY_APP_CLIENT_SECRET', { infer: true });
+      if (!shopDomain || !refreshToken || !clientId || !clientSecret) {
+        throw new ProviderError('Shopify authorization-code refresh is not configured.');
+      }
+
+      const refreshed = await requestShopifyRefreshedToken(shopDomain, clientId, clientSecret, refreshToken);
+      return {
+        shopDomain,
+        accessToken: refreshed.accessToken,
+        // Shopify rotates the refresh token on every use — the old one stops working, so the
+        // newly-returned one must replace it, never just the access token (doc 20 Part 28).
+        refreshToken: refreshed.refreshToken,
+        grantType: SHOPIFY_AUTHORIZATION_CODE_GRANT_TYPE,
+        expiresAt: new Date(Date.now() + refreshed.expiresIn * 1000).toISOString(),
+      };
+    }
+
     if (credentials.grantType !== SHOPIFY_CLIENT_CREDENTIALS_GRANT_TYPE) {
       return null;
     }
@@ -226,8 +344,20 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
    * Smallest real Shopify API call that proves the token actually works:
    * GET shop.json, the same request Shopify's own docs use as the
    * canonical "is this token valid" check.
+   *
+   * `onDiagnostic` (doc 20 Part 20) is an optional, fingerprint-safe hook
+   * — a status-code *category* plus the non-sensitive `X-Shopify-API-Version`
+   * response header, never the body/token/domain. Existing callers
+   * (`connectViaClientCredentials`) don't pass it, so this parameter changes
+   * nothing about their behavior; `ShopifyOAuthService.handleCallback` passes
+   * one so its own failure log can distinguish *why* verification failed
+   * (401/403 vs 404 vs 5xx vs network error) instead of a single opaque
+   * boolean, without ever logging a credential or response body.
    */
-  async verifyConnection(credentials: Record<string, string>): Promise<boolean> {
+  async verifyConnection(
+    credentials: Record<string, string>,
+    onDiagnostic?: (diagnostic: ShopifyConnectionCheckDiagnostic) => void,
+  ): Promise<boolean> {
     const { shopDomain, accessToken } = credentials;
     if (!shopDomain || !accessToken || !SHOPIFY_DOMAIN_PATTERN.test(shopDomain)) {
       // A malformed domain is the merchant having entered something wrong —
@@ -242,20 +372,30 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
       });
     } catch (error) {
       // Network/DNS failure — unclassified, not an ordinary "bad credentials" outcome.
+      onDiagnostic?.({ category: 'network_error', apiVersionHeader: null, shopifyError: null });
       throw new ProviderError(
         `Could not reach Shopify: ${error instanceof Error ? error.message : 'unknown network error'}.`,
       );
     }
 
-    // 4xx (401 bad token, 404 unknown shop domain, ...) is the merchant having
+    const apiVersionHeader = response.headers.get('x-shopify-api-version');
+
+    // 4xx (401/403 bad token, 404 unknown shop domain, ...) is the merchant having
     // entered something wrong — an ordinary rejection, not a thrown error.
     if (response.status >= 400 && response.status < 500) {
+      const category =
+        response.status === 401 ? '401' : response.status === 403 ? '403' : response.status === 404 ? '404' : 'other_4xx';
+      const shopifyError = onDiagnostic ? await readShopifyErrorField(response) : null;
+      onDiagnostic?.({ category, apiVersionHeader, shopifyError });
       return false;
     }
     if (!response.ok) {
+      const shopifyError = onDiagnostic ? await readShopifyErrorField(response) : null;
+      onDiagnostic?.({ category: 'server_error', apiVersionHeader, shopifyError });
       throw new ProviderError(`Shopify connection check failed with status ${response.status}.`);
     }
 
+    onDiagnostic?.({ category: '200', apiVersionHeader, shopifyError: null });
     return true;
   }
 

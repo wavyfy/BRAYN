@@ -117,6 +117,151 @@ describe('ShopifyAdapter', () => {
         adapter.verifyConnection({ shopDomain: 'bad.myshopify.com', accessToken: 'shpat_123' }),
       ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
     });
+
+    describe('onDiagnostic (doc 20 Part 20) — status-code category only, never the token/domain/body', () => {
+      it('reports category "200" plus the X-Shopify-API-Version header on success', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { shop: {} }, { 'X-Shopify-API-Version': '2024-10' })));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, onDiagnostic);
+
+        expect(onDiagnostic).toHaveBeenCalledWith({ category: '200', apiVersionHeader: '2024-10', shopifyError: null });
+      });
+
+      it('reports category "401" (not a combined 401/403 bucket) for a 401', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401)));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }, onDiagnostic);
+
+        expect(onDiagnostic).toHaveBeenCalledWith({ category: '401', apiVersionHeader: null, shopifyError: null });
+      });
+
+      it('reports category "403" (distinct from 401) for a 403', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(403)));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }, onDiagnostic);
+
+        expect(onDiagnostic).toHaveBeenCalledWith({ category: '403', apiVersionHeader: null, shopifyError: null });
+      });
+
+      it('reports category "404" for an unknown shop domain', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(404)));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await adapter.verifyConnection({ shopDomain: 'nonexistent.myshopify.com', accessToken: 'shpat_123' }, onDiagnostic);
+
+        expect(onDiagnostic).toHaveBeenCalledWith({ category: '404', apiVersionHeader: null, shopifyError: null });
+      });
+
+      it('reports category "other_4xx" for a 4xx that is neither 401/403 nor 404', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(429)));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, onDiagnostic);
+
+        expect(onDiagnostic).toHaveBeenCalledWith({ category: 'other_4xx', apiVersionHeader: null, shopifyError: null });
+      });
+
+      it('reports category "server_error" (before throwing) for a 5xx', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(503)));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await expect(
+          adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, onDiagnostic),
+        ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+        expect(onDiagnostic).toHaveBeenCalledWith({ category: 'server_error', apiVersionHeader: null, shopifyError: null });
+      });
+
+      it('reports category "network_error" (before throwing) when the request itself fails', async () => {
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () => {
+            throw new Error('getaddrinfo ENOTFOUND');
+          }),
+        );
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await expect(
+          adapter.verifyConnection({ shopDomain: 'bad.myshopify.com', accessToken: 'shpat_123' }, onDiagnostic),
+        ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+        expect(onDiagnostic).toHaveBeenCalledWith({ category: 'network_error', apiVersionHeader: null, shopifyError: null });
+      });
+
+      it('extracts a string "errors" field from a 403 body as shopifyError', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(403, { errors: 'This action requires merchant approval for write_products scope' })));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }, onDiagnostic);
+
+        expect(onDiagnostic).toHaveBeenCalledWith(
+          expect.objectContaining({ category: '403', shopifyError: 'This action requires merchant approval for write_products scope' }),
+        );
+      });
+
+      it('extracts an object-shaped "errors" field (validation-style) as a JSON string, not the raw object', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(403, { errors: { scope: ['is missing'] } })));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }, onDiagnostic);
+
+        expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({ shopifyError: JSON.stringify({ scope: ['is missing'] }) }));
+      });
+
+      it('reports shopifyError: null when the body has no "errors" field', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(403, { message: 'forbidden' })));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }, onDiagnostic);
+
+        expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({ shopifyError: null }));
+      });
+
+      it('reports shopifyError: null (fails closed, never throws) when the body is not valid JSON', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => new Response('not json', { status: 403 })));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await expect(adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'bad' }, onDiagnostic)).resolves.toBe(false);
+        expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({ shopifyError: null }));
+      });
+
+      it('never includes the access token, shop domain, or unrelated body fields in the diagnostic payload — only the "errors" field', async () => {
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () => jsonResponse(401, { errors: 'invalid api key or access token', customer_email: 'jane@example.com', order_id: 999 })),
+        );
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_super_secret_token' }, onDiagnostic);
+
+        const serialized = JSON.stringify(onDiagnostic.mock.calls);
+        expect(serialized).not.toContain('shpat_super_secret_token');
+        expect(serialized).not.toContain('acme.myshopify.com');
+        expect(serialized).not.toContain('jane@example.com');
+        expect(serialized).not.toContain('order_id');
+        expect(serialized).toContain('invalid api key or access token');
+      });
+
+      it('does not change behavior for callers that omit onDiagnostic (e.g. connectViaClientCredentials)', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { shop: {} })));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+        await expect(adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' })).resolves.toBe(true);
+      });
+    });
   });
 
   describe('fetchCustomers()', () => {
@@ -935,6 +1080,112 @@ describe('ShopifyAdapter', () => {
       await expect(
         adapter.refreshCredentials({ shopDomain: 'acme.myshopify.com', accessToken: 'x', grantType: 'client_credentials', expiresAt: new Date().toISOString() }),
       ).rejects.toThrow('Shopify rejected the client credentials request.');
+    });
+
+    describe('authorization_code grant (doc 20 Part 28 — expiring offline tokens)', () => {
+      const staleCredentials = {
+        shopDomain: 'acme.myshopify.com',
+        accessToken: 'shpat_old',
+        refreshToken: 'shprt_old',
+        grantType: 'authorization_code',
+        expiresAt: new Date(Date.now() - 1000).toISOString(),
+      };
+
+      it('sends grant_type=refresh_token with client_id/client_secret/refresh_token to /admin/oauth/access_token', async () => {
+        const fetchMock = vi.fn(async () =>
+          jsonResponse(200, { access_token: 'shpat_new', refresh_token: 'shprt_new', expires_in: 3600 }),
+        );
+        vi.stubGlobal('fetch', fetchMock);
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+        await adapter.refreshCredentials(staleCredentials);
+
+        expect(fetchMock).toHaveBeenCalledWith(
+          'https://acme.myshopify.com/admin/oauth/access_token',
+          expect.objectContaining({
+            method: 'POST',
+            body: 'grant_type=refresh_token&client_id=client_id&client_secret=client_secret&refresh_token=shprt_old',
+          }),
+        );
+      });
+
+      it('persists the NEW access token and the rotated NEW refresh token, and updates expiresAt', async () => {
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () => jsonResponse(200, { access_token: 'shpat_new', refresh_token: 'shprt_new', expires_in: 3600 })),
+        );
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const before = Date.now();
+
+        const result = await adapter.refreshCredentials(staleCredentials);
+
+        expect(result).toEqual({
+          shopDomain: 'acme.myshopify.com',
+          accessToken: 'shpat_new',
+          refreshToken: 'shprt_new',
+          grantType: 'authorization_code',
+          expiresAt: expect.any(String),
+        });
+        expect(new Date(result!.expiresAt).getTime()).toBeGreaterThanOrEqual(before + 3600 * 1000);
+      });
+
+      it('does not carry the old refresh token forward — the rotated one fully replaces it', async () => {
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () => jsonResponse(200, { access_token: 'shpat_new', refresh_token: 'shprt_new', expires_in: 3600 })),
+        );
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+        const result = await adapter.refreshCredentials(staleCredentials);
+
+        expect(result?.refreshToken).toBe('shprt_new');
+        expect(result?.refreshToken).not.toBe('shprt_old');
+      });
+
+      it('throws (does not return partial data) when Shopify rejects the refresh request — caller must not overwrite existing valid credentials', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401)));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+        await expect(adapter.refreshCredentials(staleCredentials)).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+      });
+
+      it('throws when the refresh response is missing an access or refresh token', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { access_token: 'shpat_new' })));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+        await expect(adapter.refreshCredentials(staleCredentials)).rejects.toThrow(
+          'Shopify refresh-token response was missing an access or refresh token.',
+        );
+      });
+
+      it('throws when the stored credential has no refresh token to use', async () => {
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+        await expect(
+          adapter.refreshCredentials({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_old', grantType: 'authorization_code' }),
+        ).rejects.toThrow('Shopify authorization-code refresh is not configured.');
+      });
+
+      it('throws when the app client id/secret are not configured', async () => {
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig({ SHOPIFY_APP_CLIENT_ID: undefined }));
+
+        await expect(adapter.refreshCredentials(staleCredentials)).rejects.toThrow('Shopify authorization-code refresh is not configured.');
+      });
+
+      it('never leaks the old or new refresh token, access token, or client secret through a thrown error message', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401)));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+        try {
+          await adapter.refreshCredentials(staleCredentials);
+          throw new Error('expected refreshCredentials to throw');
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          expect(message).not.toContain('shprt_old');
+          expect(message).not.toContain('shpat_old');
+          expect(message).not.toContain('client_secret');
+        }
+      });
     });
   });
 });

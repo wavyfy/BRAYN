@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { and, desc, eq } from 'drizzle-orm';
 import { automationDefinitions } from '../../database/schema/automation-definitions';
@@ -7,8 +7,10 @@ import { DatabaseService } from '../../database/database.service';
 import { NotFoundError } from '../../common/errors/app-error';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import type { DomainEvent } from '../../common/events/domain-event';
-import { RecommendationService } from '../intelligence-engines/recommendation.service';
+import { AiActionControlService } from '../ai-action-control/ai-action-control.service';
+import { ACTION_REGISTRY, type ActionRegistry } from '../ai-action-control/actions.registry';
 import type { RevenueOpportunityCreatedPayload } from '../intelligence-engines/revenue-opportunity.service';
+import type { CustomerHealthRecalculatedPayload } from '../intelligence-engines/customer-health.service';
 import type { CreateAutomationInput } from './dto/create-automation.schema';
 import type { UpdateAutomationInput } from './dto/update-automation.schema';
 
@@ -24,27 +26,35 @@ interface AutomationConditions {
  *
  * - Scheduling/delay (doc19 item 5) — no automation here needs a delay;
  *   adding a scheduler before anything uses it is speculative (doc18).
- * - AI Action Control integration (doc19 item 7) — doesn't exist yet
- *   (doc19 Phase 14). `generate_recommendations` is Phase 1's only
- *   action precisely because it's read/derive-only and low-risk (doc14 —
- *   "Low risk → automatic execution where permitted"): it writes
- *   `recommendations` rows, the same effect a merchant can already
- *   trigger by hand (RecommendationService.generate), so no new
- *   authorization surface is created by automating it.
  * - Retry/recovery (doc19 item 9) — see automation-runs schema's doc
  *   comment; nothing here fails in a way retry would help with today (a
  *   thrown error means a real bug, not a transient failure).
  *
- * The `revenue_opportunity.created` listener runs in-process, in the
- * same tick as `RevenueOpportunityService.detect()` (EventBus is
- * synchronous EventEmitter2 — see EventBus's doc comment), so a failure
- * here must never surface as a failure of `detect()`'s own caller.
+ * AI Action Control integration (doc19 item 7) is DONE — `runOne()` calls
+ * `AiActionControlService.executeForAutomation()` rather than
+ * `RecommendationService.generate()` directly (doc16 Core Flow:
+ * "Automation → Conditions → AI Action Control/Approval → Action
+ * Executor"). `executeForAutomation()` skips the human-role permission
+ * check `execute()` has — this listener is system-triggered, not an
+ * authenticated request, so there is no actor/role to check; the
+ * automation's own `enabled` flag + workspace scope (already the gate on
+ * `definitions` below) is the authorization boundary. Still goes through
+ * input validation, the policy-check boundary, the `requiresApproval`
+ * gate, idempotency, execution, and audit (with a null actor — doc19
+ * Phase 15 item 7).
+ *
+ * Both listeners (`revenue_opportunity.created`, `customer_health.recalculated`)
+ * run in-process, in the same tick as their respective emitters
+ * (EventBus is synchronous EventEmitter2 — see EventBus's doc comment),
+ * so a failure here must never surface as a failure of the emitting
+ * service's own caller.
  */
 @Injectable()
 export class AutomationService {
   constructor(
     private readonly database: DatabaseService,
-    private readonly recommendationService: RecommendationService,
+    private readonly aiActionControl: AiActionControlService,
+    @Inject(ACTION_REGISTRY) private readonly registry: ActionRegistry,
     private readonly logger: StructuredLoggerService,
   ) {}
 
@@ -54,7 +64,10 @@ export class AutomationService {
       .values({
         workspaceId,
         name: input.name,
-        triggerType: 'revenue_opportunity.created',
+        // Zod's `.default('revenue_opportunity.created')` on createAutomationSchema only applies
+        // during ZodValidationPipe's parse — a direct service call (as tests do) bypasses that, so
+        // this mirrors the same default here rather than depending on the HTTP boundary having run.
+        triggerType: input.triggerType ?? 'revenue_opportunity.created',
         conditions: input.conditions ?? null,
         actionType: 'generate_recommendations',
       })
@@ -121,7 +134,8 @@ export class AutomationService {
 
     for (const definition of definitions) {
       try {
-        await this.runOne(workspaceId, canonicalCustomerId, definition, event);
+        const matched = matchesConditions(definition.conditions as AutomationConditions | null, event.payload);
+        await this.runOne(workspaceId, canonicalCustomerId, definition, event.id, matched, 'Conditions did not match this opportunity.');
       } catch (error) {
         // A run failure is this automation's own concern (recorded below) — it must never
         // propagate back into the detect() call that emitted this event (doc07 tenant/
@@ -134,31 +148,87 @@ export class AutomationService {
     }
   }
 
+  /**
+   * Doc16 "Triggers" lists "Customer Risk & Engagement State changes" —
+   * `CustomerHealthService.recalculate()` already emits this event (doc10
+   * — "Health changes should publish events for dependent intelligence
+   * and automation"); this is the first consumer. Same routing shape as
+   * `handleRevenueOpportunityCreated` — see `matchesHealthConditions` for
+   * why conditions are accepted but not evaluated for this trigger.
+   */
+  @OnEvent('customer_health.recalculated')
+  async handleCustomerHealthRecalculated(event: DomainEvent<CustomerHealthRecalculatedPayload>): Promise<void> {
+    if (!event.workspaceId) return;
+    const workspaceId = event.workspaceId;
+    const { canonicalCustomerId } = event.payload;
+
+    const definitions = await this.database.client
+      .select()
+      .from(automationDefinitions)
+      .where(
+        and(
+          eq(automationDefinitions.workspaceId, workspaceId),
+          eq(automationDefinitions.triggerType, 'customer_health.recalculated'),
+          eq(automationDefinitions.enabled, true),
+        ),
+      );
+
+    for (const definition of definitions) {
+      try {
+        const matched = matchesHealthConditions();
+        await this.runOne(workspaceId, canonicalCustomerId, definition, event.id, matched, 'Conditions did not match this health recalculation.');
+      } catch (error) {
+        this.logger.event('error', `Automation ${definition.id} run threw unexpectedly`, 'AutomationService', {
+          automationId: definition.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  /**
+   * Shared by both trigger handlers — condition-matching is computed by
+   * the caller (each trigger's payload shape differs), this only owns
+   * the skip/execute/record mechanics common to every trigger type.
+   */
   private async runOne(
     workspaceId: string,
     canonicalCustomerId: string,
     definition: typeof automationDefinitions.$inferSelect,
-    event: DomainEvent<RevenueOpportunityCreatedPayload>,
+    triggerEventId: string,
+    conditionsMatched: boolean,
+    skipReason: string,
   ): Promise<void> {
-    if (!matchesConditions(definition.conditions as AutomationConditions | null, event.payload)) {
+    if (!conditionsMatched) {
       await this.database.client.insert(automationRuns).values({
         workspaceId,
         automationId: definition.id,
         canonicalCustomerId,
-        triggerEventId: event.id,
+        triggerEventId,
         status: 'skipped',
-        reason: 'Conditions did not match this opportunity.',
+        reason: skipReason,
       });
       return;
     }
 
     try {
-      const recommendations = await this.recommendationService.generate(workspaceId, canonicalCustomerId);
+      // Idempotency key derived from infra-assigned ids (this automation + the triggering event),
+      // never from workspaceId/action/input content (doc03 rule 5) — a genuine duplicate delivery
+      // of the same event to the same automation reuses this key and is safely de-duped;
+      // a different event or automation gets its own.
+      const idempotencyKey = `${definition.id}:${triggerEventId}`;
+      const recommendations = await this.aiActionControl.executeForAutomation(
+        this.registry.generateRecommendations,
+        {},
+        { workspaceId, customerId: canonicalCustomerId },
+        idempotencyKey,
+        triggerEventId,
+      );
       await this.database.client.insert(automationRuns).values({
         workspaceId,
         automationId: definition.id,
         canonicalCustomerId,
-        triggerEventId: event.id,
+        triggerEventId,
         status: 'succeeded',
         result: { recommendationsCount: recommendations.length },
       });
@@ -167,7 +237,7 @@ export class AutomationService {
         workspaceId,
         automationId: definition.id,
         canonicalCustomerId,
-        triggerEventId: event.id,
+        triggerEventId,
         status: 'failed',
         reason: error instanceof Error ? error.message : String(error),
       });
@@ -193,5 +263,24 @@ function matchesConditions(conditions: AutomationConditions | null, payload: Rev
   if (!conditions) return true;
   if (conditions.priorityIn && !conditions.priorityIn.includes(payload.priority)) return false;
   if (conditions.typeIn && !conditions.typeIn.includes(payload.type)) return false;
+  return true;
+}
+
+/**
+ * Doc16 "Conditions" lists "Customer Risk & Engagement State" as an
+ * available signal, but no field on `CustomerHealthRecalculatedPayload`
+ * is safe to filter on today: `score`/`healthCategory`/`trend` are
+ * always `null` (`CustomerHealthService` deliberately withholds them —
+ * only 2 of 6 spec'd signal weights are available, see its own doc
+ * comment), and `reasonCodes` is free text, not a stable condition
+ * target. The canonical docs don't define health-specific condition
+ * semantics beyond naming the signal source, so — per this slice's
+ * explicit instruction not to invent condition language — every enabled
+ * `customer_health.recalculated` automation fires unconditionally for
+ * now. `conditions` is still accepted on such a definition (the column
+ * is shared) but never evaluated. Revisit once score/category/trend are
+ * actually populated by a future Phase 7 slice.
+ */
+function matchesHealthConditions(): boolean {
   return true;
 }

@@ -127,3 +127,11 @@ export async function startIntegrationImport(workspaceId: string, provider: stri
 export async function disconnectIntegration(workspaceId: string, provider: string) {
   return apiFetch(`/api/v1/workspaces/${workspaceId}/integrations/${provider}`, { method: 'DELETE' });
 }
+
+export async function approveAiActionRequest(workspaceId: string, requestId: string) {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/ai-actions/${requestId}/approve`, { method: 'POST' });
+}
+
+export async function denyAiActionRequest(workspaceId: string, requestId: string) {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/ai-actions/${requestId}/deny`, { method: 'POST' });
+}

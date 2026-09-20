@@ -7,7 +7,10 @@ embedded = false
 scopes = "read_customers,read_orders,read_products"
 
 [auth]
-redirect_urls = ["https://brayn-production.onrender.com/api/v1/integrations/shopify/oauth/callback"]
+redirect_urls = [
+  "https://brayn-production.onrender.com/api/v1/integrations/shopify/oauth/callback",
+  "https://brayn.onrender.com/api/v1/integrations/shopify/oauth/callback",
+]
 
 [webhooks]
 api_version = "2026-07"

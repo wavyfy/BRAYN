@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ConflictError, ProviderError, ValidationError } from '../../../../common/errors/app-error';
@@ -12,10 +12,12 @@ import { StructuredLoggerService } from '../../../../common/logging/structured-l
 import { IntegrationService } from '../../integration.service';
 import {
   requestShopifyClientCredentialsToken,
+  SHOPIFY_AUTHORIZATION_CODE_GRANT_TYPE,
   SHOPIFY_CLIENT_CREDENTIALS_GRANT_TYPE,
   SHOPIFY_DOMAIN_PATTERN,
   ShopifyAdapter,
 } from './shopify.adapter';
+import type { ShopifyConnectionCheckDiagnostic } from './shopify.adapter';
 import type { Env } from '../../../../config/env.schema';
 
 /** Exactly what ShopifyAdapter's fetchCustomers/fetchProducts/fetchOrders read (doc 20 — request only what's used). */
@@ -49,24 +51,6 @@ export interface AuthorizeUrlResult {
   authorizeUrl: string;
   cookieValue: string;
   cookieMaxAgeSeconds: number;
-}
-
-export interface Fingerprint {
-  length: number;
-  sha256: string;
-}
-
-/** Non-reversible stand-in for a raw value in diagnostics (doc 20 Part 16) — never log the value itself, only this. */
-export function fingerprint(value: string): Fingerprint {
-  return { length: value.length, sha256: createHash('sha256').update(value).digest('hex') };
-}
-
-function fingerprintParams(params: Record<string, string>): Record<string, Fingerprint> {
-  const result: Record<string, Fingerprint> = {};
-  for (const [key, value] of Object.entries(params)) {
-    result[key] = fingerprint(value);
-  }
-  return result;
 }
 
 /**
@@ -237,13 +221,7 @@ export class ShopifyOAuthService {
     }
 
     if (!this.verifyHmac(rawQuery)) {
-      // Diagnostic only (doc 20 Part 16, supersedes Part 14's flatter version) —
-      // fingerprints/lengths only, never a raw value. See buildHmacFailureDiagnostics's
-      // own doc comment. Temporary — remove once the investigation concludes.
-      this.logger.event('warn', 'Shopify OAuth callback: HMAC verification failed', 'ShopifyOAuth', {
-        workspaceId: state.workspaceId,
-        ...this.buildHmacFailureDiagnostics(query, rawQuery),
-      });
+      this.logger.event('warn', 'Shopify OAuth callback: HMAC verification failed', 'ShopifyOAuth', { workspaceId: state.workspaceId });
       return `${integrationsUrl}?shopify=error&reason=invalid_signature`;
     }
 
@@ -253,18 +231,48 @@ export class ShopifyOAuthService {
     }
 
     let accessToken: string;
+    let refreshToken: string | null = null;
+    let expiresAt: string | null = null;
+    let grantedScopes: string | null = null;
     try {
-      accessToken = await this.exchangeCodeForToken(shop, query.code);
+      const exchanged = await this.exchangeCodeForToken(shop, query.code);
+      accessToken = exchanged.accessToken;
+      refreshToken = exchanged.refreshToken;
+      expiresAt = exchanged.expiresAt;
+      grantedScopes = exchanged.scope;
     } catch {
       this.logger.event('error', 'Shopify OAuth callback: token exchange failed', 'ShopifyOAuth', { workspaceId: state.workspaceId });
       return `${integrationsUrl}?shopify=error&reason=token_exchange_failed`;
     }
 
-    const credentials = { shopDomain: shop, accessToken };
+    // Expiring offline token (doc 20 Part 28) — reuses the same generic
+    // expiresAt/grantType shape IntegrationService.getCredentials() already
+    // refreshes on-read for the client-credentials grant (see
+    // ShopifyAdapter.refreshCredentials); no new refresh mechanism.
+    const credentials: Record<string, string> = { shopDomain: shop, accessToken, grantType: SHOPIFY_AUTHORIZATION_CODE_GRANT_TYPE };
+    if (refreshToken) {
+      credentials.refreshToken = refreshToken;
+    }
+    if (expiresAt) {
+      credentials.expiresAt = expiresAt;
+    }
 
-    const verified = await this.shopifyAdapter.verifyConnection(credentials).catch(() => false);
+    // Diagnostic only (doc 20 Part 20/25) — a status-code category, the non-sensitive
+    // X-Shopify-API-Version header, and Shopify's own `errors` message (not the full
+    // body) — never the token/domain/customer data. Captured via the callback since
+    // verifyConnection() only returns/throws a boolean either way.
+    let connectionCheck: ShopifyConnectionCheckDiagnostic | undefined;
+    const verified = await this.shopifyAdapter
+      .verifyConnection(credentials, (diagnostic) => {
+        connectionCheck = diagnostic;
+      })
+      .catch(() => false);
     if (!verified) {
-      this.logger.event('error', 'Shopify OAuth callback: post-exchange verification failed', 'ShopifyOAuth', { workspaceId: state.workspaceId });
+      this.logger.event('error', 'Shopify OAuth callback: post-exchange verification failed', 'ShopifyOAuth', {
+        workspaceId: state.workspaceId,
+        grantedScopes,
+        connectionCheck: connectionCheck ?? { category: 'unknown', apiVersionHeader: null, shopifyError: null },
+      });
       return `${integrationsUrl}?shopify=error&reason=verification_failed`;
     }
 
@@ -321,12 +329,19 @@ export class ShopifyOAuthService {
   }
 
   /**
-   * shopify.dev — Authorization Code Grant: drop `hmac`, sort the
-   * remaining params alphabetically by key, join as `key=value&...`.
-   * Pure — no secret, no comparison — extracted purely so
-   * `buildHmacFailureDiagnostics` (doc 20 Part 16) can recompute the exact
-   * same message for fingerprinting without duplicating this logic or
-   * changing `verifyHmac`'s own behavior.
+   * doc 20 Part 18 — matches Shopify's own official Node library
+   * (`generateLocalHmac`/`stringifyQueryForAdmin` in `shopify-api-js`)
+   * exactly, not the simplified naive-concatenation shown in shopify.dev's
+   * prose (which Part 11 followed and which turned out to be incomplete):
+   * drop both `hmac` and `signature`, sort the remaining keys with
+   * `localeCompare`, then build the message via `URLSearchParams` — NOT
+   * `${key}=${value}` string concatenation of the already-decoded value.
+   * `URLSearchParams.append()`+`.toString()` re-encodes each value using
+   * application/x-www-form-urlencoded rules, which differs from a naive
+   * join whenever a value contains `+`, `/`, `=`, or another character
+   * that needs encoding — exactly what a base64-shaped value like `host`
+   * (or BRAYN's own `state`) contains. Confirmed via direct reproduction
+   * against Shopify's actual source before this fix (Part 17).
    */
   private buildHmacMessage(rawQuery: string): { message: string; receivedHmac: string | undefined } | null {
     let params: Record<string, string>;
@@ -336,13 +351,14 @@ export class ShopifyOAuthService {
       return null;
     }
 
-    const message = Object.entries(params)
-      .filter(([key]) => key !== 'hmac')
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, value]) => `${key}=${value}`)
-      .join('&');
+    const signedParams = new URLSearchParams();
+    for (const key of Object.keys(params)
+      .filter((key) => key !== 'hmac' && key !== 'signature')
+      .sort((a, b) => a.localeCompare(b))) {
+      signedParams.append(key, params[key]);
+    }
 
-    return { message, receivedHmac: params.hmac };
+    return { message: signedParams.toString(), receivedHmac: params.hmac };
   }
 
   /**
@@ -350,9 +366,9 @@ export class ShopifyOAuthService {
    * from the raw query string via `buildHmacMessage`/
    * `decodeShopifyCallbackQuery`, not Fastify's `@Query()` — see that
    * function's doc comment. Malformed percent-encoding fails closed
-   * (verification fails) rather than throwing into the request. Identical
-   * behavior to before the Part 16 refactor — only the message-building
-   * step moved into its own method.
+   * (verification fails) rather than throwing into the request. Message
+   * construction itself lives in `buildHmacMessage` — see its doc comment
+   * for the Part 18 canonicalization fix.
    */
   private verifyHmac(rawQuery: string): boolean {
     const clientSecret = this.config.get('SHOPIFY_APP_CLIENT_SECRET', { infer: true });
@@ -372,54 +388,26 @@ export class ShopifyOAuthService {
   }
 
   /**
-   * Temporary, staging-safe diagnostic (doc 20 Part 16) — never logs a
-   * raw value, only SHA-256 fingerprints + lengths, so it's safe to keep
-   * in the HMAC-failure branch while diagnosing a real callback failure.
-   * Lets us tell apart: (A) wrong secret, (B) Shopify's actual param
-   * values differing from what we expect, (C) our decoding corrupting a
-   * value Fastify's parser got right (or vice versa), (D) a message-
-   * construction bug — by comparing fingerprints across both decode
-   * paths and the HMAC inputs/output, without ever exposing the
-   * underlying bytes. Remove once the investigation concludes.
+   * `expiring: '1'` (doc 20 Part 28 — shopify.dev "Token exchange") opts
+   * this authorization-code exchange into an *expiring* offline access
+   * token — Shopify now rejects non-expiring offline tokens for public
+   * apps outright ("API Non-expiring access tokens are no longer accepted
+   * for the Admin API"). An expiring token additionally returns
+   * `refresh_token`/`expires_in` (and `refresh_token_expires_in`, which
+   * BRAYN doesn't currently persist — nothing reads it, and the existing
+   * credential model has no use for it yet).
+   *
+   * `scope` (doc 20 Part 25) is Shopify's own report of which scopes this
+   * token actually carries — not a secret (it's a permission-name list,
+   * same category as the `scope` param BRAYN itself puts on the authorize
+   * URL), captured here so a post-exchange verification failure can be
+   * diagnosed against what was actually granted instead of what was
+   * requested, without a second API call.
    */
-  private buildHmacFailureDiagnostics(query: Record<string, string | undefined>, rawQuery: string) {
-    const parsedParams: Record<string, string> = {};
-    for (const [key, value] of Object.entries(query)) {
-      if (value !== undefined) {
-        parsedParams[key] = value;
-      }
-    }
-    const parsed = fingerprintParams(parsedParams);
-
-    let rawDecodedParams: Record<string, string> = {};
-    try {
-      rawDecodedParams = decodeShopifyCallbackQuery(rawQuery);
-    } catch {
-      rawDecodedParams = {};
-    }
-    const rawDecoded = fingerprintParams(rawDecodedParams);
-
-    const comparison: Record<string, 'same' | 'different'> = {};
-    for (const key of new Set([...Object.keys(parsed), ...Object.keys(rawDecoded)])) {
-      comparison[key] = parsed[key] && rawDecoded[key] && parsed[key].sha256 === rawDecoded[key].sha256 ? 'same' : 'different';
-    }
-
-    const clientSecret = this.config.get('SHOPIFY_APP_CLIENT_SECRET', { infer: true });
-    const built = this.buildHmacMessage(rawQuery);
-    const expected = built && clientSecret ? createHmac('sha256', clientSecret).update(built.message).digest('hex') : undefined;
-
-    return {
-      parsed,
-      rawDecoded,
-      comparison,
-      signedMessage: built ? fingerprint(built.message) : null,
-      receivedHmac: built?.receivedHmac ? fingerprint(built.receivedHmac) : null,
-      expectedHmac: expected ? fingerprint(expected) : null,
-      clientSecret: { configured: Boolean(clientSecret), sha256: clientSecret ? fingerprint(clientSecret).sha256 : null },
-    };
-  }
-
-  private async exchangeCodeForToken(shop: string, code: string): Promise<string> {
+  private async exchangeCodeForToken(
+    shop: string,
+    code: string,
+  ): Promise<{ accessToken: string; refreshToken: string | null; expiresAt: string | null; scope: string | null }> {
     const clientId = this.config.get('SHOPIFY_APP_CLIENT_ID', { infer: true });
     const clientSecret = this.config.get('SHOPIFY_APP_CLIENT_SECRET', { infer: true });
     if (!clientId || !clientSecret) {
@@ -429,18 +417,29 @@ export class ShopifyOAuthService {
     const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-      body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, code }).toString(),
+      body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, code, expiring: '1' }).toString(),
     });
 
     if (!response.ok) {
       throw new ProviderError('Shopify rejected the authorization code.');
     }
 
-    const body = (await response.json()) as { access_token?: string };
+    const body = (await response.json()) as {
+      access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
+      refresh_token_expires_in?: number;
+      scope?: string;
+    };
     if (!body.access_token) {
       throw new ProviderError('Shopify token exchange returned no access token.');
     }
-    return body.access_token;
+    return {
+      accessToken: body.access_token,
+      refreshToken: typeof body.refresh_token === 'string' ? body.refresh_token : null,
+      expiresAt: typeof body.expires_in === 'number' ? new Date(Date.now() + body.expires_in * 1000).toISOString() : null,
+      scope: typeof body.scope === 'string' ? body.scope : null,
+    };
   }
 
   private resolveEncryptionKey() {

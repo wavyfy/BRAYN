@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { WorkspaceModule } from '../workspace/workspace.module';
-import { IntelligenceEnginesModule } from '../intelligence-engines/intelligence-engines.module';
+import { AiActionControlModule } from '../ai-action-control/ai-action-control.module';
 import { AutomationService } from './automation.service';
 import { AutomationController } from './automation.controller';
 
@@ -10,17 +10,22 @@ import { AutomationController } from './automation.controller';
  * See: "16. BRAYN Business Action Automation"
  *
  * Phase 1 (doc19 Phase 15): one wired trigger → action pair only — see
- * AutomationService's doc comment for what's deferred (scheduling, AI
- * Action Control integration, retry).
+ * AutomationService's doc comment for what's still deferred (scheduling,
+ * retry). AI Action Control integration (doc19 Phase 15 item 7) is done —
+ * `runOne()` now calls `AiActionControlService.executeForAutomation()`
+ * instead of `RecommendationService.generate()` directly.
  *
- * Imports IntelligenceEnginesModule to consume RecommendationService
- * (the one available action) and its RevenueOpportunityCreatedPayload
- * type, rather than re-implementing recommendation generation here
- * (doc04 Rule 2). Imports WorkspaceModule for WorkspaceMembershipGuard
- * rather than duplicating the tenant-isolation/authorization boundary.
+ * Imports `AiActionControlModule` for `AiActionControlService` and
+ * `ACTION_REGISTRY` (doc04 Rule 2 — consume, don't duplicate; this domain
+ * never calls `RecommendationService` directly anymore, only through the
+ * registered `ActionDefinition`). `RevenueOpportunityCreatedPayload`
+ * stays a type-only import from `intelligence-engines` — no module
+ * registration needed for a type. Imports WorkspaceModule for
+ * WorkspaceMembershipGuard rather than duplicating the tenant-isolation/
+ * authorization boundary.
  */
 @Module({
-  imports: [WorkspaceModule, IntelligenceEnginesModule],
+  imports: [WorkspaceModule, AiActionControlModule],
   controllers: [AutomationController],
   providers: [AutomationService],
   exports: [AutomationService],
