@@ -1,12 +1,15 @@
 import { Injectable } from '@nestjs/common';
-import { and, desc, eq, ilike, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { commerceOrders } from '../../database/schema/commerce-orders';
+import { websiteVisitors } from '../../database/schema/website-visitors';
+import { websiteEvents } from '../../database/schema/website-events';
 import { DatabaseService } from '../../database/database.service';
 import { NotFoundError } from '../../common/errors/app-error';
 
 const RECENT_ORDERS_LIMIT = 10;
+const RECENT_WEBSITE_EVENTS_LIMIT = 10;
 const ACTIVITY_LIMIT = 50;
 const DEFAULT_LIST_LIMIT = 20;
 
@@ -53,18 +56,46 @@ export interface WorkspaceCommerceSummary {
   totalSpent: string;
 }
 
+export interface RecentWebsiteEvent {
+  eventType: string;
+  occurredAt: Date;
+}
+
+/**
+ * doc08 UCIR "Behavioural context" — live-aggregated from Website
+ * Behaviour (doc06/doc20/doc22), same pattern as `CommerceContext`. Only
+ * ever populated for `website_visitors` rows a canonical customer has
+ * actually been linked to (Part 3 —
+ * `IdentityResolutionService.resolveWebsiteVisitor()`); an unlinked
+ * (still-anonymous) visitor's activity is never exposed through a
+ * customer record. Deliberately minimal — a direct rollup of what the
+ * schema already records, not a derived/invented metric (no "engagement
+ * score", no session duration, nothing doc10's Health engine would need
+ * before it exists). `identity_signal` events are excluded from both
+ * fields below — that event type carries the linking email itself
+ * (already surfaced via `profile.email`), not a customer-facing
+ * behaviour to report.
+ */
+export interface BehaviouralContext {
+  eventsCount: number;
+  lastActivityAt: Date | null;
+  recentEvents: RecentWebsiteEvent[];
+}
+
 export interface CustomerRecord {
   canonicalCustomerId: string;
   profile: CustomerProfile;
   /** Every source row this canonical customer resolves — doc08 "Activity entries should reference their source/domain" applies to the whole record, not just history. */
   sourceCustomers: { provider: string; externalId: string }[];
   commerceContext: CommerceContext;
+  behaviouralContext: BehaviouralContext;
 }
 
 /** A chronological event (doc08 — Customer Activity History: "Activity entries should reference their source/domain rather than becoming an independent source of business truth"). */
 export type ActivityEntry =
   | { type: 'customer_created'; occurredAt: Date; provider: string; externalId: string }
-  | { type: 'order_placed'; occurredAt: Date; provider: string; externalId: string; totalPrice: string | null };
+  | { type: 'order_placed'; occurredAt: Date; provider: string; externalId: string; totalPrice: string | null }
+  | { type: 'website_activity'; occurredAt: Date; eventType: string };
 
 interface SourceCustomerRow {
   id: string;
@@ -80,19 +111,20 @@ interface SourceCustomerRow {
 /**
  * Reads the Unified Customer Intelligence Record (doc 08 — "unifies
  * relevant customer information across Commerce, Website behaviour,
- * Conversations..."). Phase 1: Customer profile + Commerce context +
- * Activity History synthesized from Commerce events only — Behavioural/
- * Conversation context need domains that don't exist yet (Website
- * Behaviour, Conversation), and preferences/memory/summary have no real
- * source yet (no AI, no conversations, no explicit merchant-input
- * pipeline); each is its own later part once its source exists.
+ * Conversations..."). Customer profile + Commerce context + Behavioural
+ * context (Website Behaviour Part 4) + Activity History synthesized from
+ * Commerce and Website Behaviour events. Conversation context still
+ * needs a domain that doesn't exist yet (Conversation), and preferences/
+ * memory/summary have no real source yet (no AI, no conversations, no
+ * explicit merchant-input pipeline); each is its own later part once its
+ * source exists.
  *
  * Pure aggregation, no duplicate storage (doc08 — "Domain-owned data may
  * remain in its owning domain and be referenced rather than duplicated";
  * "Canonical Customer Rule" — BRAYN must not maintain competing customer
  * intelligence representations). Reads canonical_customers +
- * commerce_customers/commerce_orders live on every call rather than
- * caching a copy.
+ * commerce_customers/commerce_orders + website_visitors/website_events
+ * live on every call rather than caching a copy.
  */
 @Injectable()
 export class CustomerIntelligenceService {
@@ -187,6 +219,7 @@ export class CustomerIntelligenceService {
         workspaceId,
         sourceRows.map((row) => row.id),
       ),
+      behaviouralContext: await this.getBehaviouralContext(workspaceId, canonical.id),
     };
   }
 
@@ -219,6 +252,15 @@ export class CustomerIntelligenceService {
             .from(commerceOrders)
             .where(and(eq(commerceOrders.workspaceId, workspaceId), inArray(commerceOrders.customerId, sourceCustomerIds)));
 
+    const visitorIds = await this.getLinkedVisitorIds(workspaceId, canonicalCustomerId);
+    // Fetching only the ACTIVITY_LIMIT most recent website events (rather
+    // than every one, unlike the orders query above) is deliberate, not
+    // an inconsistency — doc22's own volume caution for this table ("large
+    // event datasets should be designed separately from transactional
+    // customer records") applies to the query shape too: no final merge
+    // can ever need more than ACTIVITY_LIMIT of them.
+    const websiteActivity = await this.getRecentWebsiteEvents(workspaceId, visitorIds, ACTIVITY_LIMIT);
+
     const entries: ActivityEntry[] = [
       ...sourceRows.map(
         (row): ActivityEntry => ({
@@ -235,6 +277,13 @@ export class CustomerIntelligenceService {
           provider: order.provider,
           externalId: order.externalId,
           totalPrice: order.totalPrice,
+        }),
+      ),
+      ...websiteActivity.map(
+        (event): ActivityEntry => ({
+          type: 'website_activity',
+          occurredAt: event.occurredAt,
+          eventType: event.eventType,
         }),
       ),
     ];
@@ -343,6 +392,73 @@ export class CustomerIntelligenceService {
       lastOrderAt: summary?.lastOrderAt ? new Date(summary.lastOrderAt) : null,
       ordersLast90Days: Number(summary?.ordersLast90Days ?? 0),
       recentOrders,
+    };
+  }
+
+  /**
+   * `website_visitors` rows actually linked to this canonical customer
+   * (Part 3 — `IdentityResolutionService.resolveWebsiteVisitor()`). An
+   * empty result means either no website activity was ever captured for
+   * this customer, or it exists but is still anonymous/unlinked — both
+   * cases correctly expose nothing here, never a guess at which visitor
+   * might belong to this customer.
+   */
+  private async getLinkedVisitorIds(workspaceId: string, canonicalCustomerId: string): Promise<string[]> {
+    const rows = await this.database.client
+      .select({ id: websiteVisitors.id })
+      .from(websiteVisitors)
+      .where(and(eq(websiteVisitors.workspaceId, workspaceId), eq(websiteVisitors.canonicalCustomerId, canonicalCustomerId)));
+
+    return rows.map((row) => row.id);
+  }
+
+  /** Shared by `getBehaviouralContext` (limit 10) and `getActivity` (limit `ACTIVITY_LIMIT`) — same query, different caps. */
+  private async getRecentWebsiteEvents(workspaceId: string, visitorIds: string[], limit: number): Promise<RecentWebsiteEvent[]> {
+    if (visitorIds.length === 0) {
+      return [];
+    }
+
+    return this.database.client
+      .select({ eventType: websiteEvents.eventType, occurredAt: websiteEvents.occurredAt })
+      .from(websiteEvents)
+      .where(
+        and(
+          eq(websiteEvents.workspaceId, workspaceId),
+          inArray(websiteEvents.visitorId, visitorIds),
+          ne(websiteEvents.eventType, 'identity_signal'),
+        ),
+      )
+      .orderBy(desc(websiteEvents.occurredAt))
+      .limit(limit);
+  }
+
+  private async getBehaviouralContext(workspaceId: string, canonicalCustomerId: string): Promise<BehaviouralContext> {
+    const visitorIds = await this.getLinkedVisitorIds(workspaceId, canonicalCustomerId);
+    if (visitorIds.length === 0) {
+      return { eventsCount: 0, lastActivityAt: null, recentEvents: [] };
+    }
+
+    const [summary] = await this.database.client
+      .select({
+        eventsCount: sql<number>`count(*)`,
+        lastActivityAt: sql<Date | null>`max(${websiteEvents.occurredAt})`,
+      })
+      .from(websiteEvents)
+      .where(
+        and(
+          eq(websiteEvents.workspaceId, workspaceId),
+          inArray(websiteEvents.visitorId, visitorIds),
+          ne(websiteEvents.eventType, 'identity_signal'),
+        ),
+      );
+
+    const recentEvents = await this.getRecentWebsiteEvents(workspaceId, visitorIds, RECENT_WEBSITE_EVENTS_LIMIT);
+
+    return {
+      eventsCount: Number(summary?.eventsCount ?? 0),
+      // Same raw-aggregate-comes-back-as-a-string caveat as getCommerceContext's lastOrderAt.
+      lastActivityAt: summary?.lastActivityAt ? new Date(summary.lastActivityAt) : null,
+      recentEvents,
     };
   }
 }
