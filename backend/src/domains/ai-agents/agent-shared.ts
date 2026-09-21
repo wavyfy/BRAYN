@@ -1,5 +1,5 @@
 import { AiGatewayService } from '../ai/ai-gateway.service';
-import type { AiMessage, AiToolDefinition } from '../ai/ai-provider.interface';
+import type { AiMessage, AiToolCall, AiToolDefinition } from '../ai/ai-provider.interface';
 import type { CustomerRecord } from '../customer-intelligence/customer-intelligence.service';
 import type { RecommendationService } from '../intelligence-engines/recommendation.service';
 import type { RevenueOpportunityService } from '../intelligence-engines/revenue-opportunity.service';
@@ -174,15 +174,18 @@ export interface AgentResult {
   escalationReason?: string;
 }
 
+/** A real (non-escalation) tool's executor — takes the raw call, returns its JSON tool-result content. Throwing is caught by the caller and turned into a `{error}` tool result, same shape `MerchantBusinessAnalystService.executeTool` already uses, so a tool failure never ends the turn. */
+export type AgentToolExecutor = (call: AiToolCall) => Promise<string>;
+
 /**
  * Doc12 AI Request Lifecycle / doc14 Tool Execution Flow, shared by Sales
- * and Support Agent. Neither offers any tool beyond `escalate_to_human` in
- * this slice (see each service's own doc comment for why), so there is no
- * executor callback to inject yet — a genuine additional tool (once one
- * exists to reuse, not invent) is the point at which this gains one, not
- * before. An unrecognized tool call is reported back to the model as a
- * tool-result error rather than crashing the turn, same failure-handling
- * shape `MerchantBusinessAnalystService.executeTool` already uses.
+ * and Support Agent. `toolExecutors` (keyed by tool name) is how a
+ * service-specific tool beyond `escalate_to_human` plugs in — Support
+ * Agent still calls this with none (unchanged behaviour: everything
+ * besides escalation is still "unknown tool"). An unrecognized tool call
+ * (no matching executor) is reported back to the model as a tool-result
+ * error rather than crashing the turn, same failure-handling shape
+ * `MerchantBusinessAnalystService.executeTool` already uses.
  *
  * Bounded the same way `MerchantBusinessAnalystService.runWithTools` is
  * (doc12 — "Tool execution repeatedly fails" must terminate, not loop
@@ -195,6 +198,7 @@ export async function runAgentTurn(
   initialMessages: AiMessage[],
   tools: AiToolDefinition[],
   capability: string,
+  toolExecutors: Record<string, AgentToolExecutor> = {},
 ): Promise<AgentResult> {
   const messages = [...initialMessages];
   let result = await aiGateway.generate({ messages, capability, tools });
@@ -210,7 +214,9 @@ export async function runAgentTurn(
         return { answer: result.content || 'This needs a human to take over.', escalate: true, escalationReason: reason };
       }
 
-      messages.push({ role: 'tool', content: JSON.stringify({ error: `Unknown tool "${call.name}".` }), toolCallId: call.id });
+      const executor = toolExecutors[call.name];
+      const output = executor ? await runToolExecutor(executor, call) : JSON.stringify({ error: `Unknown tool "${call.name}".` });
+      messages.push({ role: 'tool', content: output, toolCallId: call.id });
     }
 
     result = await aiGateway.generate({ messages, capability, tools });
@@ -222,6 +228,15 @@ export async function runAgentTurn(
   }
 
   return { answer: result.content || 'Unable to help with this request.', escalate: false };
+}
+
+/** Same catch-and-report shape as `MerchantBusinessAnalystService.executeTool` — a thrown error becomes a tool-result the model can react to, never a request-ending throw. */
+async function runToolExecutor(executor: AgentToolExecutor, call: AiToolCall): Promise<string> {
+  try {
+    return await executor(call);
+  } catch (error) {
+    return JSON.stringify({ error: error instanceof Error ? error.message : 'Tool execution failed.' });
+  }
 }
 
 function parseEscalationReason(rawArguments: string): string {
