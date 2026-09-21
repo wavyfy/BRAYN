@@ -18,11 +18,17 @@ type CustomerRecord = {
     ordersLast90Days: number;
     recentOrders: { provider: string; externalId: string; totalPrice: string | null; createdAt: string }[];
   };
+  behaviouralContext: {
+    eventsCount: number;
+    lastActivityAt: string | null;
+    recentEvents: { eventType: string; occurredAt: string }[];
+  };
 };
 
 type ActivityEntry =
   | { type: 'customer_created'; occurredAt: string; provider: string; externalId: string }
-  | { type: 'order_placed'; occurredAt: string; provider: string; externalId: string; totalPrice: string | null };
+  | { type: 'order_placed'; occurredAt: string; provider: string; externalId: string; totalPrice: string | null }
+  | { type: 'website_activity'; occurredAt: string; eventType: string };
 
 type HealthSignal = { available: boolean; value?: number | null; score?: number; reasonCode?: string; reason?: string };
 type CustomerHealthState = {
@@ -70,7 +76,11 @@ function formatDate(value: string | null): string {
   return value ? new Date(value).toLocaleString() : '—';
 }
 
-/** Doc19 Phase 8 — canonical UI scope: profile, commerce summary, recent activity, risk/engagement, revenue opportunities. */
+function activityKey(entry: ActivityEntry): string {
+  return entry.type === 'website_activity' ? `website_activity:${entry.eventType}:${entry.occurredAt}` : `${entry.type}:${entry.provider}:${entry.externalId}`;
+}
+
+/** Doc19 Phase 8 — canonical UI scope: profile, commerce summary, website behaviour, recent activity, risk/engagement, revenue opportunities. */
 export default async function CustomerDetailPage({
   params,
 }: {
@@ -175,6 +185,34 @@ export default async function CustomerDetailPage({
 
       <Card className="mt-6">
         <CardHeader>
+          <CardTitle>Website behaviour</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <dl className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <dt className="text-slate-500">Events</dt>
+              <dd className="mt-0.5 text-slate-900">{customer.behaviouralContext.eventsCount}</dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">Last activity</dt>
+              <dd className="mt-0.5 text-slate-900">{formatDate(customer.behaviouralContext.lastActivityAt)}</dd>
+            </div>
+          </dl>
+        </CardContent>
+        {customer.behaviouralContext.recentEvents.length > 0 && (
+          <ul className="divide-y divide-slate-200 border-t border-slate-200">
+            {customer.behaviouralContext.recentEvents.map((event, index) => (
+              <li key={`${event.eventType}:${event.occurredAt}:${index}`} className="flex items-center justify-between gap-3 px-5 py-2.5 text-sm">
+                <span className="capitalize text-slate-600">{event.eventType.replace('_', ' ')}</span>
+                <span className="text-slate-500">{formatDate(event.occurredAt)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      <Card className="mt-6">
+        <CardHeader>
           <CardTitle>Recent activity</CardTitle>
         </CardHeader>
         {activity.length === 0 ? (
@@ -182,9 +220,17 @@ export default async function CustomerDetailPage({
         ) : (
           <ul className="divide-y divide-slate-200">
             {activity.map((entry) => (
-              <li key={`${entry.type}:${entry.provider}:${entry.externalId}`} className="flex items-center justify-between gap-3 px-5 py-2.5 text-sm">
+              <li key={activityKey(entry)} className="flex items-center justify-between gap-3 px-5 py-2.5 text-sm">
                 <span className="text-slate-600">
-                  {entry.type === 'customer_created' ? 'Connected' : 'Order placed'} via <span className="capitalize">{entry.provider}</span>
+                  {entry.type === 'website_activity' ? (
+                    <>
+                      Website: <span className="capitalize">{entry.eventType.replace('_', ' ')}</span>
+                    </>
+                  ) : (
+                    <>
+                      {entry.type === 'customer_created' ? 'Connected' : 'Order placed'} via <span className="capitalize">{entry.provider}</span>
+                    </>
+                  )}
                 </span>
                 <span className="text-slate-500">{formatDate(entry.occurredAt)}</span>
               </li>
