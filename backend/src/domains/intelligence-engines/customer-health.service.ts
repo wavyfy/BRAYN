@@ -6,7 +6,7 @@ import { DatabaseService } from '../../database/database.service';
 import { NotFoundError } from '../../common/errors/app-error';
 import { createEvent } from '../../common/events/domain-event';
 import { EventBus } from '../../common/events/event-bus.service';
-import { CustomerIntelligenceService } from '../customer-intelligence/customer-intelligence.service';
+import { CustomerIntelligenceService, type BehaviouralContext } from '../customer-intelligence/customer-intelligence.service';
 
 /** Doc10 — "Health changes should publish events for dependent intelligence and automation" (doc16 trigger: "Customer Risk & Engagement State changes"). */
 export interface CustomerHealthRecalculatedPayload {
@@ -21,6 +21,18 @@ export interface CustomerHealthRecalculatedPayload {
 const RECENCY_DECAY_DAYS = 90;
 /** Orders in the trailing 90 days that maxes out the frequency signal at 100 — same caveat. */
 const FREQUENCY_TARGET_ORDERS = 4;
+/**
+ * ponytail: website engagement gets one 15% weight slot (doc10), unlike purchase's
+ * split recency/frequency (30%/20%). Blended the same way at 60/40 (matching the
+ * ratio between doc10's own purchase recency/frequency weights) rather than
+ * inventing an unrelated split. Decay/target numbers are first-pass heuristics —
+ * same caveat as RECENCY_DECAY_DAYS/FREQUENCY_TARGET_ORDERS above, doc10 defines
+ * the weight, not the curve.
+ */
+const WEBSITE_RECENCY_DECAY_DAYS = 30;
+const WEBSITE_FREQUENCY_TARGET_EVENTS = 20;
+const WEBSITE_RECENCY_SUBWEIGHT = 0.6;
+const WEBSITE_FREQUENCY_SUBWEIGHT = 0.4;
 
 interface SignalResult {
   value: number | null;
@@ -49,18 +61,24 @@ export interface CustomerHealthState {
  *
  * doc10's Phase 1 weight table (recency 30%, frequency 20%, website 15%,
  * WhatsApp 15%, email 10%, customer experience 10%) needs signals BRAYN
- * doesn't have: website/WhatsApp engagement need domains that don't
- * exist yet (Website Behaviour, Conversation); customer experience has
- * no defined source; email engagement is explicitly flagged in doc10
- * itself as "PENDING PRODUCT DECISION... do not implement this signal or
- * redistribute its weight without an explicit product decision."
+ * doesn't have: WhatsApp engagement needs a domain that doesn't exist yet
+ * (Conversation); customer experience has no defined source; email
+ * engagement is explicitly flagged in doc10 itself as "PENDING PRODUCT
+ * DECISION... do not implement this signal or redistribute its weight
+ * without an explicit product decision." Website engagement (Website
+ * Behaviour Part 5) is now computed from `CustomerRecord.behaviouralContext`
+ * (Part 4) the same way purchase recency/frequency are computed from
+ * `commerceContext` — doc10 gives the 15% weight, not the curve, so the
+ * decay/target constants above are an explicit first-pass heuristic like
+ * `RECENCY_DECAY_DAYS`/`FREQUENCY_TARGET_ORDERS`.
  *
- * Only 50% of the spec'd weight (recency + frequency) is available, so
- * `score`/`healthCategory`/`trend` stay null rather than emit a number
- * computed from half the locked formula — this was an explicit choice,
- * not a default (see this part's completion report). `signals` and
- * `reasonCodes` are always populated from what's actually available, so
- * the withheld score is still explainable (doc10's own requirement).
+ * Only 65% of the spec'd weight (recency + frequency + website engagement)
+ * is available, so `score`/`healthCategory`/`trend` stay null rather than
+ * emit a number computed from part of the locked formula — this was an
+ * explicit choice, not a default (see this part's completion report).
+ * `signals` and `reasonCodes` are always populated from what's actually
+ * available, so the withheld score is still explainable (doc10's own
+ * requirement).
  *
  * Recalculation is on-demand only (`recalculate()`) — doc10's "event-
  * driven recalculation" (wiring this into every order/customer-change
@@ -85,11 +103,12 @@ export class CustomerHealthService {
     const customer = await this.customerIntelligenceService.getCustomer(workspaceId, canonicalCustomerId);
     const recency = computeRecencySignal(customer.commerceContext.lastOrderAt);
     const frequency = computeFrequencySignal(customer.commerceContext.ordersLast90Days);
+    const websiteEngagement = computeWebsiteEngagementSignal(customer.behaviouralContext);
 
     const signals = {
       purchaseRecency: { weight: 30, available: true, ...recency },
       purchaseFrequency: { weight: 20, available: true, ...frequency },
-      websiteEngagement: { weight: 15, available: false, reason: 'Website Behaviour domain not built yet.' },
+      websiteEngagement: { weight: 15, available: true, ...websiteEngagement },
       whatsappEngagement: { weight: 15, available: false, reason: 'Conversation domain not built yet.' },
       emailEngagement: {
         weight: 10,
@@ -102,7 +121,8 @@ export class CustomerHealthService {
     const reasonCodes = [
       recency.reasonCode,
       frequency.reasonCode,
-      'Overall score withheld — only 50% of doc10\'s signal weight is available (missing website/WhatsApp/customer-experience signals; email pending a product decision).',
+      websiteEngagement.reasonCode,
+      'Overall score withheld — only 65% of doc10\'s signal weight is available (missing WhatsApp/customer-experience signals; email pending a product decision).',
     ];
 
     const now = new Date();
@@ -166,4 +186,28 @@ function computeRecencySignal(lastOrderAt: Date | null): SignalResult {
 function computeFrequencySignal(ordersLast90Days: number): SignalResult {
   const score = Math.min(100, Math.round((ordersLast90Days / FREQUENCY_TARGET_ORDERS) * 100));
   return { value: ordersLast90Days, score, reasonCode: `${ordersLast90Days} order(s) in last 90 days — frequency score ${score}/100.` };
+}
+
+/**
+ * `behaviouralContext` (Part 4) only exposes a linked visitor's activity —
+ * an unlinked/never-tracked customer looks identical to a linked one with
+ * zero events (`eventsCount: 0, lastActivityAt: null`), same "never a
+ * guess" boundary as the rest of that field. Both correctly score 0 here.
+ */
+function computeWebsiteEngagementSignal(behaviouralContext: BehaviouralContext): SignalResult {
+  const { eventsCount, lastActivityAt } = behaviouralContext;
+  if (eventsCount === 0 || !lastActivityAt) {
+    return { value: 0, score: 0, reasonCode: 'No website activity recorded — website engagement score 0/100.' };
+  }
+
+  const daysSinceLastActivity = Math.floor((Date.now() - lastActivityAt.getTime()) / (24 * 60 * 60 * 1000));
+  const recencyScore = Math.max(0, Math.round(100 - (daysSinceLastActivity / WEBSITE_RECENCY_DECAY_DAYS) * 100));
+  const frequencyScore = Math.min(100, Math.round((eventsCount / WEBSITE_FREQUENCY_TARGET_EVENTS) * 100));
+  const score = Math.round(recencyScore * WEBSITE_RECENCY_SUBWEIGHT + frequencyScore * WEBSITE_FREQUENCY_SUBWEIGHT);
+
+  return {
+    value: eventsCount,
+    score,
+    reasonCode: `${eventsCount} website event(s) recorded, most recent ${daysSinceLastActivity} day(s) ago — website engagement score ${score}/100.`,
+  };
 }
