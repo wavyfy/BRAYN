@@ -73,11 +73,12 @@ export async function updateKnowledgeEntry(workspaceId: string, entryId: string,
 export async function createAutomation(
   workspaceId: string,
   name: string,
+  triggerType?: 'revenue_opportunity.created' | 'customer_health.recalculated',
   conditions?: { priorityIn?: string[]; typeIn?: string[] },
 ) {
   return apiFetch(`/api/v1/workspaces/${workspaceId}/automations`, {
     method: 'POST',
-    body: JSON.stringify({ name, conditions }),
+    body: JSON.stringify({ name, triggerType, conditions }),
   });
 }
 
