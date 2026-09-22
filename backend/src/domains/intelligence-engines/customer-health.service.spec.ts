@@ -1,11 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CustomerHealthService } from './customer-health.service';
 import type { DatabaseService } from '../../database/database.service';
+import type { DomainEvent } from '../../common/events/domain-event';
 import type { EventBus } from '../../common/events/event-bus.service';
+import type { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import type { CustomerIntelligenceService } from '../customer-intelligence/customer-intelligence.service';
+import type { OrderCreatedPayload } from '../integration/webhook-event-processor.service';
 
 function makeEventBus() {
   return { emit: vi.fn() } as unknown as EventBus;
+}
+
+function makeLogger() {
+  return { event: vi.fn() } as unknown as StructuredLoggerService;
 }
 
 function makeSelectChain(result: unknown) {
@@ -49,7 +56,7 @@ describe('CustomerHealthService', () => {
       const insert = vi.fn().mockReturnValueOnce(stateInsert).mockReturnValueOnce(historyInsert);
       const client = { insert };
       const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: null, ordersLast90Days: 0 });
-      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus());
+      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
 
       const result = await service.recalculate('ws_1', 'canon_1');
 
@@ -63,7 +70,7 @@ describe('CustomerHealthService', () => {
       const insert = vi.fn().mockReturnValue(makeInsertChain());
       const client = { insert };
       const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: null, ordersLast90Days: 0 });
-      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus());
+      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
 
       const result = await service.recalculate('ws_1', 'canon_1');
 
@@ -76,7 +83,7 @@ describe('CustomerHealthService', () => {
       const client = { insert };
       const fortyFiveDaysAgo = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000);
       const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: fortyFiveDaysAgo, ordersLast90Days: 0 });
-      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus());
+      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
 
       const result = await service.recalculate('ws_1', 'canon_1');
 
@@ -89,7 +96,7 @@ describe('CustomerHealthService', () => {
       const insert = vi.fn().mockReturnValue(makeInsertChain());
       const client = { insert };
       const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: new Date(), ordersLast90Days: 10 });
-      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus());
+      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
 
       const result = await service.recalculate('ws_1', 'canon_1');
 
@@ -102,7 +109,7 @@ describe('CustomerHealthService', () => {
       const insert = vi.fn().mockReturnValue(makeInsertChain());
       const client = { insert };
       const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: null, ordersLast90Days: 0 });
-      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus());
+      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
 
       const result = await service.recalculate('ws_1', 'canon_1');
 
@@ -117,7 +124,7 @@ describe('CustomerHealthService', () => {
       const insert = vi.fn().mockReturnValue(makeInsertChain());
       const client = { insert };
       const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: null, ordersLast90Days: 0 });
-      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus());
+      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
 
       const result = await service.recalculate('ws_1', 'canon_1');
 
@@ -134,7 +141,7 @@ describe('CustomerHealthService', () => {
         { lastOrderAt: null, ordersLast90Days: 0 },
         { eventsCount: 20, lastActivityAt: fifteenDaysAgo },
       );
-      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus());
+      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
 
       const result = await service.recalculate('ws_1', 'canon_1');
 
@@ -151,7 +158,7 @@ describe('CustomerHealthService', () => {
         { lastOrderAt: null, ordersLast90Days: 0 },
         { eventsCount: 500, lastActivityAt: new Date() },
       );
-      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus());
+      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
 
       const result = await service.recalculate('ws_1', 'canon_1');
 
@@ -167,7 +174,7 @@ describe('CustomerHealthService', () => {
         { lastOrderAt: null, ordersLast90Days: 0 },
         { eventsCount: 5, lastActivityAt: new Date() },
       );
-      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus());
+      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
 
       await service.recalculate('ws_other', 'canon_1');
 
@@ -183,7 +190,7 @@ describe('CustomerHealthService', () => {
       const insert = vi.fn().mockReturnValueOnce(stateInsert).mockReturnValueOnce(historyInsert);
       const client = { insert };
       const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: null, ordersLast90Days: 0 });
-      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus());
+      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
 
       await service.recalculate('ws_1', 'canon_1');
 
@@ -197,7 +204,7 @@ describe('CustomerHealthService', () => {
       const client = { insert };
       const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: null, ordersLast90Days: 0 });
       const eventBus = makeEventBus();
-      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, eventBus);
+      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, eventBus, makeLogger());
 
       await service.recalculate('ws_1', 'canon_1');
 
@@ -212,11 +219,68 @@ describe('CustomerHealthService', () => {
     });
   });
 
+  describe('handleOrderCreated()', () => {
+    function makeOrderCreatedEvent(overrides: Partial<DomainEvent<OrderCreatedPayload>> = {}): DomainEvent<OrderCreatedPayload> {
+      return {
+        id: 'evt_1',
+        type: 'order.created',
+        version: 1,
+        workspaceId: 'ws_1',
+        occurredAt: new Date().toISOString(),
+        payload: { canonicalCustomerId: 'canon_1' },
+        ...overrides,
+      };
+    }
+
+    it('recalculates health for the event\'s workspace/canonical customer', async () => {
+      const insert = vi.fn().mockReturnValue(makeInsertChain());
+      const client = { insert };
+      const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: null, ordersLast90Days: 0 });
+      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
+      const recalculateSpy = vi.spyOn(service, 'recalculate');
+
+      await service.handleOrderCreated(makeOrderCreatedEvent());
+
+      expect(recalculateSpy).toHaveBeenCalledWith('ws_1', 'canon_1');
+    });
+
+    it('does nothing when workspaceId is missing from the event envelope', async () => {
+      const client = { insert: vi.fn() };
+      const service = new CustomerHealthService(
+        { client } as unknown as DatabaseService,
+        {} as CustomerIntelligenceService,
+        makeEventBus(),
+        makeLogger(),
+      );
+      const recalculateSpy = vi.spyOn(service, 'recalculate');
+
+      await service.handleOrderCreated(makeOrderCreatedEvent({ workspaceId: undefined }));
+
+      expect(recalculateSpy).not.toHaveBeenCalled();
+      expect(client.insert).not.toHaveBeenCalled();
+    });
+
+    it('logs and does not rethrow when recalculate() fails — a failure here must never surface as a failure of the emitting webhook processor', async () => {
+      const customerIntelligenceService = { getCustomer: vi.fn().mockRejectedValue(new Error('db down')) } as unknown as CustomerIntelligenceService;
+      const logger = makeLogger();
+      const service = new CustomerHealthService({ client: {} } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), logger);
+
+      await expect(service.handleOrderCreated(makeOrderCreatedEvent())).resolves.toBeUndefined();
+
+      expect(logger.event).toHaveBeenCalledWith(
+        'error',
+        expect.stringContaining('order.created'),
+        'CustomerHealthService',
+        expect.objectContaining({ canonicalCustomerId: 'canon_1' }),
+      );
+    });
+  });
+
   describe('getCurrent()', () => {
     it('throws NotFoundError when no state has been calculated yet', async () => {
       const select = vi.fn(() => makeSelectChain([]));
       const client = { select };
-      const service = new CustomerHealthService({ client } as unknown as DatabaseService, {} as CustomerIntelligenceService, makeEventBus());
+      const service = new CustomerHealthService({ client } as unknown as DatabaseService, {} as CustomerIntelligenceService, makeEventBus(), makeLogger());
 
       await expect(service.getCurrent('ws_1', 'canon_1')).rejects.toMatchObject({ code: 'NOT_FOUND' });
     });
@@ -225,7 +289,7 @@ describe('CustomerHealthService', () => {
       const row = { workspaceId: 'ws_1', canonicalCustomerId: 'canon_1', score: null, healthCategory: null, signals: {}, reasonCodes: [], trend: null, lastCalculatedAt: new Date() };
       const select = vi.fn(() => makeSelectChain([row]));
       const client = { select };
-      const service = new CustomerHealthService({ client } as unknown as DatabaseService, {} as CustomerIntelligenceService, makeEventBus());
+      const service = new CustomerHealthService({ client } as unknown as DatabaseService, {} as CustomerIntelligenceService, makeEventBus(), makeLogger());
 
       const result = await service.getCurrent('ws_1', 'canon_1');
 

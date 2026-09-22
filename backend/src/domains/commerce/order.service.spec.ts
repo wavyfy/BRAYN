@@ -16,11 +16,13 @@ function makeSelectQueue(results: unknown[]) {
   return vi.fn(() => makeSelectChain(results[i++]));
 }
 
-function makeOrderInsertChain(returned: { id: string; externalId: string }[]) {
+/** `createdAt`/`updatedAt` default to the same Date — i.e. "just inserted", matching how upsertMany() itself distinguishes a fresh insert from an update-on-conflict. Pass them explicitly to simulate an update instead. */
+function makeOrderInsertChain(returned: { id: string; externalId: string; createdAt?: Date; updatedAt?: Date }[]) {
+  const now = new Date();
   const chain: Record<string, unknown> = {
     values: vi.fn(() => chain),
     onConflictDoUpdate: vi.fn(() => chain),
-    returning: vi.fn(async () => returned),
+    returning: vi.fn(async () => returned.map((row) => ({ createdAt: now, updatedAt: now, ...row }))),
   };
   return chain;
 }
@@ -60,7 +62,7 @@ describe('OrderService', () => {
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', []);
 
-      expect(result).toEqual({ ordersWritten: 0, lineItemsWritten: 0, refundsWritten: 0, fulfillmentsWritten: 0 });
+      expect(result).toEqual({ ordersWritten: 0, lineItemsWritten: 0, refundsWritten: 0, fulfillmentsWritten: 0, newOrderCanonicalCustomerIds: [] });
       expect(client.select).not.toHaveBeenCalled();
       expect(client.insert).not.toHaveBeenCalled();
     });
@@ -72,13 +74,14 @@ describe('OrderService', () => {
       const select = makeSelectQueue([
         [{ id: 'cust_1', externalId: '1' }], // customer lookup
         [{ id: 'variant_1', externalId: '901' }], // variant lookup
+        [{ canonicalCustomerId: null }], // new order's customer canonicalCustomerId lookup — not yet identity-resolved
       ]);
       const client = { select, insert };
       const service = new OrderService({ client } as unknown as DatabaseService);
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [order]);
 
-      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 1, refundsWritten: 0, fulfillmentsWritten: 0 });
+      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 1, refundsWritten: 0, fulfillmentsWritten: 0, newOrderCanonicalCustomerIds: [] });
       expect(orderChain.values).toHaveBeenCalledWith([
         {
           workspaceId: 'ws_1',
@@ -118,7 +121,7 @@ describe('OrderService', () => {
       const client = { select, insert };
       const service = new OrderService({ client } as unknown as DatabaseService);
 
-      await service.upsertMany('ws_1', 'int_1', 'shopify', [guestOrder]);
+      const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [guestOrder]);
 
       expect(select).toHaveBeenCalledTimes(1);
       const orderValues = (orderChain.values as ReturnType<typeof vi.fn>).mock.calls[0][0] as Array<
@@ -129,6 +132,8 @@ describe('OrderService', () => {
         Record<string, unknown>
       >;
       expect(lineItemValues[0].variantId).toBeNull();
+      // A guest-checkout order (no customer at all) cannot resolve to a canonical customer — existing behavior unchanged.
+      expect(result.newOrderCanonicalCustomerIds).toEqual([]);
     });
 
     it('skips line items for an order whose insert did not come back with an id', async () => {
@@ -140,7 +145,7 @@ describe('OrderService', () => {
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [order]);
 
-      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 0, refundsWritten: 0, fulfillmentsWritten: 0 });
+      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 0, refundsWritten: 0, fulfillmentsWritten: 0, newOrderCanonicalCustomerIds: [] });
       expect(insert).toHaveBeenCalledTimes(1);
     });
 
@@ -170,13 +175,14 @@ describe('OrderService', () => {
       const select = makeSelectQueue([
         [{ id: 'cust_1', externalId: '1' }],
         [{ id: 'variant_1', externalId: '901' }],
+        [{ canonicalCustomerId: null }],
       ]);
       const client = { select, insert };
       const service = new OrderService({ client } as unknown as DatabaseService);
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [refundedOrder]);
 
-      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 1, refundsWritten: 1, fulfillmentsWritten: 0 });
+      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 1, refundsWritten: 1, fulfillmentsWritten: 0, newOrderCanonicalCustomerIds: [] });
       expect(refundChain.values).toHaveBeenCalledWith([
         {
           workspaceId: 'ws_1',
@@ -224,13 +230,14 @@ describe('OrderService', () => {
       const select = makeSelectQueue([
         [{ id: 'cust_1', externalId: '1' }],
         [{ id: 'variant_1', externalId: '901' }],
+        [{ canonicalCustomerId: null }],
       ]);
       const client = { select, insert };
       const service = new OrderService({ client } as unknown as DatabaseService);
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [fulfilledOrder]);
 
-      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 1, refundsWritten: 0, fulfillmentsWritten: 1 });
+      expect(result).toEqual({ ordersWritten: 1, lineItemsWritten: 1, refundsWritten: 0, fulfillmentsWritten: 1, newOrderCanonicalCustomerIds: [] });
       expect(fulfillmentChain.values).toHaveBeenCalledWith([
         {
           workspaceId: 'ws_1',
@@ -246,6 +253,62 @@ describe('OrderService', () => {
           sourceUpdatedAt: fulfilledOrder.fulfillments[0].sourceUpdatedAt,
         },
       ]);
+    });
+
+    it('reports the canonical customer id for a genuinely new order whose customer is already identity-resolved (doc10 — "Order Placed" trigger)', async () => {
+      const orderChain = makeOrderInsertChain([{ id: 'order_1', externalId: '900' }]); // fresh insert — createdAt === updatedAt by default
+      const lineItemChain = makeLineItemInsertChain();
+      const insert = vi.fn().mockReturnValueOnce(orderChain).mockReturnValueOnce(lineItemChain);
+      const select = makeSelectQueue([
+        [{ id: 'cust_1', externalId: '1' }],
+        [{ id: 'variant_1', externalId: '901' }],
+        [{ canonicalCustomerId: 'canon_1' }],
+      ]);
+      const client = { select, insert };
+      const service = new OrderService({ client } as unknown as DatabaseService);
+
+      const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [order]);
+
+      expect(result.newOrderCanonicalCustomerIds).toEqual(['canon_1']);
+    });
+
+    it('does not report a canonical customer id when the order was updated, not newly inserted (replayed/duplicate webhook delivery)', async () => {
+      const earlier = new Date('2026-01-01T00:00:00Z');
+      const later = new Date('2026-01-02T00:00:00Z');
+      // updatedAt > createdAt — this row already existed and was updated by the ON CONFLICT branch, not freshly inserted.
+      const orderChain = makeOrderInsertChain([{ id: 'order_1', externalId: '900', createdAt: earlier, updatedAt: later }]);
+      const lineItemChain = makeLineItemInsertChain();
+      const insert = vi.fn().mockReturnValueOnce(orderChain).mockReturnValueOnce(lineItemChain);
+      const select = makeSelectQueue([[{ id: 'cust_1', externalId: '1' }], [{ id: 'variant_1', externalId: '901' }]]);
+      const client = { select, insert };
+      const service = new OrderService({ client } as unknown as DatabaseService);
+
+      const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [order]);
+
+      // No canonicalCustomerId lookup should even run for an order that wasn't newly created.
+      expect(select).toHaveBeenCalledTimes(2);
+      expect(result.newOrderCanonicalCustomerIds).toEqual([]);
+    });
+
+    it('dedupes the canonical customer id when two newly-created orders in the same batch belong to the same customer', async () => {
+      const secondOrder: NormalizedOrder = { ...order, externalId: '901' };
+      const orderChain = makeOrderInsertChain([
+        { id: 'order_1', externalId: '900' },
+        { id: 'order_2', externalId: '901' },
+      ]);
+      const lineItemChain = makeLineItemInsertChain();
+      const insert = vi.fn().mockReturnValueOnce(orderChain).mockReturnValueOnce(lineItemChain);
+      const select = makeSelectQueue([
+        [{ id: 'cust_1', externalId: '1' }],
+        [{ id: 'variant_1', externalId: '901' }],
+        [{ canonicalCustomerId: 'canon_1' }],
+      ]);
+      const client = { select, insert };
+      const service = new OrderService({ client } as unknown as DatabaseService);
+
+      const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [order, secondOrder]);
+
+      expect(result.newOrderCanonicalCustomerIds).toEqual(['canon_1']);
     });
   });
 

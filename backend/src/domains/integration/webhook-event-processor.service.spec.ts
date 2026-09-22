@@ -7,6 +7,7 @@ import type { ProductService } from '../commerce/product.service';
 import type { OrderService } from '../commerce/order.service';
 import type { CollectionService } from '../commerce/collection.service';
 import type { IdentityResolutionService } from '../identity-resolution/identity-resolution.service';
+import type { EventBus } from '../../common/events/event-bus.service';
 import type { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 
 function makeChain() {
@@ -24,11 +25,12 @@ function makeProcessor() {
   const customerService = { upsertMany: vi.fn(async () => 1) } as unknown as CustomerService;
   const productService = { upsertMany: vi.fn(async () => ({ productsWritten: 1, variantsWritten: 0 })) } as unknown as ProductService;
   const orderService = {
-    upsertMany: vi.fn(async () => ({ ordersWritten: 1, lineItemsWritten: 0 })),
+    upsertMany: vi.fn(async () => ({ ordersWritten: 1, lineItemsWritten: 0, refundsWritten: 0, fulfillmentsWritten: 0, newOrderCanonicalCustomerIds: [] })),
     upsertFulfillments: vi.fn(async () => 1),
   } as unknown as OrderService;
   const collectionService = { upsertMany: vi.fn(async () => 1) } as unknown as CollectionService;
   const identityResolutionService = { resolveMany: vi.fn(async () => undefined) } as unknown as IdentityResolutionService;
+  const eventBus = { emit: vi.fn() } as unknown as EventBus;
   const logger = { error: vi.fn() } as unknown as StructuredLoggerService;
 
   return {
@@ -39,6 +41,7 @@ function makeProcessor() {
       orderService,
       collectionService,
       identityResolutionService,
+      eventBus,
       logger,
     ),
     client,
@@ -48,6 +51,7 @@ function makeProcessor() {
     orderService,
     collectionService,
     identityResolutionService,
+    eventBus,
     logger,
   };
 }
@@ -84,13 +88,33 @@ describe('WebhookEventProcessorService', () => {
     expect(productService.upsertMany).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', [product]);
   });
 
-  it('applies an order resource event via OrderService.upsertMany', async () => {
-    const { processor, orderService } = makeProcessor();
+  it('applies an order resource event via OrderService.upsertMany, and emits no order.created when no order was newly created', async () => {
+    const { processor, orderService, eventBus } = makeProcessor();
 
     const order = { externalId: '900', customerExternalId: null, totalPrice: '19.99', sourceUpdatedAt: new Date(), lineItems: [] };
     await processor.handleWebhookReceived(makeReceivedEvent({ resource: 'order', data: order }));
 
     expect(orderService.upsertMany).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', [order]);
+    expect(eventBus.emit).not.toHaveBeenCalled();
+  });
+
+  it('emits order.created for each canonical customer id OrderService.upsertMany reports as newly created', async () => {
+    const { processor, orderService, eventBus } = makeProcessor();
+    vi.mocked(orderService.upsertMany).mockResolvedValueOnce({
+      ordersWritten: 1,
+      lineItemsWritten: 0,
+      refundsWritten: 0,
+      fulfillmentsWritten: 0,
+      newOrderCanonicalCustomerIds: ['canon_1'],
+    });
+
+    const order = { externalId: '900', customerExternalId: '1', totalPrice: '19.99', sourceUpdatedAt: new Date(), lineItems: [] };
+    await processor.handleWebhookReceived(makeReceivedEvent({ resource: 'order', data: order }));
+
+    expect(eventBus.emit).toHaveBeenCalledTimes(1);
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'order.created', workspaceId: 'ws_1', payload: { canonicalCustomerId: 'canon_1' } }),
+    );
   });
 
   it('applies a fulfillment resource event via OrderService.upsertFulfillments', async () => {

@@ -10,6 +10,8 @@ import { integrationWebhookEvents } from '../../database/schema/integration-webh
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { commerceOrders } from '../../database/schema/commerce-orders';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
+import { customerHealthStates } from '../../database/schema/customer-health-states';
+import { customerHealthStateHistory } from '../../database/schema/customer-health-state-history';
 import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
 import { recommendations } from '../../database/schema/recommendations';
 import { automationDefinitions } from '../../database/schema/automation-definitions';
@@ -107,6 +109,10 @@ describe('Phase 16 — Commerce → Automation loop (e2e, real DB)', () => {
     await db.client.delete(revenueOpportunities).where(eq(revenueOpportunities.workspaceId, workspaceId));
     await db.client.delete(commerceOrders).where(eq(commerceOrders.workspaceId, workspaceId));
     await db.client.delete(commerceCustomers).where(eq(commerceCustomers.workspaceId, workspaceId));
+    // `order.created` (this test's webhook-delivered order) now triggers CustomerHealthService.recalculate()
+    // automatically — these rows reference canonicalCustomers and must be deleted before it.
+    await db.client.delete(customerHealthStateHistory).where(eq(customerHealthStateHistory.workspaceId, workspaceId));
+    await db.client.delete(customerHealthStates).where(eq(customerHealthStates.workspaceId, workspaceId));
     await db.client.delete(canonicalCustomers).where(eq(canonicalCustomers.workspaceId, workspaceId));
     await db.client.delete(integrationWebhookEvents).where(eq(integrationWebhookEvents.workspaceId, workspaceId));
     await db.client.delete(integrations).where(eq(integrations.workspaceId, workspaceId));
