@@ -29,6 +29,7 @@ const customerFixture: CustomerRecord = {
     ordersLast90Days: 1,
     recentOrders: [{ provider: 'shopify', externalId: 'ord_1', totalPrice: '50.00', createdAt: new Date('2026-01-01T00:00:00Z') }],
   },
+  behaviouralContext: { eventsCount: 0, lastActivityAt: null, recentEvents: [] },
 };
 
 const healthFixture: CustomerHealthState = {

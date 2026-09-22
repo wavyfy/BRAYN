@@ -232,6 +232,13 @@
       "when": 1789842966300,
       "tag": "0032_wonderful_wonder_man",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1789897746773,
+      "tag": "0033_careless_prodigy",
+      "breakpoints": true
     }
   ]
 }

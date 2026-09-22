@@ -26,20 +26,24 @@ function makeInsertChain() {
   return chain;
 }
 
-function makeCustomerIntelligenceService(commerceContext: { lastOrderAt: Date | null; ordersLast90Days: number }): CustomerIntelligenceService {
+function makeCustomerIntelligenceService(
+  commerceContext: { lastOrderAt: Date | null; ordersLast90Days: number },
+  behaviouralContext: { eventsCount: number; lastActivityAt: Date | null } = { eventsCount: 0, lastActivityAt: null },
+): CustomerIntelligenceService {
   return {
     getCustomer: vi.fn(async () => ({
       canonicalCustomerId: 'canon_1',
       profile: { email: null, firstName: null, lastName: null, phone: null },
       sourceCustomers: [],
       commerceContext: { ordersCount: 0, totalSpent: '0', recentOrders: [], ...commerceContext },
+      behaviouralContext: { recentEvents: [], ...behaviouralContext },
     })),
   } as unknown as CustomerIntelligenceService;
 }
 
 describe('CustomerHealthService', () => {
   describe('recalculate()', () => {
-    it('withholds score/healthCategory/trend — only 50% of the signal weight is available', async () => {
+    it('withholds score/healthCategory/trend — only 65% of the signal weight is available', async () => {
       const stateInsert = makeInsertChain();
       const historyInsert = { values: vi.fn(async () => undefined) };
       const insert = vi.fn().mockReturnValueOnce(stateInsert).mockReturnValueOnce(historyInsert);
@@ -94,7 +98,7 @@ describe('CustomerHealthService', () => {
       expect(frequency.score).toBe(100);
     });
 
-    it('marks website/WhatsApp/email/customer-experience signals unavailable, each with a reason', async () => {
+    it('marks WhatsApp/email/customer-experience signals unavailable, each with a reason', async () => {
       const insert = vi.fn().mockReturnValue(makeInsertChain());
       const client = { insert };
       const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: null, ordersLast90Days: 0 });
@@ -103,11 +107,74 @@ describe('CustomerHealthService', () => {
       const result = await service.recalculate('ws_1', 'canon_1');
 
       const signals = result.signals as Record<string, { available: boolean; reason?: string }>;
-      expect(signals.websiteEngagement).toMatchObject({ available: false });
       expect(signals.whatsappEngagement).toMatchObject({ available: false });
       expect(signals.emailEngagement).toMatchObject({ available: false });
       expect(signals.customerExperience).toMatchObject({ available: false });
       expect(signals.emailEngagement.reason).toContain('product decision');
+    });
+
+    it('marks website engagement available with a score of 0 when no website activity exists', async () => {
+      const insert = vi.fn().mockReturnValue(makeInsertChain());
+      const client = { insert };
+      const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: null, ordersLast90Days: 0 });
+      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus());
+
+      const result = await service.recalculate('ws_1', 'canon_1');
+
+      const signals = result.signals as Record<string, { available: boolean; value: number; score: number }>;
+      expect(signals.websiteEngagement).toMatchObject({ available: true, value: 0, score: 0 });
+      expect(result.reasonCodes).toContainEqual(expect.stringContaining('No website activity recorded'));
+    });
+
+    it('computes a blended recency/frequency website engagement score when behavioural data exists', async () => {
+      const insert = vi.fn().mockReturnValue(makeInsertChain());
+      const client = { insert };
+      const fifteenDaysAgo = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000);
+      const customerIntelligenceService = makeCustomerIntelligenceService(
+        { lastOrderAt: null, ordersLast90Days: 0 },
+        { eventsCount: 20, lastActivityAt: fifteenDaysAgo },
+      );
+      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus());
+
+      const result = await service.recalculate('ws_1', 'canon_1');
+
+      const website = (result.signals as Record<string, { value: number; score: number }>).websiteEngagement;
+      // recency: 100 - (15/30)*100 = 50; frequency: min(100, (20/20)*100) = 100; blend: 50*0.6 + 100*0.4 = 70
+      expect(website.value).toBe(20);
+      expect(website.score).toBe(70);
+    });
+
+    it('caps the website frequency sub-score at 100 once events reach the target threshold', async () => {
+      const insert = vi.fn().mockReturnValue(makeInsertChain());
+      const client = { insert };
+      const customerIntelligenceService = makeCustomerIntelligenceService(
+        { lastOrderAt: null, ordersLast90Days: 0 },
+        { eventsCount: 500, lastActivityAt: new Date() },
+      );
+      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus());
+
+      const result = await service.recalculate('ws_1', 'canon_1');
+
+      const website = (result.signals as Record<string, { value: number; score: number }>).websiteEngagement;
+      // recency: same-day -> 100; frequency: capped at 100; blend: 100*0.6 + 100*0.4 = 100
+      expect(website.score).toBe(100);
+    });
+
+    it('scopes the website engagement signal to the requested workspace via getCustomer', async () => {
+      const insert = vi.fn().mockReturnValue(makeInsertChain());
+      const client = { insert };
+      const customerIntelligenceService = makeCustomerIntelligenceService(
+        { lastOrderAt: null, ordersLast90Days: 0 },
+        { eventsCount: 5, lastActivityAt: new Date() },
+      );
+      const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus());
+
+      await service.recalculate('ws_other', 'canon_1');
+
+      // behaviouralContext is workspace-scoped by CustomerIntelligenceService.getCustomer itself
+      // (Part 4) — CustomerHealthService's only isolation obligation is to call it with the
+      // requested workspaceId rather than caching/reusing a different workspace's record.
+      expect(customerIntelligenceService.getCustomer).toHaveBeenCalledWith('ws_other', 'canon_1');
     });
 
     it('writes both the current state (upsert) and a history row', async () => {

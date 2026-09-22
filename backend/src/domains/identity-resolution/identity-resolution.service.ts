@@ -3,6 +3,7 @@ import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { canonicalCustomerDuplicates } from '../../database/schema/canonical-customer-duplicates';
+import { websiteVisitors } from '../../database/schema/website-visitors';
 import { DatabaseService } from '../../database/database.service';
 import type { IntegrationProvider } from '../integration/dto/connect-integration.schema';
 
@@ -26,8 +27,13 @@ import type { IntegrationProvider } from '../integration/dto/connect-integration
  * here) — instead, a shared phone across two *different* canonical
  * customers is flagged as a pending duplicate candidate for a human to
  * review. Confidence evaluation, safe merge, and conflict handling stay
- * out of scope; so does anonymous→known linking (needs the Website
- * Behaviour domain, not built yet) and identity history/audit.
+ * out of scope; so does identity history/audit.
+ *
+ * Anonymous → known linking (doc09/doc20 — Website Tracking Identity
+ * Linking, Part 3): `resolveWebsiteVisitor()` links a `website_visitors`
+ * row using the exact same deterministic email match as `resolveOne()`
+ * — the one signal doc09 names, reused rather than reinvented for a
+ * second identity source.
  *
  * ponytail: only ever resolves a row once (`canonicalCustomerId IS NULL`)
  * — if a customer's email later changes, the existing link isn't
@@ -74,6 +80,50 @@ export class IdentityResolutionService {
         await this.flagPhoneDuplicates(workspaceId, canonicalCustomerId, row.phone);
       }
     }
+  }
+
+  /**
+   * Links a Website Behaviour visitor to a canonical customer once a
+   * reliable identity signal (email) is available for it (doc20 Identity
+   * Linking: `Anonymous Visitor → Identity Signal → Identity Resolution
+   * → Canonical Customer → Historical Behaviour Linked`). Reuses
+   * `resolveOne()`'s find-or-create-by-email rule unchanged — a visitor
+   * whose email already resolved a commerce canonical customer links to
+   * that *same* row, not a second competing one (doc08 Canonical
+   * Customer Rule).
+   *
+   * Only ever links a visitor once, same "resolves once" contract as
+   * `resolveMany` (see this service's own ponytail note above): an
+   * already-linked visitor (`canonicalCustomerId IS NOT NULL`) is left
+   * untouched even if a later signal carries a different email — doc09
+   * "Conflicting identity signals require explicit handling", not solved
+   * here, same as email-change re-resolution isn't for commerce. A
+   * visitor id that doesn't exist in this workspace is a silent no-op —
+   * tenant isolation, not an error worth surfacing to an already-public,
+   * unauthenticated-by-Clerk ingestion path.
+   *
+   * Never touches `website_events` — every event already references
+   * `websiteVisitorId`, not a copy of its identity, so linking the one
+   * visitor row associates its entire historical event history; nothing
+   * is duplicated or rewritten.
+   */
+  async resolveWebsiteVisitor(workspaceId: string, websiteVisitorId: string, email: string): Promise<void> {
+    const [visitor] = await this.database.client
+      .select({ id: websiteVisitors.id, canonicalCustomerId: websiteVisitors.canonicalCustomerId })
+      .from(websiteVisitors)
+      .where(and(eq(websiteVisitors.workspaceId, workspaceId), eq(websiteVisitors.id, websiteVisitorId)))
+      .limit(1);
+
+    if (!visitor || visitor.canonicalCustomerId) {
+      return;
+    }
+
+    const canonicalCustomerId = await this.resolveOne(workspaceId, email);
+
+    await this.database.client
+      .update(websiteVisitors)
+      .set({ canonicalCustomerId, updatedAt: new Date() })
+      .where(eq(websiteVisitors.id, visitor.id));
   }
 
   /** Pending duplicate candidates for a workspace, newest first — the review surface doc09's "Detection" bullet asks for. */

@@ -5,6 +5,7 @@ import { CustomerIntelligenceModule } from '../customer-intelligence/customer-in
 import { IntelligenceEnginesModule } from '../intelligence-engines/intelligence-engines.module';
 import { MerchantKnowledgeModule } from '../merchant-knowledge/merchant-knowledge.module';
 import { AiActionControlModule } from '../ai-action-control/ai-action-control.module';
+import { CommerceModule } from '../commerce/commerce.module';
 import { MerchantBusinessAnalystService } from './merchant-business-analyst.service';
 import { MerchantBusinessAnalystController } from './merchant-business-analyst.controller';
 import { ReadToolsService } from './read-tools.service';
@@ -48,10 +49,13 @@ import { SupportAgentService } from './support-agent.service';
  * verified) is imported for `WriteToolsService` (doc19 Phase 12 step 7 —
  * "Controlled write tools") — exports `AiActionControlService` and
  * `ACTION_REGISTRY`; this domain never re-implements enforcement, it only
- * calls into it (doc04 Rule 2).
+ * calls into it (doc04 Rule 2). `CommerceModule` is imported for
+ * `ProductService` (Sales Agent's `search_products` tool — doc19 Phase 13
+ * "product discovery"), reusing the Commerce read surface rather than
+ * duplicating product data here.
  */
 @Module({
-  imports: [WorkspaceModule, AiModule, CustomerIntelligenceModule, IntelligenceEnginesModule, MerchantKnowledgeModule, AiActionControlModule],
+  imports: [WorkspaceModule, AiModule, CustomerIntelligenceModule, IntelligenceEnginesModule, MerchantKnowledgeModule, AiActionControlModule, CommerceModule],
   controllers: [MerchantBusinessAnalystController],
   providers: [MerchantBusinessAnalystService, ReadToolsService, WriteToolsService, SalesAgentService, SupportAgentService],
   exports: [MerchantBusinessAnalystService],

@@ -22,6 +22,7 @@ const customerFixture: CustomerRecord = {
     ordersLast90Days: 1,
     recentOrders: [{ provider: 'shopify', externalId: 'ord_9', totalPrice: '45.00', createdAt: new Date('2026-01-05T00:00:00Z') }],
   },
+  behaviouralContext: { eventsCount: 0, lastActivityAt: null, recentEvents: [] },
 };
 
 function makeGateway(overrides: Partial<AiGatewayService> = {}): AiGatewayService {

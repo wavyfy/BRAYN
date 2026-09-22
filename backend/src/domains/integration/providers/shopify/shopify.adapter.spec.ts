@@ -45,9 +45,9 @@ describe('ShopifyAdapter', () => {
       await expect(adapter.verifyConnection({ accessToken: 'shpat_x' })).resolves.toBe(false);
     });
 
-    it('returns true and calls shop.json with the access token header on success', async () => {
+    it('returns true and calls the GraphQL endpoint with the access token header on success', async () => {
       const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () =>
-        jsonResponse(200, { shop: { name: 'Acme' } }),
+        jsonResponse(200, { data: { shop: { id: 'gid://shopify/Shop/1' } } }),
       );
       vi.stubGlobal('fetch', fetchMock);
       const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
@@ -56,8 +56,11 @@ describe('ShopifyAdapter', () => {
 
       expect(result).toBe(true);
       const [url, init] = fetchMock.mock.calls[0];
-      expect(url).toBe('https://acme.myshopify.com/admin/api/2024-10/shop.json');
+      expect(url).toBe('https://acme.myshopify.com/admin/api/2024-10/graphql.json');
+      expect(init?.method).toBe('POST');
       expect((init?.headers as Record<string, string>)['X-Shopify-Access-Token']).toBe('shpat_123');
+      expect((init?.headers as Record<string, string>)['Content-Type']).toBe('application/json');
+      expect(JSON.parse(init?.body as string)).toEqual({ query: '{ shop { id } }' });
     });
 
     it('returns false (not a throw) on 401 — an invalid token is an ordinary rejection', async () => {
@@ -120,7 +123,10 @@ describe('ShopifyAdapter', () => {
 
     describe('onDiagnostic (doc 20 Part 20) — status-code category only, never the token/domain/body', () => {
       it('reports category "200" plus the X-Shopify-API-Version header on success', async () => {
-        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { shop: {} }, { 'X-Shopify-API-Version': '2024-10' })));
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () => jsonResponse(200, { data: { shop: { id: 'gid://shopify/Shop/1' } } }, { 'X-Shopify-API-Version': '2024-10' })),
+        );
         const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
         const onDiagnostic = vi.fn();
 
@@ -256,10 +262,56 @@ describe('ShopifyAdapter', () => {
       });
 
       it('does not change behavior for callers that omit onDiagnostic (e.g. connectViaClientCredentials)', async () => {
-        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { shop: {} })));
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { data: { shop: { id: 'gid://shopify/Shop/1' } } })));
         const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
         await expect(adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' })).resolves.toBe(true);
+      });
+
+      it('reports category "graphql_errors" (not success) for HTTP 200 with a GraphQL errors[] body — e.g. throttled', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { errors: [{ message: 'Throttled' }] })));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await expect(
+          adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, onDiagnostic),
+        ).resolves.toBe(false);
+        expect(onDiagnostic).toHaveBeenCalledWith({ category: 'graphql_errors', apiVersionHeader: null, shopifyError: 'Throttled' });
+      });
+
+      it('joins multiple GraphQL error messages with "; "', async () => {
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () => jsonResponse(200, { errors: [{ message: 'first problem' }, { message: 'second problem' }] })),
+        );
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, onDiagnostic);
+
+        expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({ shopifyError: 'first problem; second problem' }));
+      });
+
+      it('reports category "graphql_errors" (fails closed, not a throw) for an HTTP 200 body with neither data.shop nor errors', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { data: null })));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await expect(
+          adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, onDiagnostic),
+        ).resolves.toBe(false);
+        expect(onDiagnostic).toHaveBeenCalledWith({ category: 'graphql_errors', apiVersionHeader: null, shopifyError: null });
+      });
+
+      it('reports category "graphql_errors" (fails closed, not a throw) for an HTTP 200 body that is not valid JSON', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => new Response('not json', { status: 200 })));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+        const onDiagnostic = vi.fn();
+
+        await expect(
+          adapter.verifyConnection({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, onDiagnostic),
+        ).resolves.toBe(false);
+        expect(onDiagnostic).toHaveBeenCalledWith({ category: 'graphql_errors', apiVersionHeader: null, shopifyError: null });
       });
     });
   });

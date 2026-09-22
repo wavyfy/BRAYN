@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, sql } from 'drizzle-orm';
 import { commerceProducts } from '../../database/schema/commerce-products';
 import { commerceProductVariants } from '../../database/schema/commerce-product-variants';
 import { DatabaseService } from '../../database/database.service';
@@ -19,6 +19,28 @@ export interface NormalizedProduct {
   title: string;
   sourceUpdatedAt: Date | null;
   variants: NormalizedVariant[];
+}
+
+const DEFAULT_LIST_LIMIT = 20;
+
+export interface ProductVariantListItem {
+  id: string;
+  sku: string | null;
+  price: string | null;
+  inventoryQuantity: number | null;
+}
+
+export interface ProductListItem {
+  id: string;
+  title: string;
+  variants: ProductVariantListItem[];
+}
+
+export interface ProductListPage {
+  products: ProductListItem[];
+  page: number;
+  limit: number;
+  hasMore: boolean;
 }
 
 /**
@@ -106,6 +128,69 @@ export class ProductService {
     }
 
     return { productsWritten: products.length, variantsWritten: variantValues.length };
+  }
+
+  /**
+   * Tenant-scoped product discovery read (doc19 Phase 13 Sales Agent —
+   * "Product discovery"; unblocks the tool gap documented in
+   * `SalesAgentService`'s own doc comment). Read-only — never called by
+   * the ingestion pipeline (doc 06 — Integration produces, this domain
+   * stores; this method just lets something else read what's already
+   * stored). Same list/search/pagination shape as
+   * `CustomerIntelligenceService.listCustomers` (search title via
+   * `ilike`, `limit + 1` over-fetch to detect `hasMore`, batch-enrich the
+   * page after) — no new pattern invented.
+   *
+   * `search` matches product `title` only — the one text field the
+   * schema actually has (no description/tags/category exist to search).
+   * Variants are always included per product (id/sku/price/
+   * inventoryQuantity) since product discovery without price is not
+   * useful; fetched in one batched query scoped to the returned page's
+   * product ids, not per-product.
+   */
+  async list(workspaceId: string, options: { search?: string; page?: number; limit?: number } = {}): Promise<ProductListPage> {
+    const page = Math.max(1, options.page ?? 1);
+    const limit = options.limit ?? DEFAULT_LIST_LIMIT;
+
+    const rows = await this.database.client
+      .select({ id: commerceProducts.id, title: commerceProducts.title })
+      .from(commerceProducts)
+      .where(and(eq(commerceProducts.workspaceId, workspaceId), options.search ? ilike(commerceProducts.title, `%${options.search}%`) : undefined))
+      .orderBy(desc(commerceProducts.createdAt))
+      .limit(limit + 1)
+      .offset((page - 1) * limit);
+
+    const hasMore = rows.length > limit;
+    const pageRows = hasMore ? rows.slice(0, limit) : rows;
+    if (pageRows.length === 0) {
+      return { products: [], page, limit, hasMore: false };
+    }
+
+    const productIds = pageRows.map((row) => row.id);
+    const variantRows = await this.database.client
+      .select({
+        id: commerceProductVariants.id,
+        productId: commerceProductVariants.productId,
+        sku: commerceProductVariants.sku,
+        price: commerceProductVariants.price,
+        inventoryQuantity: commerceProductVariants.inventoryQuantity,
+      })
+      .from(commerceProductVariants)
+      .where(and(eq(commerceProductVariants.workspaceId, workspaceId), inArray(commerceProductVariants.productId, productIds)));
+
+    const variantsByProductId = new Map<string, ProductVariantListItem[]>();
+    for (const variant of variantRows) {
+      const list = variantsByProductId.get(variant.productId) ?? [];
+      list.push({ id: variant.id, sku: variant.sku, price: variant.price, inventoryQuantity: variant.inventoryQuantity });
+      variantsByProductId.set(variant.productId, list);
+    }
+
+    return {
+      products: pageRows.map((row) => ({ id: row.id, title: row.title, variants: variantsByProductId.get(row.id) ?? [] })),
+      page,
+      limit,
+      hasMore,
+    };
   }
 
   /** This workspace/provider's current `sourceUpdatedAt` for each existing product externalId (doc 06/20 — Reconciliation: detect missing/changed records before repairing; variant-level drift isn't tracked separately). Absent from the map means no such row exists yet. */

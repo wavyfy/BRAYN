@@ -22,6 +22,9 @@ import type { Env } from '../../../../config/env.schema';
 
 const SHOPIFY_API_VERSION = '2024-10';
 
+/** Minimal Admin GraphQL query for verifyConnection() — only `id` is consumed, proving the token works without over-fetching. */
+const SHOPIFY_VERIFY_CONNECTION_QUERY = `{ shop { id } }`;
+
 /**
  * Non-sensitive classification of a verifyConnection() outcome (doc 20
  * Part 20/22/25) — never a token/domain/full body. `category`
@@ -32,7 +35,7 @@ const SHOPIFY_API_VERSION = '2024-10';
  * extracted on its own, never the complete response body.
  */
 export interface ShopifyConnectionCheckDiagnostic {
-  category: '200' | '401' | '403' | '404' | 'other_4xx' | 'server_error' | 'network_error';
+  category: '200' | '401' | '403' | '404' | 'other_4xx' | 'server_error' | 'network_error' | 'graphql_errors';
   apiVersionHeader: string | null;
   shopifyError: string | null;
 }
@@ -64,6 +67,32 @@ async function readShopifyErrorField(response: Response): Promise<string | null>
   } catch {
     return null;
   }
+}
+
+/**
+ * Extracts a diagnostic message from a GraphQL Admin API response body's
+ * top-level `errors` array (distinct from readShopifyErrorField's REST
+ * `errors` shape, which is a string or a validation-style object, never an
+ * array) — e.g. `{"errors":[{"message":"Throttled"}]}`. Never throws; an
+ * unparseable/unexpected shape yields `null` so a malformed response is a
+ * defensive `false`, not a crash.
+ */
+function extractGraphqlErrors(body: unknown): string | null {
+  if (!body || typeof body !== 'object' || !('errors' in body)) {
+    return null;
+  }
+  const errors = (body as { errors?: unknown }).errors;
+  if (!Array.isArray(errors) || errors.length === 0) {
+    return null;
+  }
+  const messages = errors
+    .map((entry) =>
+      entry && typeof entry === 'object' && typeof (entry as { message?: unknown }).message === 'string'
+        ? (entry as { message: string }).message
+        : null,
+    )
+    .filter((message): message is string => message !== null);
+  return messages.length > 0 ? messages.join('; ') : null;
 }
 
 const CUSTOMERS_PAGE_SIZE = 250;
@@ -342,17 +371,30 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
 
   /**
    * Smallest real Shopify API call that proves the token actually works:
-   * GET shop.json, the same request Shopify's own docs use as the
-   * canonical "is this token valid" check.
+   * the Admin GraphQL API's `shop { id }` query — Shopify's own
+   * canonical "is this token valid" check, now GraphQL-backed (App Store
+   * requires new public apps to use the GraphQL Admin API, not REST; see
+   * the REST→GraphQL migration audit). `fetchPage()` and the other five
+   * resource methods are unchanged and still REST — this is migration
+   * slice 1 of 6, `verifyConnection()` only.
+   *
+   * A GraphQL request can fail two structurally different ways: an
+   * HTTP-level failure (401/403/404/5xx/network — same categories as the
+   * old REST call, since Shopify's GraphQL endpoint returns the same
+   * status codes for an invalid token or unknown shop domain) or an
+   * HTTP-200 response whose body carries a top-level `errors[]` array
+   * instead of `data.shop` (e.g. a throttled or malformed query) — the
+   * REST endpoint had no equivalent of this second failure mode, since a
+   * 200 there always meant success.
    *
    * `onDiagnostic` (doc 20 Part 20) is an optional, fingerprint-safe hook
-   * — a status-code *category* plus the non-sensitive `X-Shopify-API-Version`
-   * response header, never the body/token/domain. Existing callers
-   * (`connectViaClientCredentials`) don't pass it, so this parameter changes
-   * nothing about their behavior; `ShopifyOAuthService.handleCallback` passes
-   * one so its own failure log can distinguish *why* verification failed
-   * (401/403 vs 404 vs 5xx vs network error) instead of a single opaque
-   * boolean, without ever logging a credential or response body.
+   * — a status-code/GraphQL-error *category* plus the non-sensitive
+   * `X-Shopify-API-Version` response header, never the body/token/domain.
+   * Existing callers (`connectViaClientCredentials`) don't pass it, so this
+   * parameter changes nothing about their behavior; `ShopifyOAuthService.
+   * handleCallback` passes one so its own failure log can distinguish
+   * *why* verification failed instead of a single opaque boolean, without
+   * ever logging a credential or response body.
    */
   async verifyConnection(
     credentials: Record<string, string>,
@@ -367,8 +409,14 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
 
     let response: Response;
     try {
-      response = await fetch(`https://${shopDomain}/admin/api/${SHOPIFY_API_VERSION}/shop.json`, {
-        headers: { 'X-Shopify-Access-Token': accessToken },
+      response = await fetch(`https://${shopDomain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+        method: 'POST',
+        headers: {
+          'X-Shopify-Access-Token': accessToken,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ query: SHOPIFY_VERIFY_CONNECTION_QUERY }),
       });
     } catch (error) {
       // Network/DNS failure — unclassified, not an ordinary "bad credentials" outcome.
@@ -393,6 +441,29 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
       const shopifyError = onDiagnostic ? await readShopifyErrorField(response) : null;
       onDiagnostic?.({ category: 'server_error', apiVersionHeader, shopifyError });
       throw new ProviderError(`Shopify connection check failed with status ${response.status}.`);
+    }
+
+    // HTTP 200 does not mean success for GraphQL — the body can still carry
+    // a top-level `errors[]` (e.g. throttled, or the query itself rejected),
+    // and a malformed/unexpected body is a defensive rejection, not a crash.
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      onDiagnostic?.({ category: 'graphql_errors', apiVersionHeader, shopifyError: null });
+      return false;
+    }
+
+    const graphqlErrors = extractGraphqlErrors(body);
+    if (graphqlErrors) {
+      onDiagnostic?.({ category: 'graphql_errors', apiVersionHeader, shopifyError: graphqlErrors });
+      return false;
+    }
+
+    const shopId = (body as { data?: { shop?: { id?: unknown } } }).data?.shop?.id;
+    if (typeof shopId !== 'string') {
+      onDiagnostic?.({ category: 'graphql_errors', apiVersionHeader, shopifyError: null });
+      return false;
     }
 
     onDiagnostic?.({ category: '200', apiVersionHeader, shopifyError: null });

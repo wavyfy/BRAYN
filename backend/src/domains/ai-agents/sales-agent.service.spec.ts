@@ -5,7 +5,9 @@ import { CustomerIntelligenceService, type CustomerRecord } from '../customer-in
 import { RecommendationService } from '../intelligence-engines/recommendation.service';
 import { RevenueOpportunityService } from '../intelligence-engines/revenue-opportunity.service';
 import { MerchantKnowledgeService } from '../merchant-knowledge/merchant-knowledge.service';
+import { ProductService } from '../commerce/product.service';
 import { ESCALATE_TO_HUMAN_TOOL } from './agent-shared';
+import { SEARCH_PRODUCTS_TOOL } from './sales-agent.service';
 import { NotFoundError } from '../../common/errors/app-error';
 import type { AiMessage, AiToolCall } from '../ai/ai-provider.interface';
 
@@ -25,6 +27,7 @@ const customerFixture: CustomerRecord = {
     ordersLast90Days: 1,
     recentOrders: [{ provider: 'shopify', externalId: 'ord_1', totalPrice: '50.00', createdAt: new Date('2026-01-01T00:00:00Z') }],
   },
+  behaviouralContext: { eventsCount: 0, lastActivityAt: null, recentEvents: [] },
 };
 
 function makeGateway(overrides: Partial<AiGatewayService> = {}): AiGatewayService {
@@ -50,12 +53,17 @@ function makeMerchantKnowledge(entries: { title: string; content: string }[] = [
   return { list: vi.fn(async () => entries) } as unknown as MerchantKnowledgeService;
 }
 
+function makeProduct(overrides: Partial<ProductService> = {}): ProductService {
+  return { list: vi.fn(async () => ({ products: [], page: 1, limit: 10, hasMore: false })), ...overrides } as unknown as ProductService;
+}
+
 function makeService(overrides: {
   gateway?: AiGatewayService;
   customerIntelligence?: CustomerIntelligenceService;
   recommendation?: RecommendationService;
   revenueOpportunity?: RevenueOpportunityService;
   merchantKnowledge?: MerchantKnowledgeService;
+  product?: ProductService;
 } = {}) {
   return new SalesAgentService(
     overrides.gateway ?? makeGateway(),
@@ -63,6 +71,7 @@ function makeService(overrides: {
     overrides.recommendation ?? makeRecommendation(),
     overrides.revenueOpportunity ?? makeRevenueOpportunity(),
     overrides.merchantKnowledge ?? makeMerchantKnowledge(),
+    overrides.product ?? makeProduct(),
   );
 }
 
@@ -161,6 +170,91 @@ describe('SalesAgentService', () => {
       answer: 'Unable to complete this request after multiple attempts.',
       escalate: true,
       escalationReason: 'Tool execution repeatedly failed to reach a final answer.',
+    });
+  });
+
+  describe('search_products tool (doc19 Phase 13 — product discovery)', () => {
+    function makeSearchCall(args: Record<string, unknown> = { search: 'tee' }): AiToolCall {
+      return { id: 'call_1', name: SEARCH_PRODUCTS_TOOL, arguments: JSON.stringify(args) };
+    }
+
+    it('searches products and returns matching results to the model', async () => {
+      const call = makeSearchCall({ search: 'tee' });
+      const generate = vi
+        .fn()
+        .mockResolvedValueOnce({ content: '', toolCalls: [call], model: 'gpt-5.6-luna', provider: 'openai' })
+        .mockResolvedValueOnce({ content: 'We have a Classic Tee for $19.99.', model: 'gpt-5.6-luna', provider: 'openai' });
+      const product = makeProduct({
+        list: vi.fn(async () => ({
+          products: [{ id: 'prod_1', title: 'Classic Tee', variants: [{ id: 'var_1', sku: 'TEE-S', price: '19.99', inventoryQuantity: 10 }] }],
+          page: 1,
+          limit: 10,
+          hasMore: false,
+        })),
+      });
+      const service = makeService({ gateway: makeGateway({ generate }), product });
+
+      const result = await service.respond(WORKSPACE_ID, CUSTOMER_ID, 'Do you have any tees?');
+
+      expect(result).toEqual({ answer: 'We have a Classic Tee for $19.99.', escalate: false });
+      expect(product.list).toHaveBeenCalledWith(WORKSPACE_ID, { search: 'tee', limit: 10 });
+      const secondRequest = generate.mock.calls[1][0] as { messages: AiMessage[] };
+      const toolMessage = secondRequest.messages.find((m) => m.role === 'tool');
+      expect(toolMessage?.content).toContain('Classic Tee');
+      expect(toolMessage?.content).toContain('19.99');
+    });
+
+    it('handles an empty product search result cleanly, without an error', async () => {
+      const call = makeSearchCall({ search: 'nonexistent' });
+      const generate = vi
+        .fn()
+        .mockResolvedValueOnce({ content: '', toolCalls: [call], model: 'gpt-5.6-luna', provider: 'openai' })
+        .mockResolvedValueOnce({ content: "We don't have that in stock.", model: 'gpt-5.6-luna', provider: 'openai' });
+      const service = makeService({ gateway: makeGateway({ generate }), product: makeProduct() });
+
+      const result = await service.respond(WORKSPACE_ID, CUSTOMER_ID, 'Do you sell hoverboards?');
+
+      expect(result).toEqual({ answer: "We don't have that in stock.", escalate: false });
+      const secondRequest = generate.mock.calls[1][0] as { messages: AiMessage[] };
+      const toolMessage = secondRequest.messages.find((m) => m.role === 'tool');
+      expect(toolMessage?.content).toBe(JSON.stringify({ products: [], hasMore: false }));
+      expect(toolMessage?.content).not.toContain('error');
+    });
+
+    it('always scopes the product search to the workspace respond() was called with, ignoring any workspaceId in the tool arguments', async () => {
+      const call = makeSearchCall({ search: 'tee', workspaceId: 'attacker_workspace' });
+      const generate = vi
+        .fn()
+        .mockResolvedValueOnce({ content: '', toolCalls: [call], model: 'gpt-5.6-luna', provider: 'openai' })
+        .mockResolvedValueOnce({ content: 'Final answer.', model: 'gpt-5.6-luna', provider: 'openai' });
+      const product = makeProduct();
+      const service = makeService({ gateway: makeGateway({ generate }), product });
+
+      await service.respond(WORKSPACE_ID, CUSTOMER_ID, 'Do you have any tees?');
+
+      expect(product.list).toHaveBeenCalledWith(WORKSPACE_ID, { search: 'tee', limit: 10 });
+    });
+
+    it('reports a product-search failure back to the model as a tool-result error and continues the turn', async () => {
+      const call = makeSearchCall({ search: 'tee' });
+      const generate = vi
+        .fn()
+        .mockResolvedValueOnce({ content: '', toolCalls: [call], model: 'gpt-5.6-luna', provider: 'openai' })
+        .mockResolvedValueOnce({ content: 'Let me check on that for you.', model: 'gpt-5.6-luna', provider: 'openai' });
+      const product = makeProduct({
+        list: vi.fn(async () => {
+          throw new Error('database unavailable');
+        }),
+      });
+      const service = makeService({ gateway: makeGateway({ generate }), product });
+
+      const result = await service.respond(WORKSPACE_ID, CUSTOMER_ID, 'Do you have any tees?');
+
+      expect(result).toEqual({ answer: 'Let me check on that for you.', escalate: false });
+      expect(generate).toHaveBeenCalledTimes(2);
+      const secondRequest = generate.mock.calls[1][0] as { messages: AiMessage[] };
+      const toolMessage = secondRequest.messages.find((m) => m.role === 'tool');
+      expect(toolMessage?.content).toBe(JSON.stringify({ error: 'database unavailable' }));
     });
   });
 
