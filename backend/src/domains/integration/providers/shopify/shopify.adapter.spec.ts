@@ -316,14 +316,26 @@ describe('ShopifyAdapter', () => {
     });
   });
 
-  describe('fetchCustomers()', () => {
-    it('requests the first page with the access token header and normalizes the customer shape', async () => {
+  describe('fetchCustomers() — GraphQL', () => {
+    function graphqlCustomersResponse(
+      nodes: { id: string; email: string | null; firstName: string | null; lastName: string | null; phone: string | null; updatedAt: string }[],
+      pageInfo: { hasNextPage: boolean; endCursor: string | null } = { hasNextPage: false, endCursor: null },
+    ) {
+      return jsonResponse(200, { data: { customers: { edges: nodes.map((node) => ({ node })), pageInfo } } });
+    }
+
+    it('requests the first page over GraphQL and normalizes the customer shape (GID -> plain numeric externalId)', async () => {
       const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () =>
-        jsonResponse(200, {
-          customers: [
-            { id: 123, email: 'a@example.com', first_name: 'Ada', last_name: 'Lovelace', phone: null, updated_at: '2026-01-01T00:00:00Z' },
-          ],
-        }),
+        graphqlCustomersResponse([
+          {
+            id: 'gid://shopify/Customer/123',
+            email: 'a@example.com',
+            firstName: 'Ada',
+            lastName: 'Lovelace',
+            phone: null,
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+        ]),
       );
       vi.stubGlobal('fetch', fetchMock);
       const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
@@ -344,63 +356,65 @@ describe('ShopifyAdapter', () => {
         nextCursor: null,
       });
       const [url, init] = fetchMock.mock.calls[0];
-      expect(url).toBe('https://acme.myshopify.com/admin/api/2024-10/customers.json?limit=250');
+      expect(url).toBe('https://acme.myshopify.com/admin/api/2024-10/graphql.json');
+      expect(init?.method).toBe('POST');
       expect((init?.headers as Record<string, string>)['X-Shopify-Access-Token']).toBe('shpat_123');
+      const sentBody = JSON.parse(init?.body as string) as { query: string; variables: Record<string, unknown> };
+      expect(sentBody.query).toContain('customers(first: $first, after: $after, query: $query)');
+      expect(sentBody.variables).toEqual({ first: 250 });
     });
 
-    it('extracts the next-page URL from the Link header', async () => {
-      const nextUrl = 'https://acme.myshopify.com/admin/api/2024-10/customers.json?page_info=abc123';
-      vi.stubGlobal(
-        'fetch',
-        vi.fn(async () =>
-          jsonResponse(200, { customers: [] }, { link: `<${nextUrl}>; rel="next"` }),
-        ),
-      );
+    it('paginates using endCursor/hasNextPage — no next page yields nextCursor: null', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => graphqlCustomersResponse([], { hasNextPage: false, endCursor: 'cursorZ' })));
       const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       const page = await adapter.fetchCustomers({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
 
-      expect(page.nextCursor).toBe(nextUrl);
+      expect(page.nextCursor).toBeNull();
     });
 
-    it('fetches a subsequent page directly from the cursor URL', async () => {
-      const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => jsonResponse(200, { customers: [] }));
-      vi.stubGlobal('fetch', fetchMock);
+    it('returns endCursor as nextCursor when hasNextPage is true', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => graphqlCustomersResponse([], { hasNextPage: true, endCursor: 'cursorA' })));
       const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
-      const cursor = 'https://acme.myshopify.com/admin/api/2024-10/customers.json?page_info=abc123';
 
-      await adapter.fetchCustomers({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, cursor);
+      const page = await adapter.fetchCustomers({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
 
-      expect(fetchMock.mock.calls[0][0]).toBe(cursor);
+      expect(page.nextCursor).toBe('cursorA');
     });
 
-    it('appends updated_at_min on the first page when options.updatedAtMin is given (doc 06/20 — Incremental Synchronization)', async () => {
-      const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => jsonResponse(200, { customers: [] }));
+    it('sends the prior page cursor as the "after" variable on a subsequent page', async () => {
+      const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => graphqlCustomersResponse([]));
       vi.stubGlobal('fetch', fetchMock);
       const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
-      await adapter.fetchCustomers(
-        { shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' },
-        undefined,
-        { updatedAtMin: new Date('2026-01-01T00:00:00.000Z') },
-      );
+      await adapter.fetchCustomers({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, 'cursorA');
 
-      expect(fetchMock.mock.calls[0][0]).toBe(
-        'https://acme.myshopify.com/admin/api/2024-10/customers.json?limit=250&updated_at_min=2026-01-01T00%3A00%3A00.000Z',
-      );
+      const sentBody = JSON.parse(fetchMock.mock.calls[0][1]?.body as string) as { variables: Record<string, unknown> };
+      expect(sentBody.variables).toEqual({ first: 250, after: 'cursorA' });
     });
 
-    it('ignores options.updatedAtMin on a subsequent page — the cursor URL already carries it forward', async () => {
-      const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => jsonResponse(200, { customers: [] }));
+    it('sends options.updatedAtMin as the "query" variable on every page, not just the first (GraphQL cursors do not carry a search filter forward the way REST Link headers do)', async () => {
+      const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => graphqlCustomersResponse([]));
       vi.stubGlobal('fetch', fetchMock);
       const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
-      const cursor = 'https://acme.myshopify.com/admin/api/2024-10/customers.json?page_info=abc123&updated_at_min=2026-01-01T00%3A00%3A00.000Z';
+      const options = { updatedAtMin: new Date('2026-01-01T00:00:00.000Z') };
 
-      await adapter.fetchCustomers({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, cursor, {
-        updatedAtMin: new Date('2026-01-01T00:00:00.000Z'),
-      });
+      await adapter.fetchCustomers({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, undefined, options);
+      await adapter.fetchCustomers({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, 'cursorA', options);
 
-      expect(fetchMock.mock.calls[0][0]).toBe(cursor);
+      const firstBody = JSON.parse(fetchMock.mock.calls[0][1]?.body as string) as { variables: Record<string, unknown> };
+      const secondBody = JSON.parse(fetchMock.mock.calls[1][1]?.body as string) as { variables: Record<string, unknown> };
+      expect(firstBody.variables).toEqual({ first: 250, query: "updated_at:>='2026-01-01T00:00:00.000Z'" });
+      expect(secondBody.variables).toEqual({ first: 250, after: 'cursorA', query: "updated_at:>='2026-01-01T00:00:00.000Z'" });
+    });
+
+    it('returns an empty customer list for an empty connection', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => graphqlCustomersResponse([])));
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      const page = await adapter.fetchCustomers({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
+
+      expect(page).toEqual({ customers: [], nextCursor: null });
     });
 
     it('throws ProviderError on a non-2xx response', async () => {
@@ -426,6 +440,33 @@ describe('ShopifyAdapter', () => {
       ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
     });
 
+    it('throws ProviderError on an HTTP 200 response carrying a GraphQL errors[] body — e.g. throttled', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { errors: [{ message: 'Throttled' }] })));
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      await expect(
+        adapter.fetchCustomers({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }),
+      ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+    });
+
+    it('throws ProviderError on a malformed GraphQL response (no data, no errors)', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, {})));
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      await expect(
+        adapter.fetchCustomers({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }),
+      ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+    });
+
+    it('throws ProviderError on a response shaped correctly except customers.edges/pageInfo is missing', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { data: { customers: {} } })));
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      await expect(
+        adapter.fetchCustomers({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }),
+      ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+    });
+
     it('throws ProviderError and never calls fetch for a stored shopDomain outside myshopify.com — SSRF guard', async () => {
       const fetchMock = vi.fn();
       vi.stubGlobal('fetch', fetchMock);
@@ -437,18 +478,14 @@ describe('ShopifyAdapter', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('throws ProviderError and never calls fetch when the cursor host does not match the shop — SSRF/exfil guard', async () => {
-      const fetchMock = vi.fn();
+    it('always fetches this shop\'s own fixed GraphQL endpoint regardless of the cursor value — the cursor is an opaque variable, never a URL, so there is no host to spoof', async () => {
+      const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => graphqlCustomersResponse([]));
       vi.stubGlobal('fetch', fetchMock);
       const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
-      await expect(
-        adapter.fetchCustomers(
-          { shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' },
-          'https://attacker.example/steal',
-        ),
-      ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
-      expect(fetchMock).not.toHaveBeenCalled();
+      await adapter.fetchCustomers({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, 'https://attacker.example/steal');
+
+      expect(fetchMock.mock.calls[0][0]).toBe('https://acme.myshopify.com/admin/api/2024-10/graphql.json');
     });
   });
 

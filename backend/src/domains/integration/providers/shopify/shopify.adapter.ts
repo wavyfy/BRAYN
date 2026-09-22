@@ -26,6 +26,34 @@ const SHOPIFY_API_VERSION = '2024-10';
 const SHOPIFY_VERIFY_CONNECTION_QUERY = `{ shop { id } }`;
 
 /**
+ * fetchCustomers() (slice 2 of the REST→GraphQL migration) — requests
+ * exactly the fields normalizeCustomer() consumes, nothing more. `query`
+ * is Shopify's search-syntax filter (doc 06/20 — Incremental
+ * Synchronization); omitted entirely for an initial import that wants
+ * everything.
+ */
+const SHOPIFY_CUSTOMERS_QUERY = `
+  query FetchCustomers($first: Int!, $after: String, $query: String) {
+    customers(first: $first, after: $after, query: $query) {
+      edges {
+        node {
+          id
+          email
+          firstName
+          lastName
+          phone
+          updatedAt
+        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`;
+
+/**
  * Non-sensitive classification of a verifyConnection() outcome (doc 20
  * Part 20/22/25) — never a token/domain/full body. `category`
  * distinguishes 401 from 403 exactly (Part 22 — a combined "401_403"
@@ -210,6 +238,21 @@ interface ShopifyCustomer {
   updated_at: string;
 }
 
+/** Admin GraphQL API's `Customer` node shape — same underlying fields as ShopifyCustomer, GraphQL's own naming/typing. */
+interface ShopifyGraphqlCustomerNode {
+  id: string;
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  phone: string | null;
+  updatedAt: string;
+}
+
+interface ShopifyGraphqlCustomersConnection {
+  edges: { node: ShopifyGraphqlCustomerNode }[];
+  pageInfo: { hasNextPage: boolean; endCursor: string | null };
+}
+
 interface ShopifyVariant {
   id: number;
   sku: string | null;
@@ -370,6 +413,66 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
   }
 
   /**
+   * Shared POST to Shopify's Admin GraphQL endpoint, used by every
+   * resource-fetch method migrated off REST (fetchCustomers here, more to
+   * follow) — not a second API-client abstraction, just the one place the
+   * "fetch, reject non-2xx, reject a 200 carrying errors[], reject a
+   * malformed body" sequence lives, mirroring what fetchPage() already
+   * does for the REST methods. Credentials were already verified at
+   * connect time (verifyConnection/OAuth callback) — same convention as
+   * fetchPage(): any failure here is an infrastructure/auth problem and
+   * always throws, never returns a partial/empty result to swallow.
+   */
+  private async graphqlRequest(
+    credentials: Record<string, string>,
+    query: string,
+    variables: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const { shopDomain, accessToken } = credentials;
+    if (!SHOPIFY_DOMAIN_PATTERN.test(shopDomain)) {
+      throw new ProviderError('Stored Shopify shop domain is invalid.');
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(`https://${shopDomain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+        method: 'POST',
+        headers: {
+          'X-Shopify-Access-Token': accessToken,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ query, variables }),
+      });
+    } catch (error) {
+      throw new ProviderError(
+        `Could not reach Shopify: ${error instanceof Error ? error.message : 'unknown network error'}.`,
+      );
+    }
+    if (!response.ok) {
+      throw new ProviderError(`Shopify GraphQL request failed with status ${response.status}.`);
+    }
+
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      throw new ProviderError('Shopify returned a malformed GraphQL response.');
+    }
+
+    const graphqlErrors = extractGraphqlErrors(body);
+    if (graphqlErrors) {
+      throw new ProviderError(`Shopify GraphQL request returned errors: ${graphqlErrors}`);
+    }
+    const data = (body as { data?: unknown } | null)?.data;
+    if (!data || typeof data !== 'object') {
+      throw new ProviderError('Shopify GraphQL response had no data.');
+    }
+
+    return data as Record<string, unknown>;
+  }
+
+  /**
    * Smallest real Shopify API call that proves the token actually works:
    * the Admin GraphQL API's `shop { id }` query — Shopify's own
    * canonical "is this token valid" check, now GraphQL-backed (App Store
@@ -472,21 +575,53 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
 
   /**
    * One page of the merchant's customers (doc 20 — Initial Import:
-   * pagination). `cursor`, when present, is the exact next-page URL
-   * Shopify returned in its previous response's `Link` header — simpler
-   * and less error-prone than re-deriving Shopify's `page_info` query
-   * param ourselves, and matches ImportRunService's "opaque provider-
-   * specific" cursor contract.
+   * pagination), GraphQL-backed (migration slice 2). `cursor`, when
+   * present, is Shopify's opaque `endCursor` — never a URL, so there is
+   * nothing to SSRF-validate the way `fetchPage()`'s REST Link-header
+   * cursor needs `assertCursorMatchesShop` for: every call here always
+   * hits this shop's own fixed GraphQL endpoint regardless of the cursor
+   * value.
+   *
+   * Unlike REST (where Shopify's `Link` header carries the original
+   * `updated_at_min` forward automatically), a GraphQL cursor does not
+   * encode the search filter that produced it — `options.updatedAtMin`
+   * must be resent as the `query` argument on every page, not just the
+   * first. Every caller (ImportProcessorService, SyncProcessorService,
+   * ReconciliationProcessorService) already passes the same `options`
+   * object on every iteration of its pagination loop, so this is a
+   * behavior change forced by the pagination model itself, not a
+   * regression.
+   *
+   * Reuses normalizeCustomer() unchanged by converting the GraphQL node
+   * into the same shape the REST/webhook path already produces — the
+   * `id` field is Shopify's GID (e.g. `gid://shopify/Customer/123`), not
+   * the plain numeric REST id, so it's converted back to the bare numeric
+   * id here specifically so externalId stays identical to what a
+   * REST-sourced or webhook-sourced customer record already produces
+   * (doc 06 — a provider's external id must be stable across every
+   * ingestion path, or the same real customer would import as a
+   * duplicate).
    */
   async fetchCustomers(credentials: Record<string, string>, cursor?: string, options?: FetchOptions): Promise<CustomerPage> {
-    const { body, nextCursor } = await this.fetchPage(
-      credentials,
-      cursor,
-      `customers.json?limit=${CUSTOMERS_PAGE_SIZE}${updatedAtMinParam(options)}`,
-    );
-    const { customers } = body as { customers: ShopifyCustomer[] };
+    const variables: Record<string, unknown> = { first: CUSTOMERS_PAGE_SIZE };
+    if (cursor) {
+      variables.after = cursor;
+    }
+    const queryFilter = shopifyUpdatedAtQueryFilter(options);
+    if (queryFilter) {
+      variables.query = queryFilter;
+    }
 
-    return { customers: customers.map(normalizeCustomer), nextCursor };
+    const data = await this.graphqlRequest(credentials, SHOPIFY_CUSTOMERS_QUERY, variables);
+    const customers = (data as { customers?: ShopifyGraphqlCustomersConnection }).customers;
+    if (!customers || !Array.isArray(customers.edges) || !customers.pageInfo) {
+      throw new ProviderError('Shopify GraphQL customers response had an unexpected shape.');
+    }
+
+    return {
+      customers: customers.edges.map((edge) => normalizeCustomer(graphqlCustomerToRestShape(edge.node))),
+      nextCursor: customers.pageInfo.hasNextPage ? (customers.pageInfo.endCursor ?? null) : null,
+    };
   }
 
   /** Same contract/pagination as fetchCustomers, for products and their variants (doc 20 Shopify Phase 1 Data). */
@@ -727,6 +862,32 @@ const SHOPIFY_WEBHOOK_TOPICS: Record<string, 'customer' | 'product' | 'order' | 
  */
 function updatedAtMinParam(options?: FetchOptions): string {
   return options?.updatedAtMin ? `&updated_at_min=${encodeURIComponent(options.updatedAtMin.toISOString())}` : '';
+}
+
+/** Shopify's search-syntax equivalent of REST's `updated_at_min` param — quoted, since the DSL tokenizes on the colons in an ISO timestamp otherwise. */
+function shopifyUpdatedAtQueryFilter(options?: FetchOptions): string | undefined {
+  return options?.updatedAtMin ? `updated_at:>='${options.updatedAtMin.toISOString()}'` : undefined;
+}
+
+/** A GraphQL id is `gid://shopify/<Type>/<numericId>` — extracts the trailing numeric id so it matches the plain numeric id REST/webhook payloads already produce for the same record (see fetchCustomers doc comment). */
+function shopifyGidToNumericId(gid: string): number {
+  const match = /\/(\d+)$/.exec(gid);
+  if (!match) {
+    throw new ProviderError('Shopify returned an unrecognized GraphQL id format.');
+  }
+  return Number(match[1]);
+}
+
+/** Converts a GraphQL customer node into the REST payload shape so normalizeCustomer() — shared with the REST/webhook path — needs no GraphQL-specific branch. */
+function graphqlCustomerToRestShape(node: ShopifyGraphqlCustomerNode): ShopifyCustomer {
+  return {
+    id: shopifyGidToNumericId(node.id),
+    email: node.email,
+    first_name: node.firstName,
+    last_name: node.lastName,
+    phone: node.phone,
+    updated_at: node.updatedAt,
+  };
 }
 
 function normalizeCustomer(customer: ShopifyCustomer): NormalizedCustomer {
