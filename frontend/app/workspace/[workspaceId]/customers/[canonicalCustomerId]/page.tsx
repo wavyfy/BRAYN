@@ -6,6 +6,7 @@ import { RecalculateHealthButton } from './recalculate-health-button';
 import { DetectOpportunitiesButton } from './detect-opportunities-button';
 import { GenerateRecommendationsButton } from './generate-recommendations-button';
 import { DismissRecommendationButton } from './dismiss-recommendation-button';
+import { AskBraynCard } from './ask-brayn-card';
 
 type CustomerRecord = {
   canonicalCustomerId: string;
@@ -328,6 +329,15 @@ export default async function CustomerDetailPage({
               </ul>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Ask BRAYN</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <AskBraynCard workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} />
         </CardContent>
       </Card>
     </main>
