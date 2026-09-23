@@ -1,12 +1,15 @@
 import { Injectable } from '@nestjs/common';
+import { OnEvent } from '@nestjs/event-emitter';
 import { and, eq } from 'drizzle-orm';
 import { customerHealthStates } from '../../database/schema/customer-health-states';
 import { customerHealthStateHistory } from '../../database/schema/customer-health-state-history';
 import { DatabaseService } from '../../database/database.service';
 import { NotFoundError } from '../../common/errors/app-error';
-import { createEvent } from '../../common/events/domain-event';
+import { createEvent, type DomainEvent } from '../../common/events/domain-event';
 import { EventBus } from '../../common/events/event-bus.service';
+import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import { CustomerIntelligenceService, type BehaviouralContext } from '../customer-intelligence/customer-intelligence.service';
+import type { OrderCreatedPayload } from '../integration/webhook-event-processor.service';
 
 /** Doc10 — "Health changes should publish events for dependent intelligence and automation" (doc16 trigger: "Customer Risk & Engagement State changes"). */
 export interface CustomerHealthRecalculatedPayload {
@@ -80,16 +83,21 @@ export interface CustomerHealthState {
  * available, so the withheld score is still explainable (doc10's own
  * requirement).
  *
- * Recalculation is on-demand only (`recalculate()`) — doc10's "event-
- * driven recalculation" (wiring this into every order/customer-change
- * touchpoint) and "daily recalculation" (a scheduler) are real
+ * Recalculation is triggered two ways: manually via `recalculate()`
+ * (merchant-triggered button, Phase 8), and automatically on
+ * `order.created` (doc10 lists "Order Placed" as a significant Customer
+ * Health event; emitted only for a webhook-delivered order that was
+ * genuinely just inserted — see WebhookEventProcessorService's
+ * OrderCreatedPayload doc comment). doc10's "event-driven recalculation"
+ * still means *every* order/customer-change touchpoint, not just this
+ * one — the order-placed touchpoint is the first piece built, not the
+ * whole of it; "daily recalculation" (a scheduler) remains real
  * additional scope, deliberately deferred rather than built speculatively
- * (doc18 — "Do not introduce... Schedulers... speculatively"). That
- * deferral is about what *triggers* a recalculation — separately, every
- * completed recalculation now emits `customer_health.recalculated` (doc10
- * — "Health changes should publish events for dependent intelligence and
- * automation"), so downstream consumers (Business Action Automation) have
- * a real trigger once one is built. No handler exists yet.
+ * (doc18 — "Do not introduce... Schedulers... speculatively"). Every
+ * completed recalculation, however triggered, emits
+ * `customer_health.recalculated` (doc10 — "Health changes should publish
+ * events for dependent intelligence and automation"), which
+ * `AutomationService` already consumes (Phase 15) — unchanged by this.
  */
 @Injectable()
 export class CustomerHealthService {
@@ -97,7 +105,34 @@ export class CustomerHealthService {
     private readonly database: DatabaseService,
     private readonly customerIntelligenceService: CustomerIntelligenceService,
     private readonly eventBus: EventBus,
+    private readonly logger: StructuredLoggerService,
   ) {}
+
+  /**
+   * `order.created` is only emitted for a genuinely new order (see
+   * OrderCreatedPayload's doc comment) — a retried/replayed webhook
+   * delivery naturally yields no event to react to here, so no separate
+   * dedup check is needed on this side either. Runs in-process, in the
+   * same tick as the emitting webhook processor (EventBus is synchronous
+   * EventEmitter2), so a failure here must never surface as a failure of
+   * that processor's own webhook-delivery retry/dead-letter handling —
+   * same fire-and-forget boundary `AutomationService`'s event handlers
+   * already rely on.
+   */
+  @OnEvent('order.created')
+  async handleOrderCreated(event: DomainEvent<OrderCreatedPayload>): Promise<void> {
+    if (!event.workspaceId) return;
+    const { canonicalCustomerId } = event.payload;
+
+    try {
+      await this.recalculate(event.workspaceId, canonicalCustomerId);
+    } catch (error) {
+      this.logger.event('error', 'Health recalculation on order.created threw unexpectedly', 'CustomerHealthService', {
+        canonicalCustomerId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   async recalculate(workspaceId: string, canonicalCustomerId: string): Promise<CustomerHealthState> {
     const customer = await this.customerIntelligenceService.getCustomer(workspaceId, canonicalCustomerId);

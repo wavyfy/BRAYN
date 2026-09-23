@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
+import { withRetry } from '../../common/async/retry';
 import type { DomainEvent } from '../../common/events/domain-event';
 import { CustomerService } from '../commerce/customer.service';
 import { ProductService } from '../commerce/product.service';
@@ -35,13 +36,19 @@ export interface ImportRequestedPayload {
  * ponytail: `cursor` tracks only the resource currently being paginated —
  * a run that fails mid-products still restarts customers from page 1 on
  * retry (upserts are idempotent, so this is wasted work, not wrong data).
- * True per-resource resumability is deferred to the "Retry/error handling"
- * part (doc 19), once retry itself exists.
+ * True per-resource *run-level* resumability (resuming a failed run from
+ * where it left off) remains deferred — a separate, larger concern from
+ * the per-page retry below.
  *
- * ponytail: a page whose upsert throws counts every record on that page as
- * failed rather than isolating which record broke — per-record partial
- * failure needs re-fetching/re-validating individually, add when a real
- * provider payload demonstrates it's needed.
+ * Each page's upsert (doc 19 Phase 17 "Retry/error handling") now retries
+ * transient failures via the existing `withRetry()` utility (same one
+ * `WebhookEventProcessorService` already uses) before counting the page
+ * as failed — a single transient DB blip no longer permanently fails an
+ * otherwise-healthy page. A page whose upsert still throws after retries
+ * are exhausted counts every record on that page as failed rather than
+ * isolating which record broke — per-record partial failure needs
+ * re-fetching/re-validating individually, add when a real provider
+ * payload demonstrates it's needed.
  */
 @Injectable()
 export class ImportProcessorService {
@@ -117,8 +124,12 @@ export class ImportProcessorService {
     do {
       const page = await adapter.fetchCustomers!(credentials, cursor);
       try {
-        imported += await this.customerService.upsertMany(workspaceId, integrationId, provider, page.customers);
-        await this.identityResolutionService.resolveMany(workspaceId, provider, page.customers.map((c) => c.externalId));
+        const written = await withRetry(async () => {
+          const count = await this.customerService.upsertMany(workspaceId, integrationId, provider, page.customers);
+          await this.identityResolutionService.resolveMany(workspaceId, provider, page.customers.map((c) => c.externalId));
+          return count;
+        });
+        imported += written;
       } catch {
         failed += page.customers.length;
       }
@@ -146,7 +157,7 @@ export class ImportProcessorService {
     do {
       const page = await adapter.fetchProducts!(credentials, cursor);
       try {
-        const result = await this.productService.upsertMany(workspaceId, integrationId, provider, page.products);
+        const result = await withRetry(() => this.productService.upsertMany(workspaceId, integrationId, provider, page.products));
         imported += result.productsWritten;
       } catch {
         failed += page.products.length;
@@ -175,7 +186,7 @@ export class ImportProcessorService {
     do {
       const page = await adapter.fetchOrders!(credentials, cursor);
       try {
-        const result = await this.orderService.upsertMany(workspaceId, integrationId, provider, page.orders);
+        const result = await withRetry(() => this.orderService.upsertMany(workspaceId, integrationId, provider, page.orders));
         imported += result.ordersWritten;
       } catch {
         failed += page.orders.length;
@@ -204,7 +215,7 @@ export class ImportProcessorService {
     do {
       const page = await adapter.fetchCollections!(credentials, cursor);
       try {
-        imported += await this.collectionService.upsertMany(workspaceId, integrationId, provider, page.collections);
+        imported += await withRetry(() => this.collectionService.upsertMany(workspaceId, integrationId, provider, page.collections));
       } catch {
         failed += page.collections.length;
       }
@@ -232,7 +243,7 @@ export class ImportProcessorService {
     do {
       const page = await adapter.fetchCollects!(credentials, cursor);
       try {
-        imported += await this.collectionService.upsertCollects(workspaceId, integrationId, provider, page.collects);
+        imported += await withRetry(() => this.collectionService.upsertCollects(workspaceId, integrationId, provider, page.collects));
       } catch {
         failed += page.collects.length;
       }

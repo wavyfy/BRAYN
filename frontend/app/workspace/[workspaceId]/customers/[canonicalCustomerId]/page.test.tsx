@@ -85,4 +85,11 @@ describe('CustomerDetailPage — Website Behaviour (Phase 8)', () => {
 
     expect(screen.getByText('No activity yet.')).toBeTruthy();
   });
+
+  it('(1) renders the Ask BRAYN action', async () => {
+    render(await renderPage(baseCustomer));
+
+    expect(screen.getByRole('heading', { name: 'Ask BRAYN' })).toBeTruthy();
+    expect(screen.getByLabelText('Ask a question about this customer')).toBeTruthy();
+  });
 });

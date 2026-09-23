@@ -81,9 +81,26 @@ export class OrderService {
     integrationId: string,
     provider: IntegrationProvider,
     orders: NormalizedOrder[],
-  ): Promise<{ ordersWritten: number; lineItemsWritten: number; refundsWritten: number; fulfillmentsWritten: number }> {
+  ): Promise<{
+    ordersWritten: number;
+    lineItemsWritten: number;
+    refundsWritten: number;
+    fulfillmentsWritten: number;
+    /**
+     * Canonical customer ids for orders that were freshly inserted this
+     * call (not an update to a pre-existing order), deduped, for a
+     * caller that wants to react only to a genuinely new order (doc10 —
+     * "Order Placed" as a significant Customer Health event). Only
+     * populated for a customer that Identity Resolution has already
+     * linked to a canonical identity (`commerceCustomers.canonicalCustomerId`
+     * non-null) — a not-yet-resolved or guest-checkout order yields
+     * nothing here, same "don't guess" boundary every other canonical-id
+     * consumer in this codebase already follows.
+     */
+    newOrderCanonicalCustomerIds: string[];
+  }> {
     if (orders.length === 0) {
-      return { ordersWritten: 0, lineItemsWritten: 0, refundsWritten: 0, fulfillmentsWritten: 0 };
+      return { ordersWritten: 0, lineItemsWritten: 0, refundsWritten: 0, fulfillmentsWritten: 0, newOrderCanonicalCustomerIds: [] };
     }
 
     const customerIdByExternalId = await this.lookupIds(
@@ -115,9 +132,30 @@ export class OrderService {
           updatedAt: new Date(),
         },
       })
-      .returning({ id: commerceOrders.id, externalId: commerceOrders.externalId });
+      .returning({
+        id: commerceOrders.id,
+        externalId: commerceOrders.externalId,
+        createdAt: commerceOrders.createdAt,
+        updatedAt: commerceOrders.updatedAt,
+      });
 
     const orderIdByExternalId = new Map(orderRows.map((row) => [row.externalId, row.id]));
+    /**
+     * `createdAt === updatedAt` means this row was inserted, not updated,
+     * by this call — both columns default to the same `now()` on INSERT,
+     * while the ON CONFLICT branch above explicitly bumps only
+     * `updatedAt`. This is the only signal used to distinguish a new
+     * order from an update — no webhook-topic string (Shopify's
+     * `orders/create` vs `orders/updated`) is inspected here, keeping
+     * this provider-agnostic (doc06 — Provider Isolation) and correctly
+     * idempotent on a retried/replayed delivery: a retry's upsert always
+     * hits the ON CONFLICT branch for an order this call already
+     * inserted, so `newOrderCanonicalCustomerIds` never repeats an id for
+     * the same real order across retries.
+     */
+    const newlyInsertedOrderExternalIds = new Set(
+      orderRows.filter((row) => row.createdAt.getTime() === row.updatedAt.getTime()).map((row) => row.externalId),
+    );
 
     const variantIdByExternalId = await this.lookupIds(
       commerceProductVariants,
@@ -183,7 +221,35 @@ export class OrderService {
     });
     const fulfillmentsWritten = await this.writeFulfillments(workspaceId, integrationId, provider, fulfillmentRows);
 
-    return { ordersWritten: orders.length, lineItemsWritten: lineItemValues.length, refundsWritten, fulfillmentsWritten };
+    const newOrderCanonicalCustomerIds = await this.resolveCanonicalCustomerIds(
+      orders
+        .filter((order) => newlyInsertedOrderExternalIds.has(order.externalId) && order.customerExternalId)
+        .map((order) => customerIdByExternalId.get(order.customerExternalId!))
+        .filter((customerId): customerId is string => customerId !== undefined),
+    );
+
+    return {
+      ordersWritten: orders.length,
+      lineItemsWritten: lineItemValues.length,
+      refundsWritten,
+      fulfillmentsWritten,
+      newOrderCanonicalCustomerIds,
+    };
+  }
+
+  /** Resolves internal commerce_customers ids to their linked canonical identity, deduped — omits any id Identity Resolution hasn't linked yet (`canonicalCustomerId IS NULL`). */
+  private async resolveCanonicalCustomerIds(customerIds: string[]): Promise<string[]> {
+    const uniqueCustomerIds = [...new Set(customerIds)];
+    if (uniqueCustomerIds.length === 0) {
+      return [];
+    }
+
+    const rows = await this.database.client
+      .select({ canonicalCustomerId: commerceCustomers.canonicalCustomerId })
+      .from(commerceCustomers)
+      .where(inArray(commerceCustomers.id, uniqueCustomerIds));
+
+    return [...new Set(rows.map((row) => row.canonicalCustomerId).filter((id): id is string => id !== null))];
   }
 
   /**

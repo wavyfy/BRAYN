@@ -196,6 +196,196 @@ describe('ImportProcessorService', () => {
     expect(importRunService.completeImportRun).toHaveBeenCalledWith('run_1');
   });
 
+  describe('per-page retry (doc 19 Phase 17 — Retry/error handling)', () => {
+    it('retries a transient upsert failure and succeeds on the second attempt, without double-counting the page', async () => {
+      const page: CustomerPage = {
+        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        nextCursor: null,
+      };
+      const fetchCustomers = vi.fn(async () => page);
+      const registry = { get: vi.fn(() => ({ fetchCustomers }) as unknown as ProviderAdapter) } as unknown as ProviderRegistry;
+      const importRunService = {
+        recordProgress: vi.fn(async () => undefined),
+        completeImportRun: vi.fn(async () => undefined),
+        failImportRun: vi.fn(async () => undefined),
+      } as unknown as ImportRunService;
+      const integrationService = { getCredentials: vi.fn(async () => credentials) } as unknown as IntegrationService;
+      const customerService = {
+        upsertMany: vi.fn().mockRejectedValueOnce(new Error('db blip')).mockResolvedValueOnce(1),
+      } as unknown as CustomerService;
+      const identityResolutionService = makeIdentityResolutionService();
+      const processor = new ImportProcessorService(
+        registry,
+        importRunService,
+        integrationService,
+        customerService,
+        makeProductService(),
+        makeOrderService(),
+        makeCollectionService(),
+        identityResolutionService,
+      );
+
+      await processor.handleImportRequested(makeEvent());
+
+      expect(customerService.upsertMany).toHaveBeenCalledTimes(2);
+      // resolveMany only runs after upsertMany succeeds inside the same retry attempt — not once per failed attempt.
+      expect(identityResolutionService.resolveMany).toHaveBeenCalledTimes(1);
+      expect(importRunService.recordProgress).toHaveBeenCalledWith('run_1', { recordsImported: 1, recordsFailed: 0, cursor: undefined });
+      expect(importRunService.completeImportRun).toHaveBeenCalledWith('run_1');
+      expect(importRunService.failImportRun).not.toHaveBeenCalled();
+    });
+
+    it('retries a transient upsert failure and succeeds on the third attempt', async () => {
+      const page: CustomerPage = {
+        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        nextCursor: null,
+      };
+      const fetchCustomers = vi.fn(async () => page);
+      const registry = { get: vi.fn(() => ({ fetchCustomers }) as unknown as ProviderAdapter) } as unknown as ProviderRegistry;
+      const importRunService = {
+        recordProgress: vi.fn(async () => undefined),
+        completeImportRun: vi.fn(async () => undefined),
+        failImportRun: vi.fn(async () => undefined),
+      } as unknown as ImportRunService;
+      const integrationService = { getCredentials: vi.fn(async () => credentials) } as unknown as IntegrationService;
+      const customerService = {
+        upsertMany: vi
+          .fn()
+          .mockRejectedValueOnce(new Error('db blip 1'))
+          .mockRejectedValueOnce(new Error('db blip 2'))
+          .mockResolvedValueOnce(1),
+      } as unknown as CustomerService;
+      const processor = new ImportProcessorService(
+        registry,
+        importRunService,
+        integrationService,
+        customerService,
+        makeProductService(),
+        makeOrderService(),
+        makeCollectionService(),
+        makeIdentityResolutionService(),
+      );
+
+      await processor.handleImportRequested(makeEvent());
+
+      expect(customerService.upsertMany).toHaveBeenCalledTimes(3);
+      expect(importRunService.recordProgress).toHaveBeenCalledWith('run_1', { recordsImported: 1, recordsFailed: 0, cursor: undefined });
+      expect(importRunService.completeImportRun).toHaveBeenCalledWith('run_1');
+    });
+
+    it('exhausts retries (3 attempts, matching withRetry()\'s default) then reaches the existing failed-page path, run still completes', async () => {
+      const page: CustomerPage = {
+        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        nextCursor: null,
+      };
+      const fetchCustomers = vi.fn(async () => page);
+      const registry = { get: vi.fn(() => ({ fetchCustomers }) as unknown as ProviderAdapter) } as unknown as ProviderRegistry;
+      const importRunService = {
+        recordProgress: vi.fn(async () => undefined),
+        completeImportRun: vi.fn(async () => undefined),
+        failImportRun: vi.fn(async () => undefined),
+      } as unknown as ImportRunService;
+      const integrationService = { getCredentials: vi.fn(async () => credentials) } as unknown as IntegrationService;
+      const customerService = {
+        upsertMany: vi.fn(async () => {
+          throw new Error('persistent constraint violation');
+        }),
+      } as unknown as CustomerService;
+      const processor = new ImportProcessorService(
+        registry,
+        importRunService,
+        integrationService,
+        customerService,
+        makeProductService(),
+        makeOrderService(),
+        makeCollectionService(),
+        makeIdentityResolutionService(),
+      );
+
+      await processor.handleImportRequested(makeEvent());
+
+      expect(customerService.upsertMany).toHaveBeenCalledTimes(3);
+      expect(importRunService.recordProgress).toHaveBeenCalledWith('run_1', { recordsImported: 0, recordsFailed: 1, cursor: undefined });
+      expect(importRunService.completeImportRun).toHaveBeenCalledWith('run_1');
+      expect(importRunService.failImportRun).not.toHaveBeenCalled();
+    });
+
+    it('continues pagination correctly after a retried first page succeeds — the second page is fetched with the correct cursor and counted', async () => {
+      const page1: CustomerPage = {
+        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        nextCursor: 'cursor_2',
+      };
+      const page2: CustomerPage = {
+        customers: [{ externalId: '2', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        nextCursor: null,
+      };
+      const fetchCustomers = vi.fn(async (_creds: unknown, cursor?: string) => (cursor ? page2 : page1));
+      const registry = { get: vi.fn(() => ({ fetchCustomers }) as unknown as ProviderAdapter) } as unknown as ProviderRegistry;
+      const importRunService = {
+        recordProgress: vi.fn(async () => undefined),
+        completeImportRun: vi.fn(async () => undefined),
+        failImportRun: vi.fn(async () => undefined),
+      } as unknown as ImportRunService;
+      const integrationService = { getCredentials: vi.fn(async () => credentials) } as unknown as IntegrationService;
+      const customerService = {
+        // Page 1 fails once then succeeds; page 2 succeeds on its first attempt.
+        upsertMany: vi.fn().mockRejectedValueOnce(new Error('db blip')).mockResolvedValueOnce(1).mockResolvedValueOnce(1),
+      } as unknown as CustomerService;
+      const processor = new ImportProcessorService(
+        registry,
+        importRunService,
+        integrationService,
+        customerService,
+        makeProductService(),
+        makeOrderService(),
+        makeCollectionService(),
+        makeIdentityResolutionService(),
+      );
+
+      await processor.handleImportRequested(makeEvent());
+
+      expect(fetchCustomers).toHaveBeenCalledTimes(2);
+      expect(fetchCustomers).toHaveBeenNthCalledWith(1, credentials, undefined);
+      expect(fetchCustomers).toHaveBeenNthCalledWith(2, credentials, 'cursor_2');
+      expect(customerService.upsertMany).toHaveBeenCalledTimes(3); // page 1: 2 attempts, page 2: 1 attempt
+      expect(importRunService.recordProgress).toHaveBeenNthCalledWith(1, 'run_1', { recordsImported: 1, recordsFailed: 0, cursor: 'cursor_2' });
+      expect(importRunService.recordProgress).toHaveBeenNthCalledWith(2, 'run_1', { recordsImported: 2, recordsFailed: 0, cursor: undefined });
+    });
+
+    it('applies the same retry-then-succeed pattern to fetchProducts', async () => {
+      const page: ProductPage = { products: [{ externalId: '55', title: 'Tee', sourceUpdatedAt: null, variants: [] }], nextCursor: null };
+      const fetchProducts = vi.fn(async () => page);
+      const registry = { get: vi.fn(() => ({ fetchProducts }) as unknown as ProviderAdapter) } as unknown as ProviderRegistry;
+      const importRunService = {
+        recordProgress: vi.fn(async () => undefined),
+        completeImportRun: vi.fn(async () => undefined),
+        failImportRun: vi.fn(async () => undefined),
+      } as unknown as ImportRunService;
+      const integrationService = { getCredentials: vi.fn(async () => credentials) } as unknown as IntegrationService;
+      const productService = {
+        upsertMany: vi
+          .fn()
+          .mockRejectedValueOnce(new Error('db blip'))
+          .mockResolvedValueOnce({ productsWritten: 1, variantsWritten: 0 }),
+      } as unknown as ProductService;
+      const processor = new ImportProcessorService(
+        registry,
+        importRunService,
+        integrationService,
+        { upsertMany: vi.fn() } as unknown as CustomerService,
+        productService,
+        makeOrderService(),
+        makeCollectionService(),
+        makeIdentityResolutionService(),
+      );
+
+      await processor.handleImportRequested(makeEvent());
+
+      expect(productService.upsertMany).toHaveBeenCalledTimes(2);
+      expect(importRunService.recordProgress).toHaveBeenCalledWith('run_1', { recordsImported: 1, recordsFailed: 0, cursor: undefined });
+    });
+  });
+
   it('imports customers then products in the same run, with cumulative progress', async () => {
     const customerPage: CustomerPage = {
       customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],

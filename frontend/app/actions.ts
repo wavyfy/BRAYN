@@ -56,6 +56,17 @@ export async function dismissRecommendation(workspaceId: string, canonicalCustom
   });
 }
 
+export async function askMerchantBusinessAnalyst(
+  workspaceId: string,
+  question: string,
+  customerId?: string,
+): Promise<{ answer: string }> {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/merchant-business-analyst/ask`, {
+    method: 'POST',
+    body: JSON.stringify({ question, customerId }),
+  });
+}
+
 export async function createKnowledgeEntry(workspaceId: string, type: 'knowledge' | 'policy', title: string, content: string) {
   return apiFetch(`/api/v1/workspaces/${workspaceId}/knowledge`, {
     method: 'POST',
@@ -73,11 +84,12 @@ export async function updateKnowledgeEntry(workspaceId: string, entryId: string,
 export async function createAutomation(
   workspaceId: string,
   name: string,
+  triggerType?: 'revenue_opportunity.created' | 'customer_health.recalculated',
   conditions?: { priorityIn?: string[]; typeIn?: string[] },
 ) {
   return apiFetch(`/api/v1/workspaces/${workspaceId}/automations`, {
     method: 'POST',
-    body: JSON.stringify({ name, conditions }),
+    body: JSON.stringify({ name, triggerType, conditions }),
   });
 }
 
