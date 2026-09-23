@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
+import { withRetry } from '../../common/async/retry';
 import type { DomainEvent } from '../../common/events/domain-event';
 import { CustomerService } from '../commerce/customer.service';
 import { ProductService } from '../commerce/product.service';
@@ -42,9 +43,14 @@ interface ReconcileCounts {
  * surface. Duplicate-record and deep state-mismatch detection from doc 20's
  * list aren't reachable through Shopify's list APIs the same way; add if a
  * real provider payload demonstrates the gap.
- * ponytail: a page whose upsert throws counts its discrepancies as found
- * but not repaired (mirrors ImportProcessorService's per-page failure
- * handling) rather than isolating which record broke.
+ * Each page's repair-upsert now retries a transient failure first, via
+ * the existing `withRetry()` utility (doc 19 Phase 17 "Retry/error
+ * handling"), before it's left counted as found-but-not-repaired.
+ *
+ * ponytail: a page whose upsert still throws after retries are exhausted
+ * counts its discrepancies as found but not repaired (mirrors
+ * ImportProcessorService's per-page failure handling) rather than
+ * isolating which record broke.
  */
 @Injectable()
 export class ReconciliationProcessorService {
@@ -130,8 +136,10 @@ export class ReconciliationProcessorService {
       const discrepancies = page.customers.filter((c) => isDiscrepancy(existing.get(c.externalId), c.sourceUpdatedAt)).length;
 
       try {
-        await this.customerService.upsertMany(workspaceId, integrationId, provider, page.customers);
-        await this.identityResolutionService.resolveMany(workspaceId, provider, page.customers.map((c) => c.externalId));
+        await withRetry(async () => {
+          await this.customerService.upsertMany(workspaceId, integrationId, provider, page.customers);
+          await this.identityResolutionService.resolveMany(workspaceId, provider, page.customers.map((c) => c.externalId));
+        });
         repaired += discrepancies;
       } catch {
         // Leave `found` counted but not repaired — mirrors ImportProcessorService's per-page failure tolerance.
@@ -172,7 +180,7 @@ export class ReconciliationProcessorService {
       const discrepancies = page.products.filter((p) => isDiscrepancy(existing.get(p.externalId), p.sourceUpdatedAt)).length;
 
       try {
-        await this.productService.upsertMany(workspaceId, integrationId, provider, page.products);
+        await withRetry(() => this.productService.upsertMany(workspaceId, integrationId, provider, page.products));
         repaired += discrepancies;
       } catch {
         // Leave `found` counted but not repaired — mirrors ImportProcessorService's per-page failure tolerance.
@@ -213,7 +221,7 @@ export class ReconciliationProcessorService {
       const discrepancies = page.orders.filter((o) => isDiscrepancy(existing.get(o.externalId), o.sourceUpdatedAt)).length;
 
       try {
-        await this.orderService.upsertMany(workspaceId, integrationId, provider, page.orders);
+        await withRetry(() => this.orderService.upsertMany(workspaceId, integrationId, provider, page.orders));
         repaired += discrepancies;
       } catch {
         // Leave `found` counted but not repaired — mirrors ImportProcessorService's per-page failure tolerance.
@@ -254,7 +262,7 @@ export class ReconciliationProcessorService {
       const discrepancies = page.collections.filter((c) => isDiscrepancy(existing.get(c.externalId), c.sourceUpdatedAt)).length;
 
       try {
-        await this.collectionService.upsertMany(workspaceId, integrationId, provider, page.collections);
+        await withRetry(() => this.collectionService.upsertMany(workspaceId, integrationId, provider, page.collections));
         repaired += discrepancies;
       } catch {
         // Leave `found` counted but not repaired — mirrors ImportProcessorService's per-page failure tolerance.
@@ -296,7 +304,7 @@ export class ReconciliationProcessorService {
     do {
       const page = await adapter.fetchCollects!(credentials, cursor);
       try {
-        repaired += await this.collectionService.upsertCollects(workspaceId, integrationId, provider, page.collects);
+        repaired += await withRetry(() => this.collectionService.upsertCollects(workspaceId, integrationId, provider, page.collects));
       } catch {
         // Leave this page's collects uncounted as repaired — mirrors ImportProcessorService's per-page failure tolerance.
       }

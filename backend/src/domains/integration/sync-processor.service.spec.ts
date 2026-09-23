@@ -283,6 +283,162 @@ describe('SyncProcessorService', () => {
     expect(integrationService.completeSync).not.toHaveBeenCalled();
   });
 
+  describe('per-page retry (doc 19 Phase 17 — Retry/error handling)', () => {
+    it('retries a transient upsert failure and succeeds on the second attempt, then completes the sync', async () => {
+      const page: CustomerPage = {
+        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        nextCursor: null,
+      };
+      const fetchCustomers = vi.fn(async () => page);
+      const registry = { get: vi.fn(() => ({ fetchCustomers }) as unknown as ProviderAdapter) } as unknown as ProviderRegistry;
+      const integrationService = makeIntegrationService();
+      const customerService = {
+        upsertMany: vi.fn().mockRejectedValueOnce(new Error('db blip')).mockResolvedValueOnce(1),
+      } as unknown as CustomerService;
+      const identityResolutionService = makeIdentityResolutionService();
+      const processor = new SyncProcessorService(
+        registry,
+        integrationService as unknown as IntegrationService,
+        customerService,
+        makeProductService(),
+        makeOrderService(),
+        makeCollectionService(),
+        identityResolutionService,
+      );
+
+      await processor.handleSyncRequested(makeEvent());
+
+      expect(customerService.upsertMany).toHaveBeenCalledTimes(2);
+      expect(identityResolutionService.resolveMany).toHaveBeenCalledTimes(1);
+      expect(integrationService.completeSync).toHaveBeenCalledWith('ws_1', 'shopify');
+      expect(integrationService.failSync).not.toHaveBeenCalled();
+    });
+
+    it('retries a transient upsert failure and succeeds on the third attempt', async () => {
+      const page: CustomerPage = {
+        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        nextCursor: null,
+      };
+      const fetchCustomers = vi.fn(async () => page);
+      const registry = { get: vi.fn(() => ({ fetchCustomers }) as unknown as ProviderAdapter) } as unknown as ProviderRegistry;
+      const integrationService = makeIntegrationService();
+      const customerService = {
+        upsertMany: vi
+          .fn()
+          .mockRejectedValueOnce(new Error('db blip 1'))
+          .mockRejectedValueOnce(new Error('db blip 2'))
+          .mockResolvedValueOnce(1),
+      } as unknown as CustomerService;
+      const processor = new SyncProcessorService(
+        registry,
+        integrationService as unknown as IntegrationService,
+        customerService,
+        makeProductService(),
+        makeOrderService(),
+        makeCollectionService(),
+        makeIdentityResolutionService(),
+      );
+
+      await processor.handleSyncRequested(makeEvent());
+
+      expect(customerService.upsertMany).toHaveBeenCalledTimes(3);
+      expect(integrationService.completeSync).toHaveBeenCalledWith('ws_1', 'shopify');
+    });
+
+    it('exhausts retries (3 attempts) then still fails the whole sync — persistent failure, not a transient one', async () => {
+      const page: CustomerPage = {
+        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        nextCursor: null,
+      };
+      const fetchCustomers = vi.fn(async () => page);
+      const registry = { get: vi.fn(() => ({ fetchCustomers }) as unknown as ProviderAdapter) } as unknown as ProviderRegistry;
+      const integrationService = makeIntegrationService();
+      const customerService = {
+        upsertMany: vi.fn(async () => {
+          throw new Error('persistent constraint violation');
+        }),
+      } as unknown as CustomerService;
+      const processor = new SyncProcessorService(
+        registry,
+        integrationService as unknown as IntegrationService,
+        customerService,
+        makeProductService(),
+        makeOrderService(),
+        makeCollectionService(),
+        makeIdentityResolutionService(),
+      );
+
+      await processor.handleSyncRequested(makeEvent());
+
+      expect(customerService.upsertMany).toHaveBeenCalledTimes(3);
+      expect(integrationService.failSync).toHaveBeenCalledWith('ws_1', 'shopify', 'persistent constraint violation');
+      expect(integrationService.completeSync).not.toHaveBeenCalled();
+    });
+
+    it('continues pagination correctly after a retried first page succeeds', async () => {
+      const page1: CustomerPage = {
+        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        nextCursor: 'cursor_2',
+      };
+      const page2: CustomerPage = {
+        customers: [{ externalId: '2', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        nextCursor: null,
+      };
+      const fetchCustomers = vi.fn(async (_creds: unknown, cursor?: string) => (cursor ? page2 : page1));
+      const registry = { get: vi.fn(() => ({ fetchCustomers }) as unknown as ProviderAdapter) } as unknown as ProviderRegistry;
+      const integrationService = makeIntegrationService();
+      const customerService = {
+        upsertMany: vi.fn().mockRejectedValueOnce(new Error('db blip')).mockResolvedValueOnce(1).mockResolvedValueOnce(1),
+      } as unknown as CustomerService;
+      const processor = new SyncProcessorService(
+        registry,
+        integrationService as unknown as IntegrationService,
+        customerService,
+        makeProductService(),
+        makeOrderService(),
+        makeCollectionService(),
+        makeIdentityResolutionService(),
+      );
+
+      await processor.handleSyncRequested(makeEvent());
+
+      expect(fetchCustomers).toHaveBeenCalledTimes(2);
+      expect(fetchCustomers).toHaveBeenNthCalledWith(2, expect.anything(), 'cursor_2', { updatedAtMin: new Date('2026-01-01T00:00:00.000Z') });
+      expect(customerService.upsertMany).toHaveBeenCalledTimes(3);
+      expect(integrationService.completeSync).toHaveBeenCalledWith('ws_1', 'shopify');
+    });
+
+    it('applies the same retry-then-succeed pattern to fetchProducts', async () => {
+      const fetchCustomers = vi.fn(async () => ({ customers: [], nextCursor: null }) as CustomerPage);
+      const productPage: ProductPage = { products: [{ externalId: '55', title: 'Tee', sourceUpdatedAt: null, variants: [] }], nextCursor: null };
+      const fetchProducts = vi.fn(async () => productPage);
+      const registry = {
+        get: vi.fn(() => ({ fetchCustomers, fetchProducts }) as unknown as ProviderAdapter),
+      } as unknown as ProviderRegistry;
+      const integrationService = makeIntegrationService();
+      const productService = {
+        upsertMany: vi
+          .fn()
+          .mockRejectedValueOnce(new Error('db blip'))
+          .mockResolvedValueOnce({ productsWritten: 1, variantsWritten: 0 }),
+      } as unknown as ProductService;
+      const processor = new SyncProcessorService(
+        registry,
+        integrationService as unknown as IntegrationService,
+        { upsertMany: vi.fn(async () => 0) } as unknown as CustomerService,
+        productService,
+        makeOrderService(),
+        makeCollectionService(),
+        makeIdentityResolutionService(),
+      );
+
+      await processor.handleSyncRequested(makeEvent());
+
+      expect(productService.upsertMany).toHaveBeenCalledTimes(2);
+      expect(integrationService.completeSync).toHaveBeenCalledWith('ws_1', 'shopify');
+    });
+  });
+
   it('does nothing when workspaceId/entityId are missing from the event envelope', async () => {
     const registry = { get: vi.fn() } as unknown as ProviderRegistry;
     const integrationService = makeIntegrationService();

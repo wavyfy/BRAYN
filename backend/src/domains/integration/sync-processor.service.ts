@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
+import { withRetry } from '../../common/async/retry';
 import type { DomainEvent } from '../../common/events/domain-event';
 import { CustomerService } from '../commerce/customer.service';
 import { ProductService } from '../commerce/product.service';
@@ -36,6 +37,10 @@ export interface SyncRequestedPayload {
  * catch-up run (not a one-time backfill), so a clear failed/retry signal
  * on `integrations.status` is more useful than a partially-applied
  * "success" — and re-running is safe, since every apply is idempotent.
+ * Each page's upsert now retries a transient failure first, via the
+ * existing `withRetry()` utility (doc 19 Phase 17 "Retry/error handling"),
+ * before that failure is allowed to fail the whole pass — a single DB
+ * blip no longer aborts an otherwise-healthy sync.
  */
 @Injectable()
 export class SyncProcessorService {
@@ -104,8 +109,10 @@ export class SyncProcessorService {
     let cursor: string | undefined;
     do {
       const page = await adapter.fetchCustomers!(credentials, cursor, options);
-      await this.customerService.upsertMany(workspaceId, integrationId, provider, page.customers);
-      await this.identityResolutionService.resolveMany(workspaceId, provider, page.customers.map((c) => c.externalId));
+      await withRetry(async () => {
+        await this.customerService.upsertMany(workspaceId, integrationId, provider, page.customers);
+        await this.identityResolutionService.resolveMany(workspaceId, provider, page.customers.map((c) => c.externalId));
+      });
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
   }
@@ -121,7 +128,7 @@ export class SyncProcessorService {
     let cursor: string | undefined;
     do {
       const page = await adapter.fetchProducts!(credentials, cursor, options);
-      await this.productService.upsertMany(workspaceId, integrationId, provider, page.products);
+      await withRetry(() => this.productService.upsertMany(workspaceId, integrationId, provider, page.products));
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
   }
@@ -137,7 +144,7 @@ export class SyncProcessorService {
     let cursor: string | undefined;
     do {
       const page = await adapter.fetchOrders!(credentials, cursor, options);
-      await this.orderService.upsertMany(workspaceId, integrationId, provider, page.orders);
+      await withRetry(() => this.orderService.upsertMany(workspaceId, integrationId, provider, page.orders));
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
   }
@@ -153,7 +160,7 @@ export class SyncProcessorService {
     let cursor: string | undefined;
     do {
       const page = await adapter.fetchCollections!(credentials, cursor, options);
-      await this.collectionService.upsertMany(workspaceId, integrationId, provider, page.collections);
+      await withRetry(() => this.collectionService.upsertMany(workspaceId, integrationId, provider, page.collections));
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
   }
