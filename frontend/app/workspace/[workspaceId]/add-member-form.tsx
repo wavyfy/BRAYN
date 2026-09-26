@@ -35,7 +35,7 @@ export function AddMemberForm({ workspaceId }: { workspaceId: string }) {
         }
       }}
     >
-      <p className="text-sm font-medium text-slate-900">Add member</p>
+      <p className="text-sm font-medium text-foreground">Add member</p>
       <div className="flex flex-wrap items-end gap-3">
         <div className="min-w-0 flex-1 space-y-1.5">
           <Label htmlFor="member-user-id">BRAYN user ID</Label>

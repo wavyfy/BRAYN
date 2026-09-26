@@ -3,31 +3,83 @@ import { apiFetch, ApiError } from '@/lib/api';
 import { RenameWorkspaceForm } from './rename-workspace-form';
 import { AddMemberForm } from './add-member-form';
 import { MemberRowActions } from './member-row-actions';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { RoleBadge } from '@/components/ui/badge';
 import { ApiErrorState } from '@/components/api-error-state';
+import { PageBody, PageHeader } from '@/components/ui/page-header';
+import { Metric, MetricStrip } from '@/components/ui/metric';
+import { SectionHeader } from '@/components/ui/section';
+import { StatusDot, type BadgeTone } from '@/components/ui/status-badge';
+import { EmptyState } from '@/components/ui/empty-state';
+import { LinkButton } from '@/components/ui/link-button';
+import { ArrowRightIcon } from '@/components/ui/icons';
+import { formatDate, formatDateTime, formatRelative, providerLabel } from '@/lib/format';
 
 type Workspace = { id: string; name: string; createdAt: string };
 type WorkspaceSummary = { id: string; name: string; role: string };
 type Membership = { id: string; userId: string; role: string };
 type CurrentUser = { id: string };
+type Priority = 'critical' | 'high' | 'medium' | 'low';
 
 type DashboardSummary = {
   customersCount: number;
   commerce: { ordersCount: number; totalSpent: string };
-  openOpportunities: { total: number; byPriority: Record<'critical' | 'high' | 'medium' | 'low', number> };
+  openOpportunities: { total: number; byPriority: Record<Priority, number> };
   activeRecommendationsCount: number;
   integrations: { provider: string; status: string; lastSyncedAt: string | null }[];
 };
 
-const integrationStatusStyles: Record<string, string> = {
-  connected: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
-  syncing: 'bg-sky-50 text-sky-700 ring-sky-600/20',
-  error: 'bg-red-50 text-red-700 ring-red-600/20',
-  disconnected: 'bg-slate-100 text-slate-700 ring-slate-500/20',
+const integrationStatusTone: Record<string, BadgeTone> = {
+  connected: 'success',
+  syncing: 'info',
+  error: 'danger',
+  disconnected: 'neutral',
 };
 
-/** Doc 19 Phase 2 Visible Result — "See workspace state" and "manage basic workspace settings". */
+const PRIORITIES: { key: Priority; label: string; bar: string; tone: BadgeTone }[] = [
+  { key: 'critical', label: 'Critical', bar: 'bg-danger', tone: 'danger' },
+  { key: 'high', label: 'High', bar: 'bg-warning', tone: 'warning' },
+  { key: 'medium', label: 'Medium', bar: 'bg-info', tone: 'info' },
+  { key: 'low', label: 'Low', bar: 'bg-muted-foreground/40', tone: 'neutral' },
+];
+
+/** Workspace-wide open opportunities by priority — each row's bar is its real share of the open total. */
+function OpportunityBreakdown({ workspaceId, opportunities }: { workspaceId: string; opportunities: DashboardSummary['openOpportunities'] }) {
+  if (opportunities.total === 0) {
+    return (
+      <EmptyState
+        title="No open opportunities"
+        message="Opportunities appear here once BRAYN detects them for your customers."
+        action={
+          <LinkButton href={`/workspace/${workspaceId}/customers`} variant="secondary" size="sm">
+            Open customers
+          </LinkButton>
+        }
+        className="py-10"
+      />
+    );
+  }
+
+  return (
+    <ul className="space-y-3">
+      {PRIORITIES.map(({ key, label, bar }) => {
+        const count = opportunities.byPriority[key] ?? 0;
+        const share = Math.round((count / opportunities.total) * 100);
+        return (
+          <li key={key} className="grid grid-cols-[88px_1fr_40px] items-center gap-3 text-[13px]">
+            <span className="text-foreground/80">{label}</span>
+            <span className="h-2 overflow-hidden rounded-full bg-subtle" role="img" aria-label={`${label}: ${count} of ${opportunities.total}`}>
+              <span className={`block h-full rounded-full ${bar}`} style={{ width: `${share}%` }} />
+            </span>
+            <span className="text-right font-medium tabular-nums text-foreground">{count}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** Doc 19 Phase 2 Visible Result — "See workspace state" and "manage basic workspace settings"; doc11 Merchant Dashboard. */
 export default async function WorkspacePage({ params }: { params: { workspaceId: string } }) {
   let workspace: Workspace, memberships: WorkspaceSummary[], members: Membership[], currentUser: CurrentUser, dashboard: DashboardSummary;
   try {
@@ -48,134 +100,143 @@ export default async function WorkspacePage({ params }: { params: { workspaceId:
   }
   const role = memberships.find((m) => m.id === workspace.id)?.role;
   const canManage = role === 'owner' || role === 'admin';
+  const { byPriority } = dashboard.openOpportunities;
+  const urgent = (byPriority.critical ?? 0) + (byPriority.high ?? 0);
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-12">
-      <Link href="/" className="text-sm text-slate-500 hover:text-slate-700">
-        &larr; Workspaces
-      </Link>
+    <main>
+      <PageHeader
+        title="Dashboard"
+        description={workspace.name}
+        actions={
+          <LinkButton href={`/workspace/${workspace.id}/customers`} variant="secondary">
+            Customers <ArrowRightIcon className="h-3.5 w-3.5" />
+          </LinkButton>
+        }
+      />
 
-      <div className="mt-2 flex items-center justify-between gap-3">
-        <h1 className="truncate text-2xl font-semibold tracking-tight text-slate-900">{workspace.name}</h1>
-        {role && <RoleBadge role={role} />}
-      </div>
+      <PageBody className="space-y-8">
+        <MetricStrip>
+          <Metric label="Customers" value={dashboard.customersCount} />
+          <Metric label="Orders" value={dashboard.commerce.ordersCount} />
+          <Metric label="Total spend" value={dashboard.commerce.totalSpent} hint="All orders, as recorded by your store" />
+          <Metric
+            label="Open opportunities"
+            value={dashboard.openOpportunities.total}
+            hint={urgent > 0 ? `${urgent} critical or high priority` : undefined}
+          />
+          <Metric label="Active recommendations" value={dashboard.activeRecommendationsCount} />
+        </MetricStrip>
 
-      <nav className="mt-4 flex gap-4 text-sm">
-        <Link href={`/workspace/${workspace.id}/customers`} className="font-medium text-slate-600 hover:text-slate-900">
-          Customers
-        </Link>
-        <Link href={`/workspace/${workspace.id}/integrations`} className="font-medium text-slate-600 hover:text-slate-900">
-          Integrations
-        </Link>
-        <Link href={`/workspace/${workspace.id}/knowledge`} className="font-medium text-slate-600 hover:text-slate-900">
-          Knowledge
-        </Link>
-        <Link href={`/workspace/${workspace.id}/automations`} className="font-medium text-slate-600 hover:text-slate-900">
-          Automations
-        </Link>
-        {canManage && (
-          <Link href={`/workspace/${workspace.id}/ai-actions`} className="font-medium text-slate-600 hover:text-slate-900">
-            AI Actions
-          </Link>
-        )}
-      </nav>
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+          <Card className="p-5">
+            <SectionHeader
+              title="Revenue opportunities by priority"
+              count={dashboard.openOpportunities.total > 0 ? `${dashboard.openOpportunities.total} open` : undefined}
+              action={
+                dashboard.openOpportunities.total > 0 && (
+                  <Link href={`/workspace/${workspace.id}/customers`} className="text-[13px] font-medium text-accent hover:underline">
+                    Review customers
+                  </Link>
+                )
+              }
+            />
+            <div className="mt-5">
+              <OpportunityBreakdown workspaceId={workspace.id} opportunities={dashboard.openOpportunities} />
+            </div>
+          </Card>
 
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Dashboard</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
-            <div>
-              <dt className="text-slate-500">Customers</dt>
-              <dd className="mt-0.5 text-slate-900">{dashboard.customersCount}</dd>
-            </div>
-            <div>
-              <dt className="text-slate-500">Orders</dt>
-              <dd className="mt-0.5 text-slate-900">{dashboard.commerce.ordersCount}</dd>
-            </div>
-            <div>
-              <dt className="text-slate-500">Total spent</dt>
-              <dd className="mt-0.5 text-slate-900">{dashboard.commerce.totalSpent}</dd>
-            </div>
-            <div>
-              <dt className="text-slate-500">Open opportunities</dt>
-              <dd className="mt-0.5 text-slate-900">{dashboard.openOpportunities.total}</dd>
-            </div>
-          </dl>
-          <p className="mt-4 text-sm text-slate-500">
-            {dashboard.activeRecommendationsCount} active recommendation{dashboard.activeRecommendationsCount === 1 ? '' : 's'} across all customers.
-          </p>
-        </CardContent>
-        {dashboard.integrations.length > 0 && (
-          <ul className="flex flex-wrap gap-1.5 border-t border-slate-200 px-5 py-3">
-            {dashboard.integrations.map((integration) => (
-              <li
-                key={integration.provider}
-                className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium capitalize ring-1 ring-inset ${integrationStatusStyles[integration.status] ?? integrationStatusStyles.disconnected}`}
-              >
-                {integration.provider} · {integration.status}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
+          <Card className="p-5">
+            <SectionHeader
+              title="Connected sources"
+              action={
+                <Link href={`/workspace/${workspace.id}/integrations`} className="text-[13px] font-medium text-accent hover:underline">
+                  Manage
+                </Link>
+              }
+            />
+            {dashboard.integrations.length === 0 ? (
+              <EmptyState message="No data sources connected yet." className="py-8" />
+            ) : (
+              <ul className="mt-3 divide-y divide-border">
+                {dashboard.integrations.map((integration) => (
+                  <li key={integration.provider} className="flex items-center justify-between gap-3 py-2.5">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <span aria-hidden className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-subtle text-xs font-semibold text-foreground/70 ring-1 ring-inset ring-border">
+                        {providerLabel(integration.provider).charAt(0)}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate text-[13px] font-medium text-foreground">{providerLabel(integration.provider)}</p>
+                        <p className="text-xs text-muted-foreground" title={formatDateTime(integration.lastSyncedAt)}>
+                          {integration.lastSyncedAt ? `Synced ${formatRelative(integration.lastSyncedAt)}` : 'Not synced yet'}
+                        </p>
+                      </div>
+                    </div>
+                    <StatusDot tone={integrationStatusTone[integration.status] ?? 'neutral'} className="capitalize">
+                      {integration.status}
+                    </StatusDot>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+        </div>
 
-      <Card className="mt-6">
-        <CardContent>
-          <dl className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <dt className="text-slate-500">Workspace ID</dt>
-              <dd className="mt-0.5 truncate font-mono text-xs text-slate-700">{workspace.id}</dd>
-            </div>
-            <div>
-              <dt className="text-slate-500">Created</dt>
-              <dd className="mt-0.5 text-slate-900">{new Date(workspace.createdAt).toLocaleDateString()}</dd>
-            </div>
-          </dl>
-        </CardContent>
-      </Card>
-
-      {canManage && (
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle>Workspace settings</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <RenameWorkspaceForm workspaceId={workspace.id} currentName={workspace.name} />
-          </CardContent>
-        </Card>
-      )}
-
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Members</CardTitle>
-        </CardHeader>
-        <ul className="divide-y divide-slate-200">
-          {members.map((member) => (
-            <li key={member.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
-              <div className="flex min-w-0 items-center gap-3">
-                <span className="truncate font-mono text-xs text-slate-600">{member.userId}</span>
-                <RoleBadge role={member.role} />
+        <section className="space-y-4 border-t border-border pt-8">
+          <SectionHeader title="Workspace" description="Members and settings for this workspace." />
+          <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+            <Card>
+              <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                <h3 className="text-sm font-semibold text-foreground">Members</h3>
+                <span className="text-[13px] tabular-nums text-muted-foreground">{members.length}</span>
               </div>
+              <ul className="divide-y divide-border">
+                {members.map((member) => (
+                  <li key={member.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="truncate font-mono text-xs text-foreground/70">{member.userId}</span>
+                      {member.userId === currentUser.id && <span className="text-xs text-muted-foreground">You</span>}
+                      <RoleBadge role={member.role} />
+                    </div>
+                    {canManage && (
+                      <MemberRowActions
+                        workspaceId={workspace.id}
+                        userId={member.userId}
+                        role={member.role}
+                        isCallerOwner={role === 'owner'}
+                        isSelf={member.userId === currentUser.id}
+                      />
+                    )}
+                  </li>
+                ))}
+              </ul>
               {canManage && (
-                <MemberRowActions
-                  workspaceId={workspace.id}
-                  userId={member.userId}
-                  role={member.role}
-                  isCallerOwner={role === 'owner'}
-                  isSelf={member.userId === currentUser.id}
-                />
+                <div className="border-t border-border bg-subtle/50 px-4 py-4">
+                  <AddMemberForm workspaceId={workspace.id} />
+                </div>
               )}
-            </li>
-          ))}
-        </ul>
-        {canManage && (
-          <CardContent className="border-t border-slate-200">
-            <AddMemberForm workspaceId={workspace.id} />
-          </CardContent>
-        )}
-      </Card>
+            </Card>
+
+            <Card className="divide-y divide-border">
+              {canManage && (
+                <div className="px-4 py-4">
+                  <RenameWorkspaceForm workspaceId={workspace.id} currentName={workspace.name} />
+                </div>
+              )}
+              <dl className="grid grid-cols-2 gap-4 px-4 py-4 text-[13px]">
+                <div className="min-w-0">
+                  <dt className="text-xs text-muted-foreground">Workspace ID</dt>
+                  <dd className="mt-1 truncate font-mono text-xs text-foreground/80">{workspace.id}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">Created</dt>
+                  <dd className="mt-1 text-foreground">{formatDate(workspace.createdAt)}</dd>
+                </div>
+              </dl>
+            </Card>
+          </div>
+        </section>
+      </PageBody>
     </main>
   );
 }

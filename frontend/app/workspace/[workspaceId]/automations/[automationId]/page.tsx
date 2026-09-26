@@ -1,8 +1,13 @@
-import Link from 'next/link';
 import { apiFetch, ApiError } from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ApiErrorState } from '@/components/api-error-state';
+import { PageBody, PageHeader } from '@/components/ui/page-header';
+import { StatusBadge, StatusDot, type BadgeTone } from '@/components/ui/status-badge';
+import { EmptyState } from '@/components/ui/empty-state';
+import { SectionHeader } from '@/components/ui/section';
+import { ArrowRightIcon } from '@/components/ui/icons';
+import { formatDateTime } from '@/lib/format';
 import { ToggleAutomationButton } from './toggle-automation-button';
+import { actionLabel, triggerLabel } from '../labels';
 
 type Automation = {
   id: string;
@@ -15,11 +20,20 @@ type Automation = {
 type AutomationRun = { id: string; status: 'skipped' | 'succeeded' | 'failed'; reason: string | null; result: { recommendationsCount?: number } | null; createdAt: string };
 type WorkspaceSummary = { id: string; name: string; role: string };
 
-const statusStyles: Record<string, string> = {
-  succeeded: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
-  skipped: 'bg-slate-100 text-slate-700 ring-slate-500/20',
-  failed: 'bg-red-50 text-red-700 ring-red-600/20',
+const runTone: Record<AutomationRun['status'], BadgeTone> = {
+  succeeded: 'success',
+  skipped: 'neutral',
+  failed: 'danger',
 };
+
+function Step({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="min-w-0 flex-1 rounded-xl border border-border bg-surface shadow-panel px-4 py-3">
+      <p className="text-xs font-medium text-muted-foreground">{label}</p>
+      <div className="mt-1 text-[13px] font-medium text-foreground">{children}</div>
+    </div>
+  );
+}
 
 /** Doc19 Phase 15 UI — execution history, "from trigger to completed action." */
 export default async function AutomationDetailPage({ params }: { params: { workspaceId: string; automationId: string } }) {
@@ -42,53 +56,82 @@ export default async function AutomationDetailPage({ params }: { params: { works
 
   const role = memberships.find((m) => m.id === workspaceId)?.role;
   const canManage = role === 'owner' || role === 'admin' || role === 'marketing';
+  const priorityIn = automation.conditions?.priorityIn ?? [];
+  const typeIn = automation.conditions?.typeIn ?? [];
+  const hasConditions = priorityIn.length > 0 || typeIn.length > 0;
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-12">
-      <Link href={`/workspace/${workspaceId}/automations`} className="text-sm text-slate-500 hover:text-slate-700">
-        &larr; Automations
-      </Link>
+    <main>
+      <PageHeader
+        title={automation.name}
+        backHref={`/workspace/${workspaceId}/automations`}
+        backLabel="Automations"
+        description={
+          <StatusDot tone={automation.enabled ? 'success' : 'neutral'}>{automation.enabled ? 'Enabled' : 'Disabled'}</StatusDot>
+        }
+        actions={canManage && <ToggleAutomationButton workspaceId={workspaceId} automationId={automationId} enabled={automation.enabled} />}
+      />
 
-      <div className="mt-2 flex items-center justify-between gap-3">
-        <h1 className="truncate text-2xl font-semibold tracking-tight text-slate-900">{automation.name}</h1>
-        {canManage && <ToggleAutomationButton workspaceId={workspaceId} automationId={automationId} enabled={automation.enabled} />}
-      </div>
-      <p className="mt-1 text-sm capitalize text-slate-500">
-        {automation.triggerType.replace('.', ' ')} → {automation.actionType.replace(/_/g, ' ')}
-      </p>
-      {automation.conditions && (automation.conditions.priorityIn?.length || automation.conditions.typeIn?.length) ? (
-        <p className="mt-1 text-sm capitalize text-slate-500">
-          {automation.conditions.priorityIn && `Priority: ${automation.conditions.priorityIn.join(', ')}`}
-          {automation.conditions.priorityIn && automation.conditions.typeIn && ' · '}
-          {automation.conditions.typeIn && `Type: ${automation.conditions.typeIn.join(', ').replace(/_/g, ' ')}`}
-        </p>
-      ) : null}
+      <PageBody className="space-y-8">
+        <div className="flex flex-col items-stretch gap-2 md:flex-row md:items-center">
+          <Step label="When">{triggerLabel(automation.triggerType)}</Step>
+          <ArrowRightIcon className="mx-auto h-4 w-4 shrink-0 rotate-90 text-muted-foreground md:rotate-0" />
+          <Step label="Only if">
+            {hasConditions ? (
+              <span className="capitalize">
+                {priorityIn.length > 0 && `Priority: ${priorityIn.join(', ')}`}
+                {priorityIn.length > 0 && typeIn.length > 0 && ' · '}
+                {typeIn.length > 0 && `Type: ${typeIn.join(', ').replace(/_/g, ' ')}`}
+              </span>
+            ) : (
+              <span className="font-normal text-muted-foreground">No conditions — every event</span>
+            )}
+          </Step>
+          <ArrowRightIcon className="mx-auto h-4 w-4 shrink-0 rotate-90 text-muted-foreground md:rotate-0" />
+          <Step label="Then">{actionLabel(automation.actionType)}</Step>
+        </div>
 
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Run history</CardTitle>
-        </CardHeader>
-        {runs.length === 0 ? (
-          <CardContent className="py-8 text-center text-sm text-slate-500">No runs yet.</CardContent>
-        ) : (
-          <ul className="divide-y divide-slate-200">
-            {runs.map((run) => (
-              <li key={run.id} className="flex items-center justify-between gap-3 px-5 py-2.5 text-sm">
-                <div className="min-w-0">
-                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium capitalize ring-1 ring-inset ${statusStyles[run.status]}`}>
-                    {run.status}
-                  </span>
-                  {run.reason && <p className="mt-1 truncate text-slate-600">{run.reason}</p>}
-                  {run.result?.recommendationsCount !== undefined && (
-                    <p className="mt-1 text-slate-600">{run.result.recommendationsCount} recommendation(s) generated</p>
-                  )}
-                </div>
-                <span className="shrink-0 text-slate-400">{new Date(run.createdAt).toLocaleString()}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
+        <section>
+          <SectionHeader title="Run history" count={runs.length > 0 ? runs.length : undefined} />
+          <div className="mt-3 overflow-hidden rounded-xl border border-border bg-surface shadow-panel">
+            {runs.length === 0 ? (
+              <EmptyState message="No runs yet. Runs appear here each time the trigger fires." className="py-10" />
+            ) : (
+              <table className="w-full text-left text-[13px]">
+                <thead className="border-b border-border bg-subtle text-xs text-muted-foreground">
+                  <tr>
+                    <th scope="col" className="w-28 px-4 py-2 font-medium">
+                      Status
+                    </th>
+                    <th scope="col" className="px-4 py-2 font-medium">
+                      Detail
+                    </th>
+                    <th scope="col" className="w-48 px-4 py-2 text-right font-medium">
+                      When
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {runs.map((run) => (
+                    <tr key={run.id}>
+                      <td className="px-4 py-2.5">
+                        <StatusBadge tone={runTone[run.status]} className="capitalize">
+                          {run.status}
+                        </StatusBadge>
+                      </td>
+                      <td className="px-4 py-2.5 text-foreground/80">
+                        {run.reason && <span>{run.reason}</span>}
+                        {run.result?.recommendationsCount !== undefined && <span>{run.result.recommendationsCount} recommendation(s) generated</span>}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-muted-foreground">{formatDateTime(run.createdAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </section>
+      </PageBody>
     </main>
   );
 }

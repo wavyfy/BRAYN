@@ -1,7 +1,9 @@
-import Link from 'next/link';
 import { apiFetch, ApiError } from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ApiErrorState } from '@/components/api-error-state';
+import { PageBody, PageHeader } from '@/components/ui/page-header';
+import { EmptyState } from '@/components/ui/empty-state';
+import { formatDateTime } from '@/lib/format';
+import { StatusBadge, type BadgeTone } from '@/components/ui/status-badge';
 import { AiActionDecisionButtons } from './ai-action-decision-buttons';
 
 type AiActionRequest = {
@@ -15,19 +17,19 @@ type AiActionRequest = {
   createdAt: string;
 };
 
-const statusStyles: Record<AiActionRequest['executionStatus'], string> = {
-  executed: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
-  failed: 'bg-red-50 text-red-700 ring-red-600/20',
-  blocked_permission: 'bg-amber-50 text-amber-700 ring-amber-600/20',
-  blocked_approval: 'bg-amber-50 text-amber-700 ring-amber-600/20',
-  blocked_validation: 'bg-slate-100 text-slate-700 ring-slate-500/20',
-  duplicate: 'bg-slate-100 text-slate-700 ring-slate-500/20',
+const statusTone: Record<AiActionRequest['executionStatus'], BadgeTone> = {
+  executed: 'success',
+  failed: 'danger',
+  blocked_permission: 'warning',
+  blocked_approval: 'warning',
+  blocked_validation: 'neutral',
+  duplicate: 'neutral',
 };
 
-const riskStyles: Record<AiActionRequest['riskLevel'], string> = {
-  low: 'bg-slate-100 text-slate-700 ring-slate-500/20',
-  medium: 'bg-sky-50 text-sky-700 ring-sky-600/20',
-  high: 'bg-red-50 text-red-700 ring-red-600/20',
+const riskTone: Record<AiActionRequest['riskLevel'], BadgeTone> = {
+  low: 'neutral',
+  medium: 'info',
+  high: 'danger',
 };
 
 function describeOutcome(request: AiActionRequest): string {
@@ -70,44 +72,62 @@ export default async function AiActionsPage({ params }: { params: { workspaceId:
     throw error;
   }
 
+  const pending = requests.filter((request) => request.approvalState === 'pending').length;
+
   return (
-    <main className="mx-auto max-w-2xl px-4 py-12">
-      <Link href={`/workspace/${workspaceId}`} className="text-sm text-slate-500 hover:text-slate-700">
-        &larr; Workspace
-      </Link>
+    <main>
+      <PageHeader
+        title="AI Actions"
+        description="AI Action Control — every AI or tool-initiated action request, and how it was decided."
+        actions={pending > 0 && <StatusBadge tone="warning">{pending} awaiting approval</StatusBadge>}
+      />
 
-      <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">AI Actions</h1>
-      <p className="mt-1 text-sm text-slate-500">Every AI/tool-initiated action request and how it was decided.</p>
-
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Action history</CardTitle>
-        </CardHeader>
-        {requests.length === 0 ? (
-          <CardContent className="py-12 text-center text-sm text-slate-500">No AI actions have been requested yet.</CardContent>
-        ) : (
-          <ul className="divide-y divide-slate-200">
-            {requests.map((request) => (
-              <li key={request.id} className="px-5 py-3 text-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-medium capitalize text-slate-900">{request.action.replace(/[._]/g, ' ')}</span>
-                  <span className="shrink-0 text-xs text-slate-400">{new Date(request.createdAt).toLocaleString()}</span>
-                </div>
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium capitalize ring-1 ring-inset ${riskStyles[request.riskLevel]}`}>
-                    {request.riskLevel} risk
-                  </span>
-                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${statusStyles[request.executionStatus]}`}>
-                    {describeOutcome(request)}
-                  </span>
-                </div>
-                {request.failureReason && <p className="mt-1 text-slate-600">{request.failureReason}</p>}
-                {request.approvalState === 'pending' && <AiActionDecisionButtons workspaceId={workspaceId} requestId={request.id} />}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
+      <PageBody>
+        <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-panel">
+          {requests.length === 0 ? (
+            <EmptyState title="No AI actions yet" message="No AI actions have been requested yet." />
+          ) : (
+            <table className="w-full text-left text-[13px]">
+              <thead className="border-b border-border bg-subtle text-xs text-muted-foreground">
+                <tr>
+                  <th scope="col" className="px-4 py-2 font-medium">
+                    Action
+                  </th>
+                  <th scope="col" className="px-4 py-2 font-medium">
+                    Risk
+                  </th>
+                  <th scope="col" className="px-4 py-2 font-medium">
+                    Outcome
+                  </th>
+                  <th scope="col" className="hidden px-4 py-2 text-right font-medium md:table-cell">
+                    Requested
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {requests.map((request) => (
+                  <tr key={request.id} className="align-top">
+                    <td className="px-4 py-3">
+                      <span className="font-medium capitalize text-foreground">{request.action.replace(/[._]/g, ' ')}</span>
+                      {request.failureReason && <p className="mt-0.5 max-w-md text-muted-foreground">{request.failureReason}</p>}
+                      {request.approvalState === 'pending' && <AiActionDecisionButtons workspaceId={workspaceId} requestId={request.id} />}
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusBadge tone={riskTone[request.riskLevel]} className="capitalize">
+                        {request.riskLevel} risk
+                      </StatusBadge>
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusBadge tone={statusTone[request.executionStatus]}>{describeOutcome(request)}</StatusBadge>
+                    </td>
+                    <td className="hidden whitespace-nowrap px-4 py-3 text-right text-muted-foreground md:table-cell">{formatDateTime(request.createdAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </PageBody>
     </main>
   );
 }

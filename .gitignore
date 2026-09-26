@@ -6,3 +6,12 @@ coverage
 .env
 .env.*
 !.env.example
+# Local-only design skills (Claude Code tooling, not app code)
+.claude/skills/ui-ux-pro-max/
+.claude/skills/design/
+.claude/skills/design-system/
+.claude/skills/brand/
+.claude/skills/ui-styling/
+.claude/skills/slides/
+.claude/skills/banner-design/
+__pycache__/

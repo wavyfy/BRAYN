@@ -1,12 +1,18 @@
-import Link from 'next/link';
 import { apiFetch, ApiError } from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ApiErrorState } from '@/components/api-error-state';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { ErrorText } from '@/components/ui/alert';
+import { Avatar } from '@/components/ui/avatar';
+import { Metric, MetricStrip } from '@/components/ui/metric';
+import { SectionHeader } from '@/components/ui/section';
+import { formatDateTime, formatRelative, providerLabel } from '@/lib/format';
 import { RecalculateHealthButton } from './recalculate-health-button';
 import { DetectOpportunitiesButton } from './detect-opportunities-button';
 import { GenerateRecommendationsButton } from './generate-recommendations-button';
-import { DismissRecommendationButton } from './dismiss-recommendation-button';
 import { AskBraynCard } from './ask-brayn-card';
+import { ActivityTimeline, type ActivityEntry } from './activity-timeline';
+import { RiskEngagement, type CustomerHealthState } from './risk-engagement';
+import { RevenueOpportunities, type RevenueOpportunity, type Recommendation } from './revenue-opportunities';
 
 type CustomerRecord = {
   canonicalCustomerId: string;
@@ -26,62 +32,41 @@ type CustomerRecord = {
   };
 };
 
-type ActivityEntry =
-  | { type: 'customer_created'; occurredAt: string; provider: string; externalId: string }
-  | { type: 'order_placed'; occurredAt: string; provider: string; externalId: string; totalPrice: string | null }
-  | { type: 'website_activity'; occurredAt: string; eventType: string };
+type SectionResult<T> = { ok: true; data: T } | { ok: false; message: string };
 
-type HealthSignal = { available: boolean; value?: number | null; score?: number; reasonCode?: string; reason?: string };
-type CustomerHealthState = {
-  score: number | null;
-  healthCategory: string | null;
-  signals: Record<string, HealthSignal>;
-  reasonCodes: string[];
-  trend: string | null;
-  lastCalculatedAt: string;
-};
-
-type RevenueOpportunity = {
-  id: string;
-  type: string;
-  status: string;
-  priority: 'critical' | 'high' | 'medium' | 'low';
-  estimatedRevenue: string | null;
-  confidence: number;
-  reason: string;
-  recommendedAction: string;
-  createdAt: string;
-};
-
-type Recommendation = {
-  id: string;
-  text: string;
-  state: 'active' | 'dismissed' | 'completed';
-  supportingSignals: { opportunityType?: string; confidence?: number; priority?: string; reason?: string };
-  createdAt: string;
-};
-
-const priorityStyles: Record<string, string> = {
-  critical: 'bg-red-50 text-red-700 ring-red-600/20',
-  high: 'bg-amber-50 text-amber-700 ring-amber-600/20',
-  medium: 'bg-sky-50 text-sky-700 ring-sky-600/20',
-  low: 'bg-slate-100 text-slate-700 ring-slate-500/20',
-};
+/** A section-level fetch: an expected API error becomes an inline message for that section instead of failing the whole page. */
+async function fetchSection<T>(path: string): Promise<SectionResult<T>> {
+  try {
+    return { ok: true, data: (await apiFetch(path)) as T };
+  } catch (error) {
+    if (error instanceof ApiError) return { ok: false, message: error.message };
+    throw error;
+  }
+}
 
 function customerName(customer: CustomerRecord): string {
   const name = [customer.profile.firstName, customer.profile.lastName].filter(Boolean).join(' ');
   return name || customer.profile.email || 'Unnamed customer';
 }
 
-function formatDate(value: string | null): string {
-  return value ? new Date(value).toLocaleString() : '—';
+function contactLine(customer: CustomerRecord): string | undefined {
+  const parts = [customer.profile.email, customer.profile.phone].filter((v): v is string => Boolean(v));
+  return parts.length > 0 ? parts.join(' · ') : undefined;
 }
 
-function activityKey(entry: ActivityEntry): string {
-  return entry.type === 'website_activity' ? `website_activity:${entry.eventType}:${entry.occurredAt}` : `${entry.type}:${entry.provider}:${entry.externalId}`;
+/** Relative time for scanning, exact time on hover; "—" when there's nothing to date. */
+function When({ value }: { value: string | null }) {
+  if (!value) return <>—</>;
+  return <span title={formatDateTime(value)}>{formatRelative(value)}</span>;
 }
 
-/** Doc19 Phase 8 — canonical UI scope: profile, commerce summary, website behaviour, recent activity, risk/engagement, revenue opportunities. */
+/**
+ * Doc19 Phase 8 / doc11 Customer Intelligence View — a customer intelligence
+ * workspace. Identity + key metrics lead; the main column holds what BRAYN
+ * found and what to do (revenue opportunities, then Ask BRAYN); the right
+ * rail holds the context behind it (Risk & Engagement State, then the
+ * customer's activity journey).
+ */
 export default async function CustomerDetailPage({
   params,
 }: {
@@ -90,13 +75,14 @@ export default async function CustomerDetailPage({
   const { workspaceId, canonicalCustomerId } = params;
   const base = `/api/v1/workspaces/${workspaceId}/customers/${canonicalCustomerId}`;
 
-  let customer: CustomerRecord, activity: ActivityEntry[], opportunities: RevenueOpportunity[], recommendations: Recommendation[];
+  let customer: CustomerRecord, activity: ActivityEntry[];
+  let opportunitiesResult: SectionResult<RevenueOpportunity[]>, recommendationsResult: SectionResult<Recommendation[]>;
   try {
-    [customer, activity, opportunities, recommendations] = await Promise.all([
+    [customer, activity, opportunitiesResult, recommendationsResult] = await Promise.all([
       apiFetch(base),
       apiFetch(`${base}/activity`),
-      apiFetch(`${base}/opportunities`),
-      apiFetch(`${base}/recommendations`),
+      fetchSection<RevenueOpportunity[]>(`${base}/opportunities`),
+      fetchSection<Recommendation[]>(`${base}/recommendations`),
     ]);
   } catch (error) {
     if (error instanceof ApiError) {
@@ -117,229 +103,118 @@ export default async function CustomerDetailPage({
     }
   }
 
+  const opportunities = opportunitiesResult.ok ? opportunitiesResult.data : [];
+  const recommendations = recommendationsResult.ok ? recommendationsResult.data : [];
+  const recommendedIds = new Set(recommendations.map((recommendation) => recommendation.sourceOpportunityId));
+  const needsRecommendations = recommendationsResult.ok && opportunities.some((opportunity) => !recommendedIds.has(opportunity.id));
+  const { commerceContext, behaviouralContext } = customer;
+  const name = customerName(customer);
+  const contact = contactLine(customer);
+
   return (
-    <main className="mx-auto max-w-2xl px-4 py-12">
-      <Link href={`/workspace/${workspaceId}/customers`} className="text-sm text-slate-500 hover:text-slate-700">
-        &larr; Customers
-      </Link>
-
-      <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">{customerName(customer)}</h1>
-
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Profile</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <dt className="text-slate-500">Email</dt>
-              <dd className="mt-0.5 text-slate-900">{customer.profile.email ?? '—'}</dd>
+    <main>
+      {/* Identity + key metrics. No back-link: the workspace shell's Customers nav item already provides that. */}
+      <header className="border-b border-border bg-surface px-6 pb-5 pt-5 lg:px-8">
+        <div className="flex flex-wrap items-center gap-3.5">
+          <Avatar name={name} size="lg" />
+          <div className="min-w-0">
+            <h1 className="truncate text-xl font-semibold tracking-tight text-foreground">{name}</h1>
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-muted-foreground">
+              {contact && <span>{contact}</span>}
+              {customer.sourceCustomers.map((source) => (
+                <StatusBadge key={`${source.provider}:${source.externalId}`} tone="neutral">
+                  {providerLabel(source.provider)}
+                </StatusBadge>
+              ))}
             </div>
-            <div>
-              <dt className="text-slate-500">Phone</dt>
-              <dd className="mt-0.5 text-slate-900">{customer.profile.phone ?? '—'}</dd>
-            </div>
-          </dl>
-          <div className="mt-4 flex flex-wrap gap-1.5">
-            {customer.sourceCustomers.map((source) => (
-              <span key={`${source.provider}:${source.externalId}`} className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium capitalize text-slate-700 ring-1 ring-inset ring-slate-500/20">
-                {source.provider}
-              </span>
-            ))}
           </div>
-        </CardContent>
-      </Card>
+        </div>
 
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Commerce summary</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid grid-cols-3 gap-4 text-sm">
-            <div>
-              <dt className="text-slate-500">Orders</dt>
-              <dd className="mt-0.5 text-slate-900">{customer.commerceContext.ordersCount}</dd>
-            </div>
-            <div>
-              <dt className="text-slate-500">Total spent</dt>
-              <dd className="mt-0.5 text-slate-900">{customer.commerceContext.totalSpent}</dd>
-            </div>
-            <div>
-              <dt className="text-slate-500">Last order</dt>
-              <dd className="mt-0.5 text-slate-900">{formatDate(customer.commerceContext.lastOrderAt)}</dd>
-            </div>
-          </dl>
-        </CardContent>
-        {customer.commerceContext.recentOrders.length > 0 && (
-          <ul className="divide-y divide-slate-200 border-t border-slate-200">
-            {customer.commerceContext.recentOrders.map((order) => (
-              <li key={`${order.provider}:${order.externalId}`} className="flex items-center justify-between gap-3 px-5 py-2.5 text-sm">
-                <span className="text-slate-600">
-                  Order <span className="font-mono text-xs">{order.externalId}</span> · {formatDate(order.createdAt)}
-                </span>
-                <span className="text-slate-900">{order.totalPrice ?? '—'}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
+        <MetricStrip className="mt-5">
+          <Metric label="Total spent" value={commerceContext.totalSpent} />
+          <Metric label="Orders" value={commerceContext.ordersCount} hint={`${commerceContext.ordersLast90Days} in the last 90 days`} />
+          <Metric label="Last order" value={<When value={commerceContext.lastOrderAt} />} />
+          <Metric
+            label="Open opportunities"
+            value={opportunitiesResult.ok ? opportunities.length : '—'}
+            hint={recommendationsResult.ok && recommendations.length > 0 ? `${recommendations.length} with a recommendation` : undefined}
+          />
+          <Metric
+            label="Website behaviour"
+            value={`${behaviouralContext.eventsCount} event${behaviouralContext.eventsCount === 1 ? '' : 's'}`}
+            hint={
+              <>
+                Last active <When value={behaviouralContext.lastActivityAt} />
+              </>
+            }
+          />
+        </MetricStrip>
+      </header>
 
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Website behaviour</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <dt className="text-slate-500">Events</dt>
-              <dd className="mt-0.5 text-slate-900">{customer.behaviouralContext.eventsCount}</dd>
+      <div className="grid grid-cols-1 items-start gap-8 px-6 py-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:px-8 xl:grid-cols-[minmax(0,1fr)_400px]">
+        {/* Primary — what BRAYN found, what to do about it, and the analyst to ask why. */}
+        <div className="min-w-0 space-y-8">
+          <section>
+            <SectionHeader
+              title="Revenue opportunities"
+              count={opportunitiesResult.ok && opportunities.length > 0 ? `${opportunities.length} open` : undefined}
+              action={
+                <>
+                  {needsRecommendations && <GenerateRecommendationsButton workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} />}
+                  <DetectOpportunitiesButton workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} />
+                </>
+              }
+            />
+            <div className="mt-3">
+              {!opportunitiesResult.ok ? (
+                <ErrorText className="rounded-xl border border-danger/20 bg-danger/[0.03] px-4 py-3">
+                  Opportunities could not be loaded: {opportunitiesResult.message}
+                </ErrorText>
+              ) : (
+                <>
+                  {!recommendationsResult.ok && <ErrorText className="mb-3">Recommendations could not be loaded: {recommendationsResult.message}</ErrorText>}
+                  <RevenueOpportunities
+                    workspaceId={workspaceId}
+                    canonicalCustomerId={canonicalCustomerId}
+                    opportunities={opportunities}
+                    recommendations={recommendations}
+                  />
+                </>
+              )}
             </div>
-            <div>
-              <dt className="text-slate-500">Last activity</dt>
-              <dd className="mt-0.5 text-slate-900">{formatDate(customer.behaviouralContext.lastActivityAt)}</dd>
-            </div>
-          </dl>
-        </CardContent>
-        {customer.behaviouralContext.recentEvents.length > 0 && (
-          <ul className="divide-y divide-slate-200 border-t border-slate-200">
-            {customer.behaviouralContext.recentEvents.map((event, index) => (
-              <li key={`${event.eventType}:${event.occurredAt}:${index}`} className="flex items-center justify-between gap-3 px-5 py-2.5 text-sm">
-                <span className="capitalize text-slate-600">{event.eventType.replace('_', ' ')}</span>
-                <span className="text-slate-500">{formatDate(event.occurredAt)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
+          </section>
 
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Recent activity</CardTitle>
-        </CardHeader>
-        {activity.length === 0 ? (
-          <CardContent className="py-8 text-center text-sm text-slate-500">No activity yet.</CardContent>
-        ) : (
-          <ul className="divide-y divide-slate-200">
-            {activity.map((entry) => (
-              <li key={activityKey(entry)} className="flex items-center justify-between gap-3 px-5 py-2.5 text-sm">
-                <span className="text-slate-600">
-                  {entry.type === 'website_activity' ? (
-                    <>
-                      Website: <span className="capitalize">{entry.eventType.replace('_', ' ')}</span>
-                    </>
-                  ) : (
-                    <>
-                      {entry.type === 'customer_created' ? 'Connected' : 'Order placed'} via <span className="capitalize">{entry.provider}</span>
-                    </>
-                  )}
-                </span>
-                <span className="text-slate-500">{formatDate(entry.occurredAt)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
+          <section aria-labelledby="ask-brayn-heading">
+            <AskBraynCard
+              workspaceId={workspaceId}
+              canonicalCustomerId={canonicalCustomerId}
+              context={{
+                customerName: name,
+                healthCalculated: health !== null,
+                openOpportunities: opportunitiesResult.ok ? opportunities.length : null,
+                activeRecommendations: recommendationsResult.ok ? recommendations.length : null,
+              }}
+            />
+          </section>
+        </div>
 
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Risk &amp; engagement</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {!health ? (
-            <div className="flex flex-col items-start gap-3">
-              <p className="text-sm text-slate-500">Not yet calculated for this customer.</p>
-              <RecalculateHealthButton workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} />
+        {/* Context rail — the customer's current state, then the journey behind it. */}
+        <aside className="min-w-0 space-y-8">
+          <section>
+            <SectionHeader title="Risk & engagement" action={<RecalculateHealthButton workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} />} />
+            <div className="mt-3 rounded-xl border border-border bg-surface shadow-panel p-4">
+              <RiskEngagement health={health} />
             </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <p className="text-sm text-slate-500">
-                  {health.score !== null ? `Score: ${health.score}/100` : 'Overall score withheld — see reasons below.'}
-                </p>
-                <RecalculateHealthButton workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} />
-              </div>
-              <ul className="space-y-1 text-sm text-slate-600">
-                {health.reasonCodes.map((reasonCode) => (
-                  <li key={reasonCode}>{reasonCode}</li>
-                ))}
-              </ul>
-              <p className="text-xs text-slate-400">Last calculated {formatDate(health.lastCalculatedAt)}</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          </section>
 
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Revenue opportunities</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {opportunities.length === 0 ? (
-            <div className="flex flex-col items-start gap-3">
-              <p className="text-sm text-slate-500">No open opportunities.</p>
-              <DetectOpportunitiesButton workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} />
+          <section>
+            <SectionHeader title="Activity" count={activity.length > 0 ? activity.length : undefined} />
+            <div className="mt-3">
+              <ActivityTimeline activity={activity} />
             </div>
-          ) : (
-            <div className="space-y-3">
-              <DetectOpportunitiesButton workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} />
-              <ul className="divide-y divide-slate-200">
-                {opportunities.map((opportunity) => (
-                  <li key={opportunity.id} className="py-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-medium capitalize text-slate-900">{opportunity.type.replace('_', ' ')}</span>
-                      <span className={`inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium capitalize ring-1 ring-inset ${priorityStyles[opportunity.priority] ?? priorityStyles.low}`}>
-                        {opportunity.priority}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-sm text-slate-600">{opportunity.reason}</p>
-                    <p className="mt-1 text-sm text-slate-900">{opportunity.recommendedAction}</p>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Recommendations</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {recommendations.length === 0 ? (
-            <div className="flex flex-col items-start gap-3">
-              <p className="text-sm text-slate-500">No active recommendations.</p>
-              <GenerateRecommendationsButton workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} />
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <GenerateRecommendationsButton workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} />
-              <ul className="divide-y divide-slate-200">
-                {recommendations.map((recommendation) => (
-                  <li key={recommendation.id} className="flex items-start justify-between gap-3 py-3">
-                    <div>
-                      <p className="text-sm text-slate-900">{recommendation.text}</p>
-                      {recommendation.supportingSignals.reason && (
-                        <p className="mt-1 text-sm text-slate-600">{recommendation.supportingSignals.reason}</p>
-                      )}
-                    </div>
-                    <DismissRecommendationButton workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} recommendationId={recommendation.id} />
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Ask BRAYN</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <AskBraynCard workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} />
-        </CardContent>
-      </Card>
+          </section>
+        </aside>
+      </div>
     </main>
   );
 }

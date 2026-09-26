@@ -2,8 +2,57 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * BRAYN design tokens — "ink on warm paper". Values are RGB triplets so
+ * Tailwind's `rgb(var(--x) / <alpha-value>)` can apply opacity modifiers
+ * (e.g. `bg-success/10`).
+ *
+ * - background: the warm-grey app canvas the sidebar sits on
+ * - canvas: the page body inside the workspace frame — one step off white so panels lift
+ * - surface: page headers and raised panels
+ * - subtle: recessed fills (inset rows, input wells, table headers)
+ * - accent: BRAYN brand teal — brand mark, active nav, focus, AI analysis
+ *   rule only. Status/priority/risk use the semantic colors, never accent.
+ */
 @layer base {
+  :root {
+    --background: 241 240 237;
+    --surface: 255 255 255;
+    --canvas: 248 247 245;
+    --surface-elevated: 255 255 255;
+    --subtle: 246 245 242;
+    --foreground: 28 25 23;
+    --muted-foreground: 104 99 93;
+    --border: 232 229 224;
+    --border-strong: 214 210 204;
+    --primary: 28 25 23;
+    --primary-foreground: 255 255 255;
+    --accent: 15 118 110;
+    --accent-foreground: 255 255 255;
+    --success: 4 120 87;
+    --warning: 180 83 9;
+    --danger: 196 55 55;
+    --info: 3 105 161;
+    --focus: 15 118 110;
+  }
+
   body {
-    @apply bg-slate-50 text-slate-900 antialiased;
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+
+  /* Numbers line up in every metric, table and timestamp. */
+  .tabular-nums,
+  table {
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }

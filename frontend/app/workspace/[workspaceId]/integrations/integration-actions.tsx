@@ -60,16 +60,16 @@ export function IntegrationActions({
     <div className="space-y-3">
       <dl className="grid grid-cols-2 gap-4 text-sm">
         <div>
-          <dt className="text-slate-500">Last synced</dt>
-          <dd className="mt-0.5 text-slate-900">{formatDate(lastSyncedAt)}</dd>
+          <dt className="text-muted-foreground">Last synced</dt>
+          <dd className="mt-0.5 text-foreground">{formatDate(lastSyncedAt)}</dd>
         </div>
       </dl>
       {lastSyncError && <ErrorText>{lastSyncError}</ErrorText>}
 
       {latestImport && (
-        <div className="rounded-md bg-slate-50 px-3 py-2 text-sm">
-          <p className="font-medium text-slate-900">Import {importRunning ? 'in progress…' : latestImport.status}</p>
-          <p className="text-slate-600">
+        <div className="rounded-md bg-subtle px-3 py-2 text-sm">
+          <p className="font-medium text-foreground">Import {importRunning ? 'in progress…' : latestImport.status}</p>
+          <p className="text-muted-foreground">
             {latestImport.recordsImported} imported
             {latestImport.recordsFailed > 0 ? `, ${latestImport.recordsFailed} failed` : ''}
           </p>
