@@ -37,6 +37,14 @@ export const commerceCustomers = pgTable(
     phone: text('phone'),
     /** Provider's own last-modified timestamp — lets a re-import or webhook update tell "changed" from "already have this". */
     sourceUpdatedAt: timestamp('source_updated_at', { withTimezone: true }),
+    /**
+     * When the provider says this customer was added to the store (Shopify
+     * `Customer.createdAt`, WooCommerce `date_created_gmt`) — the customer's
+     * real "became a customer" time, unlike `createdAt` (when BRAYN stored
+     * the row). Null for rows imported before this column existed, until
+     * a full re-import (or a changed record via sync) rewrites them.
+     */
+    sourceCreatedAt: timestamp('source_created_at', { withTimezone: true }),
     canonicalCustomerId: uuid('canonical_customer_id').references(() => canonicalCustomers.id),
     ...timestamps(),
   },

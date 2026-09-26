@@ -318,7 +318,7 @@ describe('ShopifyAdapter', () => {
 
   describe('fetchCustomers() — GraphQL', () => {
     function graphqlCustomersResponse(
-      nodes: { id: string; email: string | null; firstName: string | null; lastName: string | null; phone: string | null; updatedAt: string }[],
+      nodes: { id: string; email: string | null; firstName: string | null; lastName: string | null; phone: string | null; createdAt: string; updatedAt: string }[],
       pageInfo: { hasNextPage: boolean; endCursor: string | null } = { hasNextPage: false, endCursor: null },
     ) {
       return jsonResponse(200, { data: { customers: { edges: nodes.map((node) => ({ node })), pageInfo } } });
@@ -333,6 +333,7 @@ describe('ShopifyAdapter', () => {
             firstName: 'Ada',
             lastName: 'Lovelace',
             phone: null,
+            createdAt: '2025-06-15T08:30:00Z',
             updatedAt: '2026-01-01T00:00:00Z',
           },
         ]),
@@ -351,6 +352,7 @@ describe('ShopifyAdapter', () => {
             lastName: 'Lovelace',
             phone: null,
             sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
+            sourceCreatedAt: new Date('2025-06-15T08:30:00Z'),
           },
         ],
         nextCursor: null,
@@ -821,6 +823,7 @@ describe('ShopifyAdapter', () => {
         id: 'gid://shopify/Order/900',
         customer: { id: 'gid://shopify/Customer/1' },
         totalPriceSet: moneyBag('19.99'),
+        createdAt: '2025-12-20T10:00:00Z',
         updatedAt: '2026-01-01T00:00:00Z',
         ...overrides,
         lineItems: { edges: lineItemNodes.map((node) => ({ node })), pageInfo: lineItemsPageInfo },
@@ -857,6 +860,8 @@ describe('ShopifyAdapter', () => {
             customerExternalId: '1',
             totalPrice: '19.99',
             sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
+            // Order.createdAt (checkout time), not updatedAt — the order-placed time.
+            sourceCreatedAt: new Date('2025-12-20T10:00:00Z'),
             lineItems: [{ externalId: '9001', variantExternalId: '901', quantity: 2, price: '9.99' }],
             refunds: [],
             fulfillments: [],
@@ -1771,6 +1776,7 @@ describe('ShopifyAdapter', () => {
         first_name: 'Ada',
         last_name: 'Lovelace',
         phone: null,
+        created_at: '2025-06-15T08:30:00Z',
         updated_at: '2026-01-01T00:00:00Z',
       });
 
@@ -1791,6 +1797,7 @@ describe('ShopifyAdapter', () => {
             lastName: 'Lovelace',
             phone: null,
             sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
+            sourceCreatedAt: new Date('2025-06-15T08:30:00Z'),
           },
         },
       });
@@ -1832,6 +1839,28 @@ describe('ShopifyAdapter', () => {
       });
 
       expect(result?.payload).toMatchObject({ resource: 'order', data: { externalId: '900', customerExternalId: null } });
+    });
+
+    it('takes an order delivery\'s placement time from created_at, not updated_at', () => {
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+      const rawBody = JSON.stringify({
+        id: 901,
+        customer: null,
+        total_price: '19.99',
+        created_at: '2025-11-02T09:15:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+        line_items: [],
+      });
+
+      const result = adapter.parseWebhookEvent(rawBody, {
+        'x-shopify-topic': 'orders/updated',
+        'x-shopify-webhook-id': 'wh_evt_3b',
+      });
+
+      expect(result?.payload).toMatchObject({
+        resource: 'order',
+        data: { sourceCreatedAt: new Date('2025-11-02T09:15:00Z'), sourceUpdatedAt: new Date('2026-01-01T00:00:00Z') },
+      });
     });
 
     it('normalizes a fulfillments/create delivery — bare fulfillment plus order_id, no nested order', () => {

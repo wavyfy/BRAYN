@@ -63,7 +63,7 @@ const credentials = { shopDomain: 'acme.myshopify.com', accessToken: 'shpat_x' }
 describe('ReconciliationProcessorService', () => {
   it('detects a missing record (not in BRAYN yet) and repairs it via upsert', async () => {
     const page: CustomerPage = {
-      customers: [{ externalId: '1', email: 'a@x.com', firstName: 'A', lastName: 'A', phone: null, sourceUpdatedAt: new Date('2026-01-02T00:00:00Z') }],
+      customers: [{ externalId: '1', email: 'a@x.com', firstName: 'A', lastName: 'A', phone: null, sourceUpdatedAt: new Date('2026-01-02T00:00:00Z'), sourceCreatedAt: null }],
       nextCursor: null,
     };
     const fetchCustomers = vi.fn(async () => page);
@@ -100,7 +100,7 @@ describe('ReconciliationProcessorService', () => {
 
   it('detects a changed record (newer sourceUpdatedAt than what BRAYN has) and repairs it', async () => {
     const page: CustomerPage = {
-      customers: [{ externalId: '1', email: 'a@x.com', firstName: 'A', lastName: 'A', phone: null, sourceUpdatedAt: new Date('2026-01-02T00:00:00Z') }],
+      customers: [{ externalId: '1', email: 'a@x.com', firstName: 'A', lastName: 'A', phone: null, sourceUpdatedAt: new Date('2026-01-02T00:00:00Z'), sourceCreatedAt: null }],
       nextCursor: null,
     };
     const fetchCustomers = vi.fn(async () => page);
@@ -134,7 +134,7 @@ describe('ReconciliationProcessorService', () => {
   it('does not count a record as a discrepancy when its sourceUpdatedAt matches what BRAYN already has', async () => {
     const sameTimestamp = new Date('2026-01-01T00:00:00Z');
     const page: CustomerPage = {
-      customers: [{ externalId: '1', email: 'a@x.com', firstName: 'A', lastName: 'A', phone: null, sourceUpdatedAt: sameTimestamp }],
+      customers: [{ externalId: '1', email: 'a@x.com', firstName: 'A', lastName: 'A', phone: null, sourceUpdatedAt: sameTimestamp, sourceCreatedAt: null }],
       nextCursor: null,
     };
     const fetchCustomers = vi.fn(async () => page);
@@ -214,7 +214,7 @@ describe('ReconciliationProcessorService', () => {
 
   it('counts a discrepancy as found but not repaired when the repair upsert throws, and still completes the run', async () => {
     const page: CustomerPage = {
-      customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: new Date() }],
+      customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: new Date(), sourceCreatedAt: null }],
       nextCursor: null,
     };
     const fetchCustomers = vi.fn(async () => page);
@@ -250,7 +250,7 @@ describe('ReconciliationProcessorService', () => {
 
   it('reconciles customers, then products, then orders in the same run, with cumulative progress', async () => {
     const customerPage: CustomerPage = {
-      customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+      customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: null }],
       nextCursor: null,
     };
     const productPage: ProductPage = {
@@ -258,7 +258,7 @@ describe('ReconciliationProcessorService', () => {
       nextCursor: null,
     };
     const orderPage: OrderPage = {
-      orders: [{ externalId: '900', customerExternalId: '1', totalPrice: '19.99', sourceUpdatedAt: null, lineItems: [], refunds: [], fulfillments: [] }],
+      orders: [{ externalId: '900', customerExternalId: '1', totalPrice: '19.99', sourceUpdatedAt: null, sourceCreatedAt: null, lineItems: [], refunds: [], fulfillments: [] }],
       nextCursor: null,
     };
     const callOrder: string[] = [];

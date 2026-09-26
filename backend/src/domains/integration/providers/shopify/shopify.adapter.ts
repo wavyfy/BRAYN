@@ -42,6 +42,7 @@ const SHOPIFY_CUSTOMERS_QUERY = `
           firstName
           lastName
           phone
+          createdAt
           updatedAt
         }
       }
@@ -175,6 +176,7 @@ const SHOPIFY_ORDERS_QUERY = `
               amount
             }
           }
+          createdAt
           updatedAt
           lineItems(first: $lineItemsFirst) {
             edges {
@@ -522,6 +524,8 @@ interface ShopifyCustomer {
   first_name: string | null;
   last_name: string | null;
   phone: string | null;
+  /** Shopify: "when the customer was added to the store". Present on REST-shaped webhook payloads too. */
+  created_at: string | null;
   updated_at: string;
 }
 
@@ -532,6 +536,7 @@ interface ShopifyGraphqlCustomerNode {
   firstName: string | null;
   lastName: string | null;
   phone: string | null;
+  createdAt: string;
   updatedAt: string;
 }
 
@@ -704,6 +709,8 @@ interface ShopifyOrder {
   id: number;
   customer: { id: number } | null;
   total_price: string | null;
+  /** Shopify: set "when the customer completes checkout and remains unchanged throughout an order's lifecycle" — the order-placed time. Present on REST-shaped webhook payloads too. */
+  created_at: string | null;
   updated_at: string;
   line_items: ShopifyLineItem[];
   /** Embedded, not a separate resource — Shopify has no top-level refunds list/webhook (doc 20 Shopify Phase 1 Data — "Refunds"). */
@@ -775,6 +782,7 @@ interface ShopifyGraphqlOrderNode {
   id: string;
   customer: { id: string } | null;
   totalPriceSet: ShopifyGraphqlMoneyBag | null;
+  createdAt: string;
   updatedAt: string;
   lineItems: ShopifyGraphqlOrderLineItemsConnection;
   /** Plain list per Shopify's real schema, not a connection — see REFUNDS_PAGE_SIZE doc comment. */
@@ -1595,6 +1603,7 @@ function graphqlCustomerToRestShape(node: ShopifyGraphqlCustomerNode): ShopifyCu
     first_name: node.firstName,
     last_name: node.lastName,
     phone: node.phone,
+    created_at: node.createdAt,
     updated_at: node.updatedAt,
   };
 }
@@ -1607,6 +1616,7 @@ function normalizeCustomer(customer: ShopifyCustomer): NormalizedCustomer {
     lastName: customer.last_name,
     phone: customer.phone,
     sourceUpdatedAt: new Date(customer.updated_at),
+    sourceCreatedAt: customer.created_at ? new Date(customer.created_at) : null,
   };
 }
 
@@ -1731,6 +1741,7 @@ function graphqlOrderToRestShape(node: ShopifyGraphqlOrderNode, lineItemNodes: S
     id: orderNumericId,
     customer: node.customer ? { id: shopifyGidToNumericId(node.customer.id) } : null,
     total_price: node.totalPriceSet?.shopMoney.amount ?? null,
+    created_at: node.createdAt,
     updated_at: node.updatedAt,
     line_items: lineItemNodes.map(graphqlLineItemToRestShape),
     refunds: node.refunds.map(graphqlRefundToRestShape),
@@ -1745,6 +1756,7 @@ function normalizeOrder(order: ShopifyOrder): NormalizedOrder {
     customerExternalId: order.customer ? String(order.customer.id) : null,
     totalPrice: order.total_price,
     sourceUpdatedAt: new Date(order.updated_at),
+    sourceCreatedAt: order.created_at ? new Date(order.created_at) : null,
     lineItems: order.line_items.map((item) => ({
       externalId: String(item.id),
       variantExternalId: item.variant_id !== null ? String(item.variant_id) : null,

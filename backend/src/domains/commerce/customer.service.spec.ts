@@ -26,6 +26,7 @@ const customer: NormalizedCustomer = {
   lastName: 'Lovelace',
   phone: null,
   sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
+  sourceCreatedAt: null,
 };
 
 describe('CustomerService', () => {
