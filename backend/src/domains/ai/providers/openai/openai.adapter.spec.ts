@@ -222,6 +222,69 @@ describe('OpenAiAdapter', () => {
         }),
       );
     });
+
+    describe('tool names outside OpenAI\'s ^[a-zA-Z0-9_-]+$ pattern (AI Action Control names like recommendation.dismiss)', () => {
+      const dottedTools = [
+        { name: 'get_customer_activity_history', description: 'Read.', parameters: {} },
+        { name: 'recommendation.dismiss', description: 'Dismiss.', parameters: {} },
+      ];
+
+      it('sends an OpenAI-valid encoded name, leaving already-valid names unchanged', async () => {
+        mockCreate.mockResolvedValue({ output_text: 'ok', model: 'gpt-5.6-luna' });
+        const adapter = new OpenAiAdapter(makeConfig({ OPENAI_API_KEY: 'sk-test' }), makeLogger());
+
+        await adapter.generate({ ...request, tools: dottedTools });
+
+        const sent = (mockCreate.mock.calls[0][0] as { tools: { name: string }[] }).tools.map((tool) => tool.name);
+        expect(sent).toEqual(['get_customer_activity_history', 'recommendation-dismiss']);
+        for (const name of sent) expect(name).toMatch(/^[a-zA-Z0-9_-]+$/);
+      });
+
+      it('decodes a returned tool call back to the BRAYN action name', async () => {
+        mockCreate.mockResolvedValue({
+          output_text: '',
+          model: 'gpt-5.6-luna',
+          output: [{ type: 'function_call', call_id: 'call_1', name: 'recommendation-dismiss', arguments: '{}' }],
+        });
+        const adapter = new OpenAiAdapter(makeConfig({ OPENAI_API_KEY: 'sk-test' }), makeLogger());
+
+        const result = await adapter.generate({ ...request, tools: dottedTools });
+
+        expect(result.toolCalls).toEqual([{ id: 'call_1', name: 'recommendation.dismiss', arguments: '{}' }]);
+      });
+
+      it('replays a prior dotted tool call in the history under its encoded name', async () => {
+        mockCreate.mockResolvedValue({ output_text: 'done', model: 'gpt-5.6-luna' });
+        const adapter = new OpenAiAdapter(makeConfig({ OPENAI_API_KEY: 'sk-test' }), makeLogger());
+
+        await adapter.generate({
+          tools: dottedTools,
+          messages: [
+            { role: 'user', content: 'question' },
+            { role: 'assistant', content: '', toolCalls: [{ id: 'call_1', name: 'recommendation.dismiss', arguments: '{}' }] },
+            { role: 'tool', content: '{"ok":true}', toolCallId: 'call_1' },
+          ],
+        });
+
+        const input = (mockCreate.mock.calls[0][0] as { input: { name?: string }[] }).input;
+        expect(input[1]).toMatchObject({ type: 'function_call', name: 'recommendation-dismiss' });
+      });
+
+      it('refuses, without calling OpenAI, when two tool names would encode to the same OpenAI name', async () => {
+        const adapter = new OpenAiAdapter(makeConfig({ OPENAI_API_KEY: 'sk-test' }), makeLogger());
+
+        await expect(
+          adapter.generate({
+            ...request,
+            tools: [
+              { name: 'a.b', description: '', parameters: {} },
+              { name: 'a-b', description: '', parameters: {} },
+            ],
+          }),
+        ).rejects.toThrow(ProviderError);
+        expect(mockCreate).not.toHaveBeenCalled();
+      });
+    });
   });
 
   it('never logs the configured API key', () => {
