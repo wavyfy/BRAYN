@@ -25,6 +25,8 @@ interface WooCommerceCustomer {
   email: string | null;
   first_name: string | null;
   last_name: string | null;
+  /** WooCommerce: "The date the customer account was created, as GMT." */
+  date_created_gmt: string | null;
   date_modified_gmt: string | null;
   billing?: { phone?: string | null };
 }
@@ -51,6 +53,8 @@ interface WooCommerceOrder {
   /** 0 for a guest checkout (WooCommerce convention) — never null/absent. */
   customer_id: number;
   total: string | null;
+  /** WooCommerce: "The date the order was created, as GMT." — the order-placed time. */
+  date_created_gmt: string | null;
   date_modified_gmt: string | null;
   line_items: WooCommerceLineItem[];
 }
@@ -412,6 +416,7 @@ function normalizeCustomer(customer: WooCommerceCustomer): NormalizedCustomer {
     lastName: customer.last_name,
     phone: customer.billing?.phone ?? null,
     sourceUpdatedAt: customer.date_modified_gmt ? parseGmtDate(customer.date_modified_gmt) : null,
+    sourceCreatedAt: customer.date_created_gmt ? parseGmtDate(customer.date_created_gmt) : null,
   };
 }
 
@@ -449,6 +454,7 @@ function normalizeOrder(order: WooCommerceOrder): NormalizedOrder {
     customerExternalId: order.customer_id !== 0 ? String(order.customer_id) : null,
     totalPrice: order.total,
     sourceUpdatedAt: order.date_modified_gmt ? parseGmtDate(order.date_modified_gmt) : null,
+    sourceCreatedAt: order.date_created_gmt ? parseGmtDate(order.date_created_gmt) : null,
     lineItems: order.line_items.map((item) => ({
       externalId: String(item.id),
       variantExternalId: item.product_id !== null ? String(item.product_id) : null,

@@ -156,6 +156,7 @@ describe('WooCommerceAdapter', () => {
             email: 'a@example.com',
             first_name: 'Ada',
             last_name: 'Lovelace',
+            date_created_gmt: '2025-06-15T08:30:00',
             date_modified_gmt: '2026-01-01T00:00:00',
             billing: { phone: '555-1234' },
           },
@@ -175,6 +176,7 @@ describe('WooCommerceAdapter', () => {
             lastName: 'Lovelace',
             phone: '555-1234',
             sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
+            sourceCreatedAt: new Date('2025-06-15T08:30:00Z'),
           },
         ],
         nextCursor: null,
@@ -341,6 +343,7 @@ describe('WooCommerceAdapter', () => {
             id: 900,
             customer_id: 1,
             total: '19.99',
+            date_created_gmt: '2025-12-20T10:00:00',
             date_modified_gmt: '2026-01-01T00:00:00',
             line_items: [{ id: 9001, product_id: 55, variation_id: null, quantity: 2, price: '9.99' }],
           },
@@ -358,6 +361,8 @@ describe('WooCommerceAdapter', () => {
             customerExternalId: '1',
             totalPrice: '19.99',
             sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
+            // date_created_gmt (order placed), not date_modified_gmt.
+            sourceCreatedAt: new Date('2025-12-20T10:00:00Z'),
             lineItems: [{ externalId: '9001', variantExternalId: '55', quantity: 2, price: '9.99' }],
             refunds: [],
             fulfillments: [],
@@ -498,6 +503,7 @@ describe('WooCommerceAdapter', () => {
         email: 'a@x.com',
         first_name: 'Ada',
         last_name: 'Lovelace',
+        date_created_gmt: '2025-06-15T08:30:00',
         date_modified_gmt: '2026-01-01T00:00:00',
         billing: { phone: '555-1234' },
       });
@@ -512,7 +518,7 @@ describe('WooCommerceAdapter', () => {
         eventType: 'customer.updated',
         payload: {
           resource: 'customer',
-          data: { externalId: '1', email: 'a@x.com', firstName: 'Ada', lastName: 'Lovelace', phone: '555-1234', sourceUpdatedAt: new Date('2026-01-01T00:00:00Z') },
+          data: { externalId: '1', email: 'a@x.com', firstName: 'Ada', lastName: 'Lovelace', phone: '555-1234', sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'), sourceCreatedAt: new Date('2025-06-15T08:30:00Z') },
         },
       });
     });

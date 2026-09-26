@@ -12,6 +12,8 @@ export interface NormalizedCustomer {
   lastName: string | null;
   phone: string | null;
   sourceUpdatedAt: Date | null;
+  /** When the provider says the customer was added to the store — see commerce_customers.sourceCreatedAt. */
+  sourceCreatedAt: Date | null;
 }
 
 /**
@@ -56,6 +58,7 @@ export class CustomerService {
           lastName: sql`excluded.last_name`,
           phone: sql`excluded.phone`,
           sourceUpdatedAt: sql`excluded.source_updated_at`,
+          sourceCreatedAt: sql`excluded.source_created_at`,
           updatedAt: new Date(),
         },
       });

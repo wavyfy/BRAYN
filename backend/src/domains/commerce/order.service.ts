@@ -57,6 +57,8 @@ export interface NormalizedOrder {
   customerExternalId: string | null;
   totalPrice: string | null;
   sourceUpdatedAt: Date | null;
+  /** When the order was placed at the source — see commerce_orders.sourceCreatedAt. */
+  sourceCreatedAt: Date | null;
   lineItems: NormalizedOrderLineItem[];
   refunds: NormalizedRefund[];
   fulfillments: NormalizedFulfillment[];
@@ -121,6 +123,7 @@ export class OrderService {
           customerId: order.customerExternalId ? (customerIdByExternalId.get(order.customerExternalId) ?? null) : null,
           totalPrice: order.totalPrice,
           sourceUpdatedAt: order.sourceUpdatedAt,
+          sourceCreatedAt: order.sourceCreatedAt,
         })),
       )
       .onConflictDoUpdate({
@@ -129,6 +132,7 @@ export class OrderService {
           customerId: sql`excluded.customer_id`,
           totalPrice: sql`excluded.total_price`,
           sourceUpdatedAt: sql`excluded.source_updated_at`,
+          sourceCreatedAt: sql`excluded.source_created_at`,
           updatedAt: new Date(),
         },
       })

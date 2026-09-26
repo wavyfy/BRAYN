@@ -51,7 +51,7 @@ function makeEvent(overrides: Partial<DomainEvent<{ provider: 'shopify'; updated
 describe('SyncProcessorService', () => {
   it('passes updatedAtMin to the adapter and applies each page via upsertMany, then completes the sync', async () => {
     const page: CustomerPage = {
-      customers: [{ externalId: '1', email: 'a@x.com', firstName: 'A', lastName: 'A', phone: null, sourceUpdatedAt: new Date() }],
+      customers: [{ externalId: '1', email: 'a@x.com', firstName: 'A', lastName: 'A', phone: null, sourceUpdatedAt: new Date(), sourceCreatedAt: null }],
       nextCursor: null,
     };
     const fetchCustomers = vi.fn(async () => page);
@@ -84,11 +84,11 @@ describe('SyncProcessorService', () => {
 
   it('paginates a resource across multiple pages, passing the same updatedAtMin each time', async () => {
     const page1: CustomerPage = {
-      customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+      customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: null }],
       nextCursor: 'cursor_2',
     };
     const page2: CustomerPage = {
-      customers: [{ externalId: '2', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+      customers: [{ externalId: '2', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: null }],
       nextCursor: null,
     };
     const fetchCustomers = vi.fn(async (_creds: unknown, cursor?: string) => (cursor ? page2 : page1));
@@ -118,7 +118,7 @@ describe('SyncProcessorService', () => {
     const customerPage: CustomerPage = { customers: [], nextCursor: null };
     const productPage: ProductPage = { products: [{ externalId: '55', title: 'Tee', sourceUpdatedAt: null, variants: [] }], nextCursor: null };
     const orderPage: OrderPage = {
-      orders: [{ externalId: '900', customerExternalId: null, totalPrice: '19.99', sourceUpdatedAt: null, lineItems: [], refunds: [], fulfillments: [] }],
+      orders: [{ externalId: '900', customerExternalId: null, totalPrice: '19.99', sourceUpdatedAt: null, sourceCreatedAt: null, lineItems: [], refunds: [], fulfillments: [] }],
       nextCursor: null,
     };
     const callOrder: string[] = [];
@@ -256,7 +256,7 @@ describe('SyncProcessorService', () => {
 
   it('fails the whole sync when an upsert throws mid-page, unlike ImportProcessorService', async () => {
     const page: CustomerPage = {
-      customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+      customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: null }],
       nextCursor: null,
     };
     const fetchCustomers = vi.fn(async () => page);
@@ -286,7 +286,7 @@ describe('SyncProcessorService', () => {
   describe('per-page retry (doc 19 Phase 17 — Retry/error handling)', () => {
     it('retries a transient upsert failure and succeeds on the second attempt, then completes the sync', async () => {
       const page: CustomerPage = {
-        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: null }],
         nextCursor: null,
       };
       const fetchCustomers = vi.fn(async () => page);
@@ -316,7 +316,7 @@ describe('SyncProcessorService', () => {
 
     it('retries a transient upsert failure and succeeds on the third attempt', async () => {
       const page: CustomerPage = {
-        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: null }],
         nextCursor: null,
       };
       const fetchCustomers = vi.fn(async () => page);
@@ -347,7 +347,7 @@ describe('SyncProcessorService', () => {
 
     it('exhausts retries (3 attempts) then still fails the whole sync — persistent failure, not a transient one', async () => {
       const page: CustomerPage = {
-        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: null }],
         nextCursor: null,
       };
       const fetchCustomers = vi.fn(async () => page);
@@ -377,11 +377,11 @@ describe('SyncProcessorService', () => {
 
     it('continues pagination correctly after a retried first page succeeds', async () => {
       const page1: CustomerPage = {
-        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: null }],
         nextCursor: 'cursor_2',
       };
       const page2: CustomerPage = {
-        customers: [{ externalId: '2', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        customers: [{ externalId: '2', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: null }],
         nextCursor: null,
       };
       const fetchCustomers = vi.fn(async (_creds: unknown, cursor?: string) => (cursor ? page2 : page1));

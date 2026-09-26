@@ -49,6 +49,7 @@ const order: NormalizedOrder = {
   customerExternalId: '1',
   totalPrice: '19.99',
   sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
+  sourceCreatedAt: new Date('2025-12-20T10:00:00Z'),
   lineItems: [{ externalId: '9001', variantExternalId: '901', quantity: 2, price: '9.99' }],
   refunds: [],
   fulfillments: [],
@@ -91,6 +92,7 @@ describe('OrderService', () => {
           customerId: 'cust_1',
           totalPrice: '19.99',
           sourceUpdatedAt: order.sourceUpdatedAt,
+          sourceCreatedAt: order.sourceCreatedAt,
         },
       ]);
       expect(lineItemChain.values).toHaveBeenCalledWith([

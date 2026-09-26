@@ -3,7 +3,7 @@ import { and, eq, desc, inArray, notInArray, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
-import { commerceOrders } from '../../database/schema/commerce-orders';
+import { commerceOrders, orderPlacedAt } from '../../database/schema/commerce-orders';
 import { commerceOrderLineItems } from '../../database/schema/commerce-order-line-items';
 import { commerceProductVariants } from '../../database/schema/commerce-product-variants';
 import { DatabaseService } from '../../database/database.service';
@@ -471,7 +471,7 @@ export class RevenueOpportunityService {
    * This customer's purchased variants, deduped by variant id and ordered
    * newest-purchase-first (by the owning order's own timestamp, same
    * recency convention as CustomerIntelligenceService.getActivity —
-   * sourceUpdatedAt falling back to BRAYN's own createdAt).
+   * `orderPlacedAt()`, when the order was placed at the source).
    */
   private async getPurchasedVariantsByRecency(
     workspaceId: string,
@@ -487,8 +487,7 @@ export class RevenueOpportunityService {
         variantId: commerceProductVariants.id,
         productId: commerceProductVariants.productId,
         price: commerceProductVariants.price,
-        orderSourceUpdatedAt: commerceOrders.sourceUpdatedAt,
-        orderCreatedAt: commerceOrders.createdAt,
+        purchasedAt: orderPlacedAt(),
       })
       .from(commerceOrderLineItems)
       .innerJoin(commerceOrders, eq(commerceOrderLineItems.orderId, commerceOrders.id))
@@ -497,7 +496,7 @@ export class RevenueOpportunityService {
 
     const byVariant = new Map<string, { variantId: string; productId: string; price: string | null; purchasedAt: Date }>();
     for (const row of rows) {
-      const purchasedAt = row.orderSourceUpdatedAt ?? row.orderCreatedAt;
+      const { purchasedAt } = row;
       const existing = byVariant.get(row.variantId);
       if (!existing || purchasedAt > existing.purchasedAt) {
         byVariant.set(row.variantId, { variantId: row.variantId, productId: row.productId, price: row.price, purchasedAt });
@@ -532,7 +531,8 @@ function detectReorder(customer: CustomerRecord): OpportunityCandidate | null {
     return null;
   }
 
-  // recentOrders is newest-first — average gap between consecutive orders.
+  // recentOrders is newest-first by source placement time (orderPlacedAt) — never BRAYN's
+  // import time, which a batch import makes identical for every order (~0-day gaps).
   const gapsMs: number[] = [];
   for (let i = 0; i < recentOrders.length - 1; i++) {
     gapsMs.push(recentOrders[i].createdAt.getTime() - recentOrders[i + 1].createdAt.getTime());

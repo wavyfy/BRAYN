@@ -49,13 +49,13 @@ describe('ImportProcessorService', () => {
   it('paginates through all pages, upserts customers, and completes the run', async () => {
     const page1: CustomerPage = {
       customers: [
-        { externalId: '1', email: 'a@x.com', firstName: 'A', lastName: 'A', phone: null, sourceUpdatedAt: null },
+        { externalId: '1', email: 'a@x.com', firstName: 'A', lastName: 'A', phone: null, sourceUpdatedAt: null, sourceCreatedAt: null },
       ],
       nextCursor: 'cursor_2',
     };
     const page2: CustomerPage = {
       customers: [
-        { externalId: '2', email: 'b@x.com', firstName: 'B', lastName: 'B', phone: null, sourceUpdatedAt: null },
+        { externalId: '2', email: 'b@x.com', firstName: 'B', lastName: 'B', phone: null, sourceUpdatedAt: null, sourceCreatedAt: null },
       ],
       nextCursor: null,
     };
@@ -159,7 +159,7 @@ describe('ImportProcessorService', () => {
 
   it('counts the whole page as failed when storing it throws, but keeps paginating', async () => {
     const page1: CustomerPage = {
-      customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+      customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: null }],
       nextCursor: null,
     };
     const fetchCustomers = vi.fn(async () => page1);
@@ -199,7 +199,7 @@ describe('ImportProcessorService', () => {
   describe('per-page retry (doc 19 Phase 17 — Retry/error handling)', () => {
     it('retries a transient upsert failure and succeeds on the second attempt, without double-counting the page', async () => {
       const page: CustomerPage = {
-        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: null }],
         nextCursor: null,
       };
       const fetchCustomers = vi.fn(async () => page);
@@ -237,7 +237,7 @@ describe('ImportProcessorService', () => {
 
     it('retries a transient upsert failure and succeeds on the third attempt', async () => {
       const page: CustomerPage = {
-        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: null }],
         nextCursor: null,
       };
       const fetchCustomers = vi.fn(async () => page);
@@ -275,7 +275,7 @@ describe('ImportProcessorService', () => {
 
     it('exhausts retries (3 attempts, matching withRetry()\'s default) then reaches the existing failed-page path, run still completes', async () => {
       const page: CustomerPage = {
-        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: null }],
         nextCursor: null,
       };
       const fetchCustomers = vi.fn(async () => page);
@@ -312,11 +312,11 @@ describe('ImportProcessorService', () => {
 
     it('continues pagination correctly after a retried first page succeeds — the second page is fetched with the correct cursor and counted', async () => {
       const page1: CustomerPage = {
-        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: null }],
         nextCursor: 'cursor_2',
       };
       const page2: CustomerPage = {
-        customers: [{ externalId: '2', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+        customers: [{ externalId: '2', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: null }],
         nextCursor: null,
       };
       const fetchCustomers = vi.fn(async (_creds: unknown, cursor?: string) => (cursor ? page2 : page1));
@@ -388,7 +388,7 @@ describe('ImportProcessorService', () => {
 
   it('imports customers then products in the same run, with cumulative progress', async () => {
     const customerPage: CustomerPage = {
-      customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+      customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: null }],
       nextCursor: null,
     };
     const productPage: ProductPage = {
@@ -464,7 +464,7 @@ describe('ImportProcessorService', () => {
 
   it('imports orders last, after customers and products, with cumulative progress', async () => {
     const customerPage: CustomerPage = {
-      customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null }],
+      customers: [{ externalId: '1', email: null, firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: null }],
       nextCursor: null,
     };
     const productPage: ProductPage = {
@@ -472,7 +472,7 @@ describe('ImportProcessorService', () => {
       nextCursor: null,
     };
     const orderPage: OrderPage = {
-      orders: [{ externalId: '900', customerExternalId: '1', totalPrice: '19.99', sourceUpdatedAt: null, lineItems: [], refunds: [], fulfillments: [] }],
+      orders: [{ externalId: '900', customerExternalId: '1', totalPrice: '19.99', sourceUpdatedAt: null, sourceCreatedAt: null, lineItems: [], refunds: [], fulfillments: [] }],
       nextCursor: null,
     };
     const callOrder: string[] = [];

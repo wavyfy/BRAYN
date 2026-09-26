@@ -1,8 +1,9 @@
-import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { apiFetch, ApiError } from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { ApiErrorState } from '@/components/api-error-state';
+import { PageBody, PageHeader } from '@/components/ui/page-header';
+import { StatusDot, type BadgeTone } from '@/components/ui/status-badge';
 import { ConnectForm } from './connect-form';
 import { ShopifyConnect } from './shopify-connect';
 import { IntegrationActions, type ImportRun } from './integration-actions';
@@ -16,20 +17,12 @@ type Integration = {
 };
 type WorkspaceSummary = { id: string; role: string };
 
-const statusStyles: Record<Integration['status'], string> = {
-  connected: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
-  syncing: 'bg-sky-50 text-sky-700 ring-sky-600/20',
-  error: 'bg-red-50 text-red-700 ring-red-600/20',
-  disconnected: 'bg-slate-100 text-slate-700 ring-slate-500/20',
+const statusTone: Record<Integration['status'], BadgeTone> = {
+  connected: 'success',
+  syncing: 'info',
+  error: 'danger',
+  disconnected: 'neutral',
 };
-
-function StatusBadge({ status }: { status: Integration['status'] }) {
-  return (
-    <span className={`inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium capitalize ring-1 ring-inset ${statusStyles[status]}`}>
-      {status}
-    </span>
-  );
-}
 
 /**
  * One provider's card: connect form when there's no live connection,
@@ -41,6 +34,7 @@ function ProviderCard({
   workspaceId,
   provider,
   providerLabel,
+  description,
   integration,
   latestImport,
   canManage,
@@ -49,22 +43,34 @@ function ProviderCard({
   workspaceId: string;
   provider: string;
   providerLabel: string;
+  description: string;
   integration: Integration | null;
   latestImport: ImportRun | null;
   canManage: boolean;
   connect: ReactNode;
 }) {
   const isLive = integration && integration.status !== 'disconnected';
+  const status = integration?.status ?? 'disconnected';
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between gap-3">
-        <CardTitle>{providerLabel}</CardTitle>
-        <StatusBadge status={integration?.status ?? 'disconnected'} />
-      </CardHeader>
-      <CardContent>
+    <Card className="flex flex-col">
+      <div className="flex items-start justify-between gap-4 px-5 pb-4 pt-5">
+        <div className="flex min-w-0 items-start gap-3">
+          <span aria-hidden className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-subtle text-sm font-semibold text-foreground/70 ring-1 ring-inset ring-border">
+            {providerLabel.charAt(0)}
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-foreground">{providerLabel}</h2>
+            <p className="mt-0.5 text-[13px] text-muted-foreground">{description}</p>
+          </div>
+        </div>
+        <StatusDot tone={statusTone[status]} className="shrink-0 capitalize">
+          {status}
+        </StatusDot>
+      </div>
+      <div className="flex-1 border-t border-border bg-subtle/40 px-5 py-4">
         {!canManage ? (
-          <p className="text-sm text-slate-500">{isLive ? `Connected. Ask an owner or admin to manage this integration.` : 'Not connected.'}</p>
+          <p className="text-[13px] text-muted-foreground">{isLive ? `Connected. Ask an owner or admin to manage this integration.` : 'Not connected.'}</p>
         ) : isLive ? (
           <IntegrationActions
             workspaceId={workspaceId}
@@ -78,7 +84,7 @@ function ProviderCard({
         ) : (
           connect
         )}
-      </CardContent>
+      </div>
     </Card>
   );
 }
@@ -127,29 +133,27 @@ export default async function IntegrationsPage({
   ]);
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-12">
-      <Link href={`/workspace/${workspaceId}`} className="text-sm text-slate-500 hover:text-slate-700">
-        &larr; Workspace
-      </Link>
+    <main>
+      <PageHeader title="Integrations" description="The stores BRAYN imports customers, orders and products from." />
 
-      <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">Integrations</h1>
+      <PageBody className="space-y-4">
+        {searchParams.shopify === 'connected' && (
+          <p role="status" className="rounded-lg bg-success/[0.07] px-3 py-2 text-[13px] text-success ring-1 ring-inset ring-success/20">
+            Shopify connected.
+          </p>
+        )}
+        {searchParams.shopify === 'error' && (
+          <p role="alert" className="rounded-lg bg-danger/[0.06] px-3 py-2 text-[13px] text-danger ring-1 ring-inset ring-danger/20">
+            {OAUTH_ERROR_REASONS[searchParams.reason ?? ''] ?? 'Could not connect Shopify. Please try again.'}
+          </p>
+        )}
 
-      {searchParams.shopify === 'connected' && (
-        <p className="mt-4 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
-          Shopify connected.
-        </p>
-      )}
-      {searchParams.shopify === 'error' && (
-        <p className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">
-          {OAUTH_ERROR_REASONS[searchParams.reason ?? ''] ?? 'Could not connect Shopify. Please try again.'}
-        </p>
-      )}
-
-      <div className="mt-6 space-y-6">
+      <div className="grid grid-cols-1 items-stretch gap-5 xl:grid-cols-2">
         <ProviderCard
           workspaceId={workspaceId}
           provider="shopify"
           providerLabel="Shopify"
+          description="Customers, orders and products from your Shopify store."
           integration={shopify}
           latestImport={shopifyImport}
           canManage={canManage}
@@ -160,6 +164,7 @@ export default async function IntegrationsPage({
           workspaceId={workspaceId}
           provider="woocommerce"
           providerLabel="WooCommerce"
+          description="Customers, orders and products from your WooCommerce store."
           integration={woocommerce}
           latestImport={woocommerceImport}
           canManage={canManage}
@@ -177,6 +182,7 @@ export default async function IntegrationsPage({
           }
         />
       </div>
+      </PageBody>
     </main>
   );
 }

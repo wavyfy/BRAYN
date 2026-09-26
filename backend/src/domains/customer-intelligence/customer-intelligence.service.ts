@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { and, desc, eq, ilike, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
-import { commerceOrders } from '../../database/schema/commerce-orders';
+import { commerceOrders, orderPlacedAt } from '../../database/schema/commerce-orders';
 import { websiteVisitors } from '../../database/schema/website-visitors';
 import { websiteEvents } from '../../database/schema/website-events';
 import { DatabaseService } from '../../database/database.service';
@@ -38,6 +38,7 @@ export interface RecentOrder {
   provider: string;
   externalId: string;
   totalPrice: string | null;
+  /** When the order was placed at the source (`orderPlacedAt()`), not when BRAYN stored it. */
   createdAt: Date;
 }
 
@@ -105,7 +106,7 @@ interface SourceCustomerRow {
   lastName: string | null;
   phone: string | null;
   sourceUpdatedAt: Date | null;
-  createdAt: Date;
+  sourceCreatedAt: Date | null;
 }
 
 /**
@@ -230,8 +231,13 @@ export class CustomerIntelligenceService {
    * `customer_created` entry (there can be more than one — a customer
    * connected across two providers has two source records, doc08 — each
    * entry keeps its own source, not a merged fiction); each order becomes
-   * one `order_placed` entry, timed by the provider's own `sourceUpdatedAt`
-   * where available (falling back to BRAYN's own `createdAt`).
+   * one `order_placed` entry, timed by when it was placed at the source
+   * (`orderPlacedAt()`). A `customer_created` entry is timed by the
+   * provider's own "added to the store" time (`sourceCreatedAt`) and is
+   * left out entirely when that is unknown (a legacy row) — BRAYN's own
+   * row-insert time is when the store was connected/imported, not a
+   * customer event, so using it would put an import timestamp into the
+   * customer's history.
    */
   async getActivity(workspaceId: string, canonicalCustomerId: string): Promise<ActivityEntry[]> {
     await this.requireCanonical(workspaceId, canonicalCustomerId);
@@ -246,8 +252,7 @@ export class CustomerIntelligenceService {
               provider: commerceOrders.provider,
               externalId: commerceOrders.externalId,
               totalPrice: commerceOrders.totalPrice,
-              sourceUpdatedAt: commerceOrders.sourceUpdatedAt,
-              createdAt: commerceOrders.createdAt,
+              placedAt: orderPlacedAt(),
             })
             .from(commerceOrders)
             .where(and(eq(commerceOrders.workspaceId, workspaceId), inArray(commerceOrders.customerId, sourceCustomerIds)));
@@ -262,18 +267,15 @@ export class CustomerIntelligenceService {
     const websiteActivity = await this.getRecentWebsiteEvents(workspaceId, visitorIds, ACTIVITY_LIMIT);
 
     const entries: ActivityEntry[] = [
-      ...sourceRows.map(
-        (row): ActivityEntry => ({
-          type: 'customer_created',
-          occurredAt: row.createdAt,
-          provider: row.provider,
-          externalId: row.externalId,
-        }),
+      ...sourceRows.flatMap((row): ActivityEntry[] =>
+        row.sourceCreatedAt
+          ? [{ type: 'customer_created', occurredAt: row.sourceCreatedAt, provider: row.provider, externalId: row.externalId }]
+          : [],
       ),
       ...orders.map(
         (order): ActivityEntry => ({
           type: 'order_placed',
-          occurredAt: order.sourceUpdatedAt ?? order.createdAt,
+          occurredAt: order.placedAt,
           provider: order.provider,
           externalId: order.externalId,
           totalPrice: order.totalPrice,
@@ -340,7 +342,7 @@ export class CustomerIntelligenceService {
         lastName: commerceCustomers.lastName,
         phone: commerceCustomers.phone,
         sourceUpdatedAt: commerceCustomers.sourceUpdatedAt,
-        createdAt: commerceCustomers.createdAt,
+        sourceCreatedAt: commerceCustomers.sourceCreatedAt,
       })
       .from(commerceCustomers)
       .where(
@@ -359,8 +361,8 @@ export class CustomerIntelligenceService {
       .select({
         ordersCount: sql<number>`count(*)`,
         totalSpent: sql<string>`coalesce(sum(${commerceOrders.totalPrice}::numeric), 0)`,
-        lastOrderAt: sql<Date | null>`max(${commerceOrders.sourceUpdatedAt})`,
-        ordersLast90Days: sql<number>`count(*) filter (where coalesce(${commerceOrders.sourceUpdatedAt}, ${commerceOrders.createdAt}) >= now() - interval '90 days')`,
+        lastOrderAt: sql<Date | null>`max(${orderPlacedAt()})`,
+        ordersLast90Days: sql<number>`count(*) filter (where ${orderPlacedAt()} >= now() - interval '90 days')`,
       })
       .from(commerceOrders)
       .where(
@@ -376,11 +378,11 @@ export class CustomerIntelligenceService {
         provider: commerceOrders.provider,
         externalId: commerceOrders.externalId,
         totalPrice: commerceOrders.totalPrice,
-        createdAt: commerceOrders.createdAt,
+        createdAt: orderPlacedAt(),
       })
       .from(commerceOrders)
       .where(and(eq(commerceOrders.workspaceId, workspaceId), inArray(commerceOrders.customerId, sourceCustomerIds)))
-      .orderBy(desc(commerceOrders.createdAt))
+      .orderBy(desc(orderPlacedAt()))
       .limit(RECENT_ORDERS_LIMIT);
 
     return {

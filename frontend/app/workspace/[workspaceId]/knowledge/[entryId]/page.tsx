@@ -1,7 +1,10 @@
-import Link from 'next/link';
 import { apiFetch, ApiError } from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { ApiErrorState } from '@/components/api-error-state';
+import { PageBody, PageHeader } from '@/components/ui/page-header';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { SectionHeader } from '@/components/ui/section';
+import { formatDateTime } from '@/lib/format';
 import { EditEntryForm } from './edit-entry-form';
 
 type Entry = { id: string; type: 'knowledge' | 'policy'; title: string; content: string; version: number };
@@ -31,46 +34,50 @@ export default async function KnowledgeEntryPage({ params }: { params: { workspa
   const canManage = role === 'owner' || role === 'admin';
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-12">
-      <Link href={`/workspace/${workspaceId}/knowledge`} className="text-sm text-slate-500 hover:text-slate-700">
-        &larr; Knowledge &amp; Policies
-      </Link>
+    <main>
+      <PageHeader
+        title={entry.title}
+        backHref={`/workspace/${workspaceId}/knowledge`}
+        backLabel="Knowledge & Policies"
+        description={
+          <span className="inline-flex items-center gap-2">
+            <StatusBadge tone={entry.type === 'policy' ? 'warning' : 'info'} className="capitalize">
+              {entry.type}
+            </StatusBadge>
+            <span className="tabular-nums">Version {entry.version}</span>
+          </span>
+        }
+      />
 
-      <div className="mt-2 flex items-center justify-between gap-3">
-        <h1 className="truncate text-2xl font-semibold tracking-tight text-slate-900">{entry.title}</h1>
-        <span className="shrink-0 text-sm capitalize text-slate-500">{entry.type} · v{entry.version}</span>
-      </div>
+      <PageBody>
+        <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <Card className="p-4">
+            <SectionHeader title={canManage ? 'Edit' : 'Content'} />
+            <div className="mt-4">
+              {canManage ? (
+                <EditEntryForm workspaceId={workspaceId} entryId={entryId} currentTitle={entry.title} currentContent={entry.content} />
+              ) : (
+                <p className="max-w-[72ch] whitespace-pre-wrap text-[14px] leading-relaxed text-foreground">{entry.content}</p>
+              )}
+            </div>
+          </Card>
 
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>{canManage ? 'Edit' : 'Content'}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {canManage ? (
-            <EditEntryForm workspaceId={workspaceId} entryId={entryId} currentTitle={entry.title} currentContent={entry.content} />
-          ) : (
-            <p className="whitespace-pre-wrap text-sm text-slate-900">{entry.content}</p>
-          )}
-        </CardContent>
-      </Card>
-
-      {history.length > 1 && (
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle>Version history</CardTitle>
-          </CardHeader>
-          <ul className="divide-y divide-slate-200">
-            {history.map((h) => (
-              <li key={h.version} className="flex items-center justify-between gap-3 px-5 py-2.5 text-sm">
-                <span className="text-slate-600">
-                  v{h.version} · {h.title}
-                </span>
-                <span className="text-slate-400">{new Date(h.changedAt).toLocaleString()}</span>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
+          <section>
+            <SectionHeader title="Version history" count={history.length} />
+            <ol className="mt-3 divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface shadow-panel">
+              {history.map((h) => (
+                <li key={h.version} className="px-4 py-2.5 text-[13px]">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium tabular-nums text-foreground">v{h.version}</span>
+                    <span className="text-xs text-muted-foreground">{formatDateTime(h.changedAt)}</span>
+                  </div>
+                  <p className="mt-0.5 truncate text-muted-foreground">{h.title}</p>
+                </li>
+              ))}
+            </ol>
+          </section>
+        </div>
+      </PageBody>
     </main>
   );
 }

@@ -64,8 +64,8 @@ export function CreateAutomationForm({ workspaceId }: { workspaceId: string }) {
         }
       }}
     >
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="min-w-0 flex-1 space-y-1.5">
+      <div className="space-y-3">
+        <div className="space-y-1.5">
           <Label htmlFor="automation-name">Name</Label>
           <Input
             id="automation-name"
@@ -76,10 +76,11 @@ export function CreateAutomationForm({ workspaceId }: { workspaceId: string }) {
             required
           />
         </div>
-        <div className="min-w-0 flex-1 space-y-1.5">
+        <div className="space-y-1.5">
           <Label htmlFor="automation-trigger-type">Trigger</Label>
           <Select
             id="automation-trigger-type"
+            className="w-full"
             value={triggerType}
             onChange={(e) => setTriggerType(e.target.value as AutomationTriggerType)}
           >
@@ -90,21 +91,18 @@ export function CreateAutomationForm({ workspaceId }: { workspaceId: string }) {
             ))}
           </Select>
         </div>
-        <Button type="submit" disabled={pending}>
-          {pending ? 'Adding…' : 'Add automation'}
-        </Button>
       </div>
 
       {isRevenueOpportunityTrigger ? (
         <>
-          <p className="text-xs text-slate-500">Runs when a revenue opportunity is created. Leave a filter empty to match every value.</p>
+          <p className="text-xs text-muted-foreground">Runs when a revenue opportunity is created. Leave a filter empty to match every value.</p>
 
           <div className="flex flex-wrap gap-6">
             <div className="space-y-1.5">
               <Label>Priority</Label>
               <div className="flex flex-wrap gap-3">
                 {PRIORITIES.map((priority) => (
-                  <label key={priority} className="flex items-center gap-1.5 text-sm capitalize text-slate-700">
+                  <label key={priority} className="flex items-center gap-1.5 text-sm capitalize text-foreground/80">
                     <Checkbox checked={priorityIn.includes(priority)} onChange={() => setPriorityIn((prev) => toggle(prev, priority))} />
                     {priority}
                   </label>
@@ -115,7 +113,7 @@ export function CreateAutomationForm({ workspaceId }: { workspaceId: string }) {
               <Label>Opportunity type</Label>
               <div className="flex flex-wrap gap-3">
                 {TYPES.map((type) => (
-                  <label key={type} className="flex items-center gap-1.5 text-sm capitalize text-slate-700">
+                  <label key={type} className="flex items-center gap-1.5 text-sm capitalize text-foreground/80">
                     <Checkbox checked={typeIn.includes(type)} onChange={() => setTypeIn((prev) => toggle(prev, type))} />
                     {type.replace('_', ' ')}
                   </label>
@@ -125,11 +123,14 @@ export function CreateAutomationForm({ workspaceId }: { workspaceId: string }) {
           </div>
         </>
       ) : (
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-muted-foreground">
           Runs every time a customer&apos;s health score is recalculated. Filtering by health status isn&apos;t available yet.
         </p>
       )}
 
+      <Button type="submit" disabled={pending}>
+        {pending ? 'Adding…' : 'Add automation'}
+      </Button>
       {error && <ErrorText>{error}</ErrorText>}
     </form>
   );

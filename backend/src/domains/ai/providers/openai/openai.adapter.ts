@@ -20,6 +20,30 @@ import type { Env } from '../../../../config/env.schema';
  */
 const REQUEST_TIMEOUT_MS = 30_000;
 
+/**
+ * OpenAI function names must match `^[a-zA-Z0-9_-]+$`, but BRAYN tool names
+ * are AI Action Control action names (e.g. `recommendation.dismiss`), which
+ * are persisted and audited and must not change. So names are encoded here,
+ * at the provider boundary, and decoded back on every returned tool call.
+ */
+function toProviderToolName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]/g, '-');
+}
+
+/** provider name → BRAYN name for this request's tools; refuses a request where two BRAYN names would encode to the same provider name. */
+function providerToolNameMap(tools: AiToolDefinition[] | undefined): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const tool of tools ?? []) {
+    const providerName = toProviderToolName(tool.name);
+    const existing = map.get(providerName);
+    if (existing !== undefined && existing !== tool.name) {
+      throw new ProviderError(`Tool names "${existing}" and "${tool.name}" collide for OpenAI.`);
+    }
+    map.set(providerName, tool.name);
+  }
+  return map;
+}
+
 /** doc14 Tool Architecture → OpenAI Responses API function-tool shape. `strict: false` — BRAYN tool schemas aren't authored as OpenAI's strict-mode subset (doc19 Phase 12 step 6 scope: reuse existing schemas, don't redesign them to fit a stricter dialect). */
 function toResponsesTools(tools: AiToolDefinition[] | undefined): Responses.Tool[] | undefined {
   if (!tools || tools.length === 0) {
@@ -28,7 +52,7 @@ function toResponsesTools(tools: AiToolDefinition[] | undefined): Responses.Tool
   return tools.map(
     (tool): Responses.FunctionTool => ({
       type: 'function',
-      name: tool.name,
+      name: toProviderToolName(tool.name),
       description: tool.description,
       parameters: tool.parameters,
       strict: false,
@@ -53,7 +77,7 @@ function toResponsesInput(messages: AiMessage[]): Responses.ResponseInputItem[] 
     }
     if (message.toolCalls && message.toolCalls.length > 0) {
       for (const call of message.toolCalls) {
-        items.push({ type: 'function_call', call_id: call.id, name: call.name, arguments: call.arguments });
+        items.push({ type: 'function_call', call_id: call.id, name: toProviderToolName(call.name), arguments: call.arguments });
       }
       continue;
     }
@@ -127,6 +151,7 @@ export class OpenAiAdapter implements AiProvider {
 
     const model = request.model ?? this.defaultModel;
     const tools = toResponsesTools(request.tools);
+    const braynToolName = providerToolNameMap(request.tools);
 
     const response = await withRetry(
       () => client.responses.create({ model, input: toResponsesInput(request.messages), ...(tools ? { tools } : {}) }),
@@ -149,7 +174,7 @@ export class OpenAiAdapter implements AiProvider {
       content: response.output_text,
       toolCalls:
         functionCalls.length > 0
-          ? functionCalls.map((call) => ({ id: call.call_id, name: call.name, arguments: call.arguments }))
+          ? functionCalls.map((call) => ({ id: call.call_id, name: braynToolName.get(call.name) ?? call.name, arguments: call.arguments }))
           : undefined,
       model: response.model,
       provider: this.name,

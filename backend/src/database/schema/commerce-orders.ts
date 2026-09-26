@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { id, timestamps, workspaceId } from './columns';
 import { integrations } from './integrations';
@@ -32,7 +33,18 @@ export const commerceOrders = pgTable(
     /** Provider's own order id (Shopify `order.id`, etc.). */
     externalId: text('external_id').notNull(),
     totalPrice: text('total_price'),
+    /** Provider's last-modified time — moves on fulfillment/refund/edit, so it is NOT when the order was placed. */
     sourceUpdatedAt: timestamp('source_updated_at', { withTimezone: true }),
+    /**
+     * When the order was placed at the source (Shopify `Order.createdAt` —
+     * set at checkout completion, never changes; WooCommerce
+     * `date_created_gmt`). The authoritative time for business timing
+     * (reorder gaps, recency, activity). `createdAt` is only when BRAYN
+     * stored the row — a batch import gives every order the same one.
+     * Null for rows imported before this column existed; see
+     * `orderPlacedAt` for the fallback.
+     */
+    sourceCreatedAt: timestamp('source_created_at', { withTimezone: true }),
     ...timestamps(),
   },
   (table) => [
@@ -43,3 +55,17 @@ export const commerceOrders = pgTable(
     ),
   ],
 );
+
+/**
+ * When an order was placed, for any business-timing logic (reorder gaps,
+ * recency, 90-day frequency, activity chronology). Source placement time
+ * first; for a legacy row with no `sourceCreatedAt` yet, the provider's
+ * last-modified time (still a source time), then BRAYN's own `createdAt`
+ * only as the last resort. A full re-import backfills
+ * `sourceCreatedAt`, so the fallbacks only apply to legacy rows. A new
+ * fragment per call — mapped back to a Date like a real timestamp column.
+ */
+export const orderPlacedAt = () =>
+  sql<Date>`coalesce(${commerceOrders.sourceCreatedAt}, ${commerceOrders.sourceUpdatedAt}, ${commerceOrders.createdAt})`.mapWith(
+    commerceOrders.createdAt,
+  );
