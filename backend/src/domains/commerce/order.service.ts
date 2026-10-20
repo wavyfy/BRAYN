@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { createEvent, type DomainEvent } from '../../common/events/domain-event';
+import { EventBus } from '../../common/events/event-bus.service';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { commerceOrders } from '../../database/schema/commerce-orders';
 import { commerceOrderLineItems } from '../../database/schema/commerce-order-line-items';
@@ -9,6 +12,7 @@ import { commerceRefundLineItems } from '../../database/schema/commerce-refund-l
 import { commerceFulfillments } from '../../database/schema/commerce-fulfillments';
 import { DatabaseService } from '../../database/database.service';
 import type { IntegrationProvider } from '../integration/dto/connect-integration.schema';
+import type { OrderEventPayload, RefundProcessedPayload } from './commerce-events';
 
 export interface NormalizedOrderLineItem {
   externalId: string;
@@ -59,9 +63,86 @@ export interface NormalizedOrder {
   sourceUpdatedAt: Date | null;
   /** When the order was placed at the source — see commerce_orders.sourceCreatedAt. */
   sourceCreatedAt: Date | null;
+  /** When the order was cancelled at the source, null if it isn't — see commerce_orders.sourceCancelledAt. */
+  sourceCancelledAt?: Date | null;
   lineItems: NormalizedOrderLineItem[];
   refunds: NormalizedRefund[];
   fulfillments: NormalizedFulfillment[];
+}
+
+export interface UpsertOrdersOptions {
+  /**
+   * Emit commerce domain events (commerce-events.ts) for the state changes
+   * this call applies. True for a live change (webhook delivery); false
+   * (default) for import/sync/reconciliation, which backfill pre-existing
+   * history rather than report something that just happened.
+   */
+  emitDomainEvents?: boolean;
+}
+
+/**
+ * Rejects an out-of-order (older) source version on ON CONFLICT so a late
+ * delivery never overwrites newer state. Equal versions still write — a
+ * retry or a re-import must be able to re-apply the same data. Unknown
+ * (null) versions can't be compared and are applied as before.
+ */
+const NOT_STALE = (table: 'commerce_orders' | 'commerce_fulfillments') =>
+  sql.raw(
+    `excluded.source_updated_at IS NULL OR ${table}.source_updated_at IS NULL OR excluded.source_updated_at >= ${table}.source_updated_at`,
+  );
+
+/** The stored order fields a commerce event payload is built from. */
+interface OrderRef {
+  id: string;
+  externalId: string;
+  customerId: string | null;
+}
+
+function orderEventPayload(
+  provider: IntegrationProvider,
+  order: OrderRef,
+  canonicalByCustomerId: Map<string, string>,
+  sourceOccurredAt: Date | null,
+): OrderEventPayload {
+  return {
+    orderId: order.id,
+    orderExternalId: order.externalId,
+    provider,
+    canonicalCustomerId: order.customerId ? (canonicalByCustomerId.get(order.customerId) ?? null) : null,
+    sourceOccurredAt: sourceOccurredAt?.toISOString() ?? null,
+  };
+}
+
+/** One `refund.processed` per refund row this write inserted (an updated row was already reported by whichever delivery inserted it). */
+function refundProcessedEvents(
+  workspaceId: string,
+  provider: IntegrationProvider,
+  refundRows: Array<{ id: string; externalId: string; orderId: string; totalRefunded: string | null; processedAt: Date | null; createdAt: Date; updatedAt: Date }>,
+  orderById: Map<string, OrderRef>,
+  canonicalByCustomerId: Map<string, string>,
+): DomainEvent<RefundProcessedPayload>[] {
+  return refundRows
+    .filter((refund) => refund.createdAt.getTime() === refund.updatedAt.getTime())
+    .map((refund) =>
+      createEvent<RefundProcessedPayload>({
+        type: 'refund.processed',
+        workspaceId,
+        entityId: refund.id,
+        idempotencyKey: `refund.processed:${refund.id}`,
+        payload: {
+          ...orderEventPayload(provider, orderById.get(refund.orderId)!, canonicalByCustomerId, refund.processedAt),
+          refundId: refund.id,
+          refundExternalId: refund.externalId,
+          totalRefunded: refund.totalRefunded,
+        },
+      }),
+    );
+}
+
+/** Strictly newer source version — what makes an applied write an `order.updated`. A row with no previous version gaining one counts. */
+function isNewerVersion(next: Date | null, previous: Date | null): boolean {
+  if (!next) return false;
+  return !previous || next.getTime() > previous.getTime();
 }
 
 /**
@@ -73,16 +154,37 @@ export interface NormalizedOrder {
  * already owns (doc 20 — "Required customer/order relationships") on a
  * best-effort basis: a reference to a not-yet-imported customer or
  * variant is stored as null rather than blocking the order itself.
+ *
+ * Also the producer of the commerce domain events (doc21 Event Producers —
+ * "The domain that owns the state/change produces the event"; see
+ * commerce-events.ts): each event is derived from the state change this
+ * service actually applied, never from a provider webhook topic.
  */
 @Injectable()
 export class OrderService {
-  constructor(private readonly database: DatabaseService) {}
+  constructor(
+    private readonly database: DatabaseService,
+    private readonly eventBus: EventBus,
+  ) {}
 
+  /**
+   * Writes a batch of orders with their line items, refunds and
+   * fulfillments in one transaction — a crash mid-batch leaves nothing
+   * half-written, so a retry re-applies the whole order (the durable
+   * webhook row is the source of truth; see WebhookEventProcessorService).
+   *
+   * With `emitDomainEvents`, the order rows are first read `FOR UPDATE` so
+   * the previous version/cancellation is known and concurrent deliveries
+   * for the same order serialize — a duplicate delivery then sees the
+   * already-applied state and emits nothing. Events are emitted only after
+   * commit, so a rolled-back write never announces a change.
+   */
   async upsertMany(
     workspaceId: string,
     integrationId: string,
     provider: IntegrationProvider,
     orders: NormalizedOrder[],
+    options: UpsertOrdersOptions = {},
   ): Promise<{
     ordersWritten: number;
     lineItemsWritten: number;
@@ -90,9 +192,7 @@ export class OrderService {
     fulfillmentsWritten: number;
     /**
      * Canonical customer ids for orders that were freshly inserted this
-     * call (not an update to a pre-existing order), deduped, for a
-     * caller that wants to react only to a genuinely new order (doc10 —
-     * "Order Placed" as a significant Customer Health event). Only
+     * call (not an update to a pre-existing order), deduped. Only
      * populated for a customer that Identity Resolution has already
      * linked to a canonical identity (`commerceCustomers.canonicalCustomerId`
      * non-null) — a not-yet-resolved or guest-checkout order yields
@@ -105,14 +205,35 @@ export class OrderService {
       return { ordersWritten: 0, lineItemsWritten: 0, refundsWritten: 0, fulfillmentsWritten: 0, newOrderCanonicalCustomerIds: [] };
     }
 
+    const { result, events } = await this.database.transaction((db) =>
+      this.applyOrders(db, workspaceId, integrationId, provider, orders, options.emitDomainEvents === true),
+    );
+
+    for (const event of events) {
+      this.eventBus.emit(event);
+    }
+    return result;
+  }
+
+  private async applyOrders(
+    db: NodePgDatabase,
+    workspaceId: string,
+    integrationId: string,
+    provider: IntegrationProvider,
+    orders: NormalizedOrder[],
+    emitDomainEvents: boolean,
+  ) {
     const customerIdByExternalId = await this.lookupIds(
+      db,
       commerceCustomers,
       workspaceId,
       provider,
       orders.map((order) => order.customerExternalId),
     );
 
-    const orderRows = await this.database.client
+    const previousByExternalId = emitDomainEvents ? await this.lockPreviousState(db, workspaceId, provider, orders) : new Map();
+
+    const orderRows = await db
       .insert(commerceOrders)
       .values(
         orders.map((order) => ({
@@ -124,6 +245,7 @@ export class OrderService {
           totalPrice: order.totalPrice,
           sourceUpdatedAt: order.sourceUpdatedAt,
           sourceCreatedAt: order.sourceCreatedAt,
+          sourceCancelledAt: order.sourceCancelledAt ?? null,
         })),
       )
       .onConflictDoUpdate({
@@ -133,12 +255,19 @@ export class OrderService {
           totalPrice: sql`excluded.total_price`,
           sourceUpdatedAt: sql`excluded.source_updated_at`,
           sourceCreatedAt: sql`excluded.source_created_at`,
+          sourceCancelledAt: sql`excluded.source_cancelled_at`,
           updatedAt: new Date(),
         },
+        // A stale row comes back from RETURNING with nothing — its line items/refunds/fulfillments are skipped with it.
+        setWhere: NOT_STALE('commerce_orders'),
       })
       .returning({
         id: commerceOrders.id,
         externalId: commerceOrders.externalId,
+        customerId: commerceOrders.customerId,
+        sourceUpdatedAt: commerceOrders.sourceUpdatedAt,
+        sourceCreatedAt: commerceOrders.sourceCreatedAt,
+        sourceCancelledAt: commerceOrders.sourceCancelledAt,
         createdAt: commerceOrders.createdAt,
         updatedAt: commerceOrders.updatedAt,
       });
@@ -154,14 +283,13 @@ export class OrderService {
      * this provider-agnostic (doc06 — Provider Isolation) and correctly
      * idempotent on a retried/replayed delivery: a retry's upsert always
      * hits the ON CONFLICT branch for an order this call already
-     * inserted, so `newOrderCanonicalCustomerIds` never repeats an id for
-     * the same real order across retries.
+     * inserted, so it is never reported as new twice.
      */
-    const newlyInsertedOrderExternalIds = new Set(
-      orderRows.filter((row) => row.createdAt.getTime() === row.updatedAt.getTime()).map((row) => row.externalId),
-    );
+    const isInserted = (row: { createdAt: Date; updatedAt: Date }) => row.createdAt.getTime() === row.updatedAt.getTime();
+    const newlyInsertedOrderExternalIds = new Set(orderRows.filter(isInserted).map((row) => row.externalId));
 
     const variantIdByExternalId = await this.lookupIds(
+      db,
       commerceProductVariants,
       workspaceId,
       provider,
@@ -187,7 +315,7 @@ export class OrderService {
 
     let orderLineItemIdByExternalId = new Map<string, string>();
     if (lineItemValues.length > 0) {
-      const lineItemRows = await this.database.client
+      const lineItemRows = await db
         .insert(commerceOrderLineItems)
         .values(lineItemValues)
         .onConflictDoUpdate({
@@ -207,12 +335,15 @@ export class OrderService {
       orderLineItemIdByExternalId = new Map(lineItemRows.map((row) => [row.externalId, row.id]));
     }
 
-    const refundsWritten = await this.upsertRefunds(
+    const refundRows = await this.writeRefunds(
+      db,
       workspaceId,
       integrationId,
       provider,
-      orders,
-      orderIdByExternalId,
+      orders.flatMap((order) => {
+        const orderId = orderIdByExternalId.get(order.externalId);
+        return orderId ? order.refunds.map((refund) => ({ ...refund, orderId })) : [];
+      }),
       orderLineItemIdByExternalId,
     );
 
@@ -223,37 +354,94 @@ export class OrderService {
       }
       return order.fulfillments.map((fulfillment) => ({ ...fulfillment, orderId }));
     });
-    const fulfillmentsWritten = await this.writeFulfillments(workspaceId, integrationId, provider, fulfillmentRows);
+    const fulfillmentsWritten = await this.writeFulfillments(db, workspaceId, integrationId, provider, fulfillmentRows);
 
-    const newOrderCanonicalCustomerIds = await this.resolveCanonicalCustomerIds(
-      orders
-        .filter((order) => newlyInsertedOrderExternalIds.has(order.externalId) && order.customerExternalId)
-        .map((order) => customerIdByExternalId.get(order.customerExternalId!))
-        .filter((customerId): customerId is string => customerId !== undefined),
-    );
+    const newOrderCanonicalCustomerIds = [
+      ...new Set(
+        (
+          await this.canonicalIdsByCustomerId(
+            db,
+            orders
+              .filter((order) => newlyInsertedOrderExternalIds.has(order.externalId) && order.customerExternalId)
+              .map((order) => customerIdByExternalId.get(order.customerExternalId!))
+              .filter((customerId): customerId is string => customerId !== undefined),
+          )
+        ).values(),
+      ),
+    ];
+
+    const events: DomainEvent<OrderEventPayload>[] = [];
+    if (emitDomainEvents) {
+      const canonicalByCustomerId = await this.canonicalIdsByCustomerId(
+        db,
+        orderRows.map((row) => row.customerId).filter((id): id is string => id !== null),
+      );
+      const orderEvent = (row: OrderRef, sourceOccurredAt: Date | null) => orderEventPayload(provider, row, canonicalByCustomerId, sourceOccurredAt);
+      const emit = <T extends OrderEventPayload>(type: string, idempotencyKey: string, payload: T) =>
+        events.push(createEvent<T>({ type, workspaceId, entityId: payload.orderId, idempotencyKey, payload }));
+
+      for (const row of orderRows) {
+        const previous = previousByExternalId.get(row.externalId);
+        if (isInserted(row)) {
+          emit('order.created', `order.created:${row.id}`, orderEvent(row, row.sourceCreatedAt));
+        } else if (previous && isNewerVersion(row.sourceUpdatedAt, previous.sourceUpdatedAt)) {
+          emit('order.updated', `order.updated:${row.id}:${row.sourceUpdatedAt!.toISOString()}`, orderEvent(row, row.sourceUpdatedAt));
+        }
+        if (row.sourceCancelledAt && !previous?.sourceCancelledAt) {
+          emit('order.cancelled', `order.cancelled:${row.id}`, orderEvent(row, row.sourceCancelledAt));
+        }
+      }
+      events.push(...refundProcessedEvents(workspaceId, provider, refundRows, new Map(orderRows.map((row) => [row.id, row])), canonicalByCustomerId));
+    }
 
     return {
-      ordersWritten: orders.length,
-      lineItemsWritten: lineItemValues.length,
-      refundsWritten,
-      fulfillmentsWritten,
-      newOrderCanonicalCustomerIds,
+      result: {
+        ordersWritten: orders.length,
+        lineItemsWritten: lineItemValues.length,
+        refundsWritten: refundRows.length,
+        fulfillmentsWritten,
+        newOrderCanonicalCustomerIds,
+      },
+      events,
     };
   }
 
-  /** Resolves internal commerce_customers ids to their linked canonical identity, deduped — omits any id Identity Resolution hasn't linked yet (`canonicalCustomerId IS NULL`). */
-  private async resolveCanonicalCustomerIds(customerIds: string[]): Promise<string[]> {
+  /** The stored version/cancellation of each already-existing order in the batch, row-locked until the transaction ends. */
+  private async lockPreviousState(db: NodePgDatabase, workspaceId: string, provider: IntegrationProvider, orders: NormalizedOrder[]) {
+    const rows = await db
+      .select({
+        externalId: commerceOrders.externalId,
+        sourceUpdatedAt: commerceOrders.sourceUpdatedAt,
+        sourceCancelledAt: commerceOrders.sourceCancelledAt,
+      })
+      .from(commerceOrders)
+      .where(
+        and(
+          eq(commerceOrders.workspaceId, workspaceId),
+          eq(commerceOrders.provider, provider),
+          inArray(
+            commerceOrders.externalId,
+            orders.map((order) => order.externalId),
+          ),
+        ),
+      )
+      .for('update');
+    return new Map(rows.map((row) => [row.externalId, row]));
+  }
+
+  /** Maps internal commerce_customers ids to their linked canonical identity — omits any id Identity Resolution hasn't linked yet (`canonicalCustomerId IS NULL`). */
+  private async canonicalIdsByCustomerId(db: NodePgDatabase, customerIds: string[]): Promise<Map<string, string>> {
     const uniqueCustomerIds = [...new Set(customerIds)];
     if (uniqueCustomerIds.length === 0) {
-      return [];
+      return new Map();
     }
 
-    const rows = await this.database.client
-      .select({ canonicalCustomerId: commerceCustomers.canonicalCustomerId })
+    const rows = await db
+      .select({ id: commerceCustomers.id, canonicalCustomerId: commerceCustomers.canonicalCustomerId })
       .from(commerceCustomers)
       .where(inArray(commerceCustomers.id, uniqueCustomerIds));
 
-    return [...new Set(rows.map((row) => row.canonicalCustomerId).filter((id): id is string => id !== null))];
+    return new Map(rows.filter((row) => row.canonicalCustomerId !== null).map((row) => [row.id, row.canonicalCustomerId!]));
   }
 
   /**
@@ -262,7 +450,8 @@ export class OrderService {
    * their own webhook topics whose payload is the bare fulfillment plus
    * `order_id`, not a nested order). Resolves the order by external id
    * itself since, unlike `upsertMany`'s embedded case, no order was just
-   * fetched/applied alongside it.
+   * fetched/applied alongside it. No domain event: doc21 defines none for
+   * fulfillments.
    */
   async upsertFulfillments(
     workspaceId: string,
@@ -274,7 +463,9 @@ export class OrderService {
       return 0;
     }
 
+    const db = this.database.client;
     const orderIdByExternalId = await this.lookupIds(
+      db,
       commerceOrders,
       workspaceId,
       provider,
@@ -289,10 +480,11 @@ export class OrderService {
       return [{ ...fulfillment, orderId }];
     });
 
-    return this.writeFulfillments(workspaceId, integrationId, provider, rows);
+    return this.writeFulfillments(db, workspaceId, integrationId, provider, rows);
   }
 
   private async writeFulfillments(
+    db: NodePgDatabase,
     workspaceId: string,
     integrationId: string,
     provider: IntegrationProvider,
@@ -302,7 +494,7 @@ export class OrderService {
       return 0;
     }
 
-    await this.database.client
+    await db
       .insert(commerceFulfillments)
       .values(
         fulfillments.map((fulfillment) => ({
@@ -331,46 +523,124 @@ export class OrderService {
           sourceUpdatedAt: sql`excluded.source_updated_at`,
           updatedAt: new Date(),
         },
+        setWhere: NOT_STALE('commerce_fulfillments'),
       });
 
     return fulfillments.length;
   }
 
   /**
-   * Writes refunds embedded in each order's payload (see commerce_refunds'
-   * doc comment — Shopify has no separate refund fetch/webhook, so this is
-   * always driven from an already-fetched/applied order, not its own loop).
+   * Applies standalone refund deliveries (Shopify `refunds/create` — the
+   * bare refund plus `order_id`; Shopify does not reliably repeat a
+   * standalone refund on `orders/updated`). Same refund rows and the same
+   * `refund.processed` as an order-embedded refund: whichever delivery
+   * inserts the refund row first emits the event, the other only updates
+   * it, so one refund is one event regardless of path or order.
+   *
+   * A refund for an order BRAYN hasn't stored yet throws, so the durable
+   * webhook row retries with backoff (and dead-letters, replayable) until
+   * the order arrives — never silently dropped.
    */
-  private async upsertRefunds(
+  async upsertRefunds(
     workspaceId: string,
     integrationId: string,
     provider: IntegrationProvider,
-    orders: NormalizedOrder[],
-    orderIdByExternalId: Map<string, string>,
-    orderLineItemIdByExternalId: Map<string, string>,
+    refunds: Array<NormalizedRefund & { orderExternalId: string }>,
+    options: UpsertOrdersOptions = {},
   ): Promise<number> {
-    const refundValues = orders.flatMap((order) => {
-      const orderId = orderIdByExternalId.get(order.externalId);
-      if (!orderId) {
-        return [];
-      }
-      return order.refunds.map((refund) => ({
-        workspaceId,
-        integrationId,
-        provider,
-        orderId,
-        externalId: refund.externalId,
-        note: refund.note,
-        totalRefunded: refund.totalRefunded,
-        processedAt: refund.processedAt,
-      }));
-    });
-
-    if (refundValues.length === 0) {
+    if (refunds.length === 0) {
       return 0;
     }
 
-    const refundRows = await this.database.client
+    const { written, events } = await this.database.transaction(async (db) => {
+      const orderRows = await db
+        .select({ id: commerceOrders.id, externalId: commerceOrders.externalId, customerId: commerceOrders.customerId })
+        .from(commerceOrders)
+        .where(
+          and(
+            eq(commerceOrders.workspaceId, workspaceId),
+            eq(commerceOrders.provider, provider),
+            inArray(
+              commerceOrders.externalId,
+              refunds.map((refund) => refund.orderExternalId),
+            ),
+          ),
+        );
+      const orderByExternalId = new Map(orderRows.map((row) => [row.externalId, row]));
+      const missing = refunds.find((refund) => !orderByExternalId.has(refund.orderExternalId));
+      if (missing) {
+        throw new Error(`Refund ${missing.externalId} references order ${missing.orderExternalId}, which is not stored yet.`);
+      }
+
+      const lineItemRows = await db
+        .select({ id: commerceOrderLineItems.id, externalId: commerceOrderLineItems.externalId })
+        .from(commerceOrderLineItems)
+        .where(
+          and(
+            eq(commerceOrderLineItems.workspaceId, workspaceId),
+            eq(commerceOrderLineItems.provider, provider),
+            inArray(commerceOrderLineItems.orderId, orderRows.map((row) => row.id)),
+          ),
+        );
+
+      const refundRows = await this.writeRefunds(
+        db,
+        workspaceId,
+        integrationId,
+        provider,
+        refunds.map((refund) => ({ ...refund, orderId: orderByExternalId.get(refund.orderExternalId)!.id })),
+        new Map(lineItemRows.map((row) => [row.externalId, row.id])),
+      );
+
+      if (options.emitDomainEvents !== true) {
+        return { written: refundRows.length, events: [] };
+      }
+      const canonicalByCustomerId = await this.canonicalIdsByCustomerId(
+        db,
+        orderRows.map((row) => row.customerId).filter((id): id is string => id !== null),
+      );
+      return {
+        written: refundRows.length,
+        events: refundProcessedEvents(workspaceId, provider, refundRows, new Map(orderRows.map((row) => [row.id, row])), canonicalByCustomerId),
+      };
+    });
+
+    for (const event of events) {
+      this.eventBus.emit(event);
+    }
+    return written;
+  }
+
+  /**
+   * Writes refund rows (embedded in an order payload, or standalone) with
+   * their line items, linked to the given orders. Returns the written
+   * refund rows; one inserted by this call (rather than updated) is a
+   * newly processed refund.
+   */
+  private async writeRefunds(
+    db: NodePgDatabase,
+    workspaceId: string,
+    integrationId: string,
+    provider: IntegrationProvider,
+    refunds: Array<NormalizedRefund & { orderId: string }>,
+    orderLineItemIdByExternalId: Map<string, string>,
+  ) {
+    const refundValues = refunds.map((refund) => ({
+      workspaceId,
+      integrationId,
+      provider,
+      orderId: refund.orderId,
+      externalId: refund.externalId,
+      note: refund.note,
+      totalRefunded: refund.totalRefunded,
+      processedAt: refund.processedAt,
+    }));
+
+    if (refundValues.length === 0) {
+      return [];
+    }
+
+    const refundRows = await db
       .insert(commerceRefunds)
       .values(refundValues)
       .onConflictDoUpdate({
@@ -382,31 +652,37 @@ export class OrderService {
           updatedAt: new Date(),
         },
       })
-      .returning({ id: commerceRefunds.id, externalId: commerceRefunds.externalId });
+      .returning({
+        id: commerceRefunds.id,
+        externalId: commerceRefunds.externalId,
+        orderId: commerceRefunds.orderId,
+        totalRefunded: commerceRefunds.totalRefunded,
+        processedAt: commerceRefunds.processedAt,
+        createdAt: commerceRefunds.createdAt,
+        updatedAt: commerceRefunds.updatedAt,
+      });
     const refundIdByExternalId = new Map(refundRows.map((row) => [row.externalId, row.id]));
 
-    const refundLineItemValues = orders.flatMap((order) => {
-      return order.refunds.flatMap((refund) => {
-        const refundId = refundIdByExternalId.get(refund.externalId);
-        if (!refundId) {
-          return [];
-        }
-        return refund.lineItems.map((item) => ({
-          workspaceId,
-          integrationId,
-          provider,
-          refundId,
-          orderLineItemId: item.orderLineItemExternalId
-            ? (orderLineItemIdByExternalId.get(item.orderLineItemExternalId) ?? null)
-            : null,
-          externalId: item.externalId,
-          quantity: item.quantity,
-        }));
-      });
+    const refundLineItemValues = refunds.flatMap((refund) => {
+      const refundId = refundIdByExternalId.get(refund.externalId);
+      if (!refundId) {
+        return [];
+      }
+      return refund.lineItems.map((item) => ({
+        workspaceId,
+        integrationId,
+        provider,
+        refundId,
+        orderLineItemId: item.orderLineItemExternalId
+          ? (orderLineItemIdByExternalId.get(item.orderLineItemExternalId) ?? null)
+          : null,
+        externalId: item.externalId,
+        quantity: item.quantity,
+      }));
     });
 
     if (refundLineItemValues.length > 0) {
-      await this.database.client
+      await db
         .insert(commerceRefundLineItems)
         .values(refundLineItemValues)
         .onConflictDoUpdate({
@@ -423,7 +699,7 @@ export class OrderService {
         });
     }
 
-    return refundValues.length;
+    return refundRows;
   }
 
   /** This workspace/provider's current `sourceUpdatedAt` for each existing order externalId (doc 06/20 — Reconciliation: detect missing/changed records before repairing; line-item-level drift isn't tracked separately). Absent from the map means no such row exists yet. */
@@ -452,6 +728,7 @@ export class OrderService {
 
   /** Resolves a batch of external ids to this workspace/provider's existing row ids for `table`. */
   private async lookupIds(
+    db: NodePgDatabase,
     table: typeof commerceCustomers | typeof commerceProductVariants | typeof commerceOrders,
     workspaceId: string,
     provider: IntegrationProvider,
@@ -462,7 +739,7 @@ export class OrderService {
       return new Map();
     }
 
-    const rows = await this.database.client
+    const rows = await db
       .select({ id: table.id, externalId: table.externalId })
       .from(table)
       .where(and(eq(table.workspaceId, workspaceId), eq(table.provider, provider), inArray(table.externalId, ids)));

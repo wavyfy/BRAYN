@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ShopifyAdapter } from './shopify.adapter';
+import { SHOPIFY_API_VERSION, SHOPIFY_REGISTERED_BUSINESS_TOPICS, ShopifyAdapter, shopifyTopicEnum } from './shopify.adapter';
 import type { ProviderRegistry } from '../../provider-registry.service';
 import type { ConfigService } from '@nestjs/config';
 import type { Env } from '../../../../config/env.schema';
@@ -56,7 +56,7 @@ describe('ShopifyAdapter', () => {
 
       expect(result).toBe(true);
       const [url, init] = fetchMock.mock.calls[0];
-      expect(url).toBe('https://acme.myshopify.com/admin/api/2024-10/graphql.json');
+      expect(url).toBe('https://acme.myshopify.com/admin/api/2026-07/graphql.json');
       expect(init?.method).toBe('POST');
       expect((init?.headers as Record<string, string>)['X-Shopify-Access-Token']).toBe('shpat_123');
       expect((init?.headers as Record<string, string>)['Content-Type']).toBe('application/json');
@@ -358,7 +358,7 @@ describe('ShopifyAdapter', () => {
         nextCursor: null,
       });
       const [url, init] = fetchMock.mock.calls[0];
-      expect(url).toBe('https://acme.myshopify.com/admin/api/2024-10/graphql.json');
+      expect(url).toBe('https://acme.myshopify.com/admin/api/2026-07/graphql.json');
       expect(init?.method).toBe('POST');
       expect((init?.headers as Record<string, string>)['X-Shopify-Access-Token']).toBe('shpat_123');
       const sentBody = JSON.parse(init?.body as string) as { query: string; variables: Record<string, unknown> };
@@ -487,7 +487,7 @@ describe('ShopifyAdapter', () => {
 
       await adapter.fetchCustomers({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, 'https://attacker.example/steal');
 
-      expect(fetchMock.mock.calls[0][0]).toBe('https://acme.myshopify.com/admin/api/2024-10/graphql.json');
+      expect(fetchMock.mock.calls[0][0]).toBe('https://acme.myshopify.com/admin/api/2026-07/graphql.json');
     });
   });
 
@@ -545,7 +545,7 @@ describe('ShopifyAdapter', () => {
         nextCursor: null,
       });
       const [url, init] = fetchMock.mock.calls[0];
-      expect(url).toBe('https://acme.myshopify.com/admin/api/2024-10/graphql.json');
+      expect(url).toBe('https://acme.myshopify.com/admin/api/2026-07/graphql.json');
       expect(init?.method).toBe('POST');
       expect((init?.headers as Record<string, string>)['X-Shopify-Access-Token']).toBe('shpat_123');
     });
@@ -796,7 +796,7 @@ describe('ShopifyAdapter', () => {
         note: 'Damaged item',
         createdAt: '2026-01-02T00:00:00Z',
         refundLineItems: { edges: refundLineItemNodes.map((node) => ({ node })), pageInfo: { hasNextPage: false, endCursor: null } },
-        transactions,
+        transactions: { edges: transactions.map((node) => ({ node })) },
         ...overrides,
       };
     }
@@ -805,9 +805,9 @@ describe('ShopifyAdapter', () => {
       return {
         id: 'gid://shopify/Fulfillment/7001',
         status: 'SUCCESS',
-        shipmentStatus: 'IN_TRANSIT',
+        displayStatus: 'IN_TRANSIT',
         updatedAt: '2026-01-03T00:00:00Z',
-        trackingInfo: { company: 'UPS', number: '1Z999', url: 'https://ups.com/track/1Z999' },
+        trackingInfo: [{ company: 'UPS', number: '1Z999', url: 'https://ups.com/track/1Z999' }],
         ...overrides,
       };
     }
@@ -862,6 +862,7 @@ describe('ShopifyAdapter', () => {
             sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
             // Order.createdAt (checkout time), not updatedAt — the order-placed time.
             sourceCreatedAt: new Date('2025-12-20T10:00:00Z'),
+            sourceCancelledAt: null,
             lineItems: [{ externalId: '9001', variantExternalId: '901', quantity: 2, price: '9.99' }],
             refunds: [],
             fulfillments: [],
@@ -870,7 +871,7 @@ describe('ShopifyAdapter', () => {
         nextCursor: null,
       });
       const [url, init] = fetchMock.mock.calls[0];
-      expect(url).toBe('https://acme.myshopify.com/admin/api/2024-10/graphql.json');
+      expect(url).toBe('https://acme.myshopify.com/admin/api/2026-07/graphql.json');
       expect(init?.method).toBe('POST');
       // No nested { shopMoney: { amount } } object anywhere in the normalized order — money is fully unwrapped.
       expect(JSON.stringify(page)).not.toContain('shopMoney');
@@ -1059,7 +1060,7 @@ describe('ShopifyAdapter', () => {
       },
     );
 
-    it("normalizes an order's embedded fulfillments (GraphQL SUCCESS/IN_TRANSIT enums lower-cased, singular trackingInfo mapped to REST's flat fields)", async () => {
+    it("normalizes an order's embedded fulfillments (GraphQL SUCCESS/IN_TRANSIT enums lower-cased, first trackingInfo entry mapped to REST's flat fields)", async () => {
       vi.stubGlobal(
         'fetch',
         vi.fn(async () => graphqlOrdersResponse([orderNode({}, [], { hasNextPage: false, endCursor: null }, [], [fulfillmentNode()])])),
@@ -1085,7 +1086,7 @@ describe('ShopifyAdapter', () => {
       vi.stubGlobal(
         'fetch',
         vi.fn(async () =>
-          graphqlOrdersResponse([orderNode({}, [], { hasNextPage: false, endCursor: null }, [], [fulfillmentNode({ trackingInfo: null })])]),
+          graphqlOrdersResponse([orderNode({}, [], { hasNextPage: false, endCursor: null }, [], [fulfillmentNode({ trackingInfo: [] })])]),
         ),
       );
       const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
@@ -1093,6 +1094,46 @@ describe('ShopifyAdapter', () => {
       const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
 
       expect(page.orders[0].fulfillments[0]).toMatchObject({ trackingCompany: null, trackingNumber: null, trackingUrl: null });
+    });
+
+    it('maps a non-shipment displayStatus (e.g. FULFILLED) to a null shipmentStatus, matching REST/webhook payloads', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          graphqlOrdersResponse([orderNode({}, [], { hasNextPage: false, endCursor: null }, [], [fulfillmentNode({ displayStatus: 'FULFILLED' })])]),
+        ),
+      );
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
+
+      expect(page.orders[0].fulfillments[0].shipmentStatus).toBeNull();
+    });
+
+    it('requests refund transactions as a connection and fulfillment displayStatus (2026-07 schema), never shipmentStatus', async () => {
+      const fetchMock = vi.fn(async () => graphqlOrdersResponse([]));
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
+
+      const body = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+      expect(body.query).toMatch(/transactions\(first: \$refundTransactionsFirst\)\s*\{\s*edges/);
+      expect(body.query).toContain('displayStatus');
+      expect(body.query).not.toContain('shipmentStatus');
+      expect(body.variables.refundTransactionsFirst).toBe(250);
+    });
+
+    it('requests Order.cancelledAt and maps it to sourceCancelledAt', async () => {
+      const fetchMock = vi.fn(async () => graphqlOrdersResponse([orderNode({ cancelledAt: '2026-01-02T00:00:00Z' })]));
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
+
+      const body = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+      expect(body.query).toContain('cancelledAt');
+      expect(page.orders[0].sourceCancelledAt).toEqual(new Date('2026-01-02T00:00:00Z'));
     });
 
     it('throws ProviderError on a non-2xx response', async () => {
@@ -1262,6 +1303,156 @@ describe('ShopifyAdapter', () => {
     });
   });
 
+  describe('API version', () => {
+    it('targets the intended supported Admin API version (matches shopify.app.toml [webhooks] api_version)', () => {
+      expect(SHOPIFY_API_VERSION).toBe('2026-07');
+    });
+  });
+
+  describe('webhook topics', () => {
+    it('maps header-style topics to GraphQL WebhookSubscriptionTopic enum values', () => {
+      expect(shopifyTopicEnum('orders/updated')).toBe('ORDERS_UPDATED');
+      expect(shopifyTopicEnum('customers/create')).toBe('CUSTOMERS_CREATE');
+      expect(shopifyTopicEnum('app/uninstalled')).toBe('APP_UNINSTALLED');
+    });
+
+    it('only registers business topics the adapter actually parses into a resource', () => {
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+      for (const topic of SHOPIFY_REGISTERED_BUSINESS_TOPICS) {
+        const body = JSON.stringify({ id: 1, line_items: [], refunds: [], fulfillments: [], variants: [] });
+        expect(adapter.parseWebhookEvent(body, { 'x-shopify-topic': topic }), topic).not.toBeNull();
+      }
+    });
+
+    it('does not register fulfillments/* (needs read_fulfillments, which BRAYN does not request)', () => {
+      expect(SHOPIFY_REGISTERED_BUSINESS_TOPICS).not.toContain('fulfillments/create');
+      expect(SHOPIFY_REGISTERED_BUSINESS_TOPICS).not.toContain('fulfillments/update');
+    });
+  });
+
+  describe('resolveWebhookSecret()', () => {
+    it('uses the app client secret for an app-installed store (no per-integration secret stored)', () => {
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+      expect(adapter.resolveWebhookSecret({ shopDomain: 'x.myshopify.com', accessToken: 't', grantType: 'authorization_code' })).toBe('client_secret');
+      expect(adapter.resolveWebhookSecret(null)).toBe('client_secret');
+    });
+
+    it('keeps a manually pasted per-integration webhookSecret', () => {
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+      expect(adapter.resolveWebhookSecret({ webhookSecret: 'merchant_secret' })).toBe('merchant_secret');
+    });
+
+    it('returns null when neither exists', () => {
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig({ SHOPIFY_APP_CLIENT_SECRET: undefined }));
+      expect(adapter.resolveWebhookSecret({})).toBeNull();
+    });
+
+    it('verifies a business webhook signed with the app client secret, and rejects a forged one', () => {
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+      const rawBody = '{"id":1}';
+      const secret = adapter.resolveWebhookSecret({ accessToken: 't' })!;
+
+      expect(adapter.verifyWebhookSignature(rawBody, { 'x-shopify-hmac-sha256': sign(rawBody, 'client_secret') }, secret)).toBe(true);
+      expect(adapter.verifyWebhookSignature(rawBody, { 'x-shopify-hmac-sha256': sign(rawBody, 'attacker_secret') }, secret)).toBe(false);
+    });
+  });
+
+  describe('ensureWebhookSubscriptions()', () => {
+    const credentials = { shopDomain: 'acme.myshopify.com', accessToken: 'shpat_x' };
+    const uri = 'https://api.example.com/api/v1/workspaces/ws_1/integrations/shopify/webhooks';
+    const desired = [
+      { topic: 'orders/create', uri },
+      { topic: 'orders/updated', uri },
+    ];
+
+    function bodies(fetchMock: ReturnType<typeof vi.fn>) {
+      return fetchMock.mock.calls.map(([, init]) => JSON.parse((init as RequestInit).body as string) as { query: string; variables: Record<string, unknown> });
+    }
+
+    it('lists existing subscriptions for the desired topics and creates every missing one via webhookSubscriptionCreate with `uri`', async () => {
+      const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+        const { query } = JSON.parse(init!.body as string) as { query: string };
+        return query.includes('webhookSubscriptionCreate')
+          ? jsonResponse(200, { data: { webhookSubscriptionCreate: { webhookSubscription: { id: 'gid://shopify/WebhookSubscription/9' }, userErrors: [] } } })
+          : jsonResponse(200, { data: { webhookSubscriptions: { nodes: [] } } });
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      const result = await adapter.ensureWebhookSubscriptions(credentials, desired);
+
+      expect(result).toEqual({ created: desired, existing: [] });
+      const [list, ...creates] = bodies(fetchMock);
+      expect(list.variables).toEqual({ first: 100, topics: ['ORDERS_CREATE', 'ORDERS_UPDATED'] });
+      expect(creates.map((c) => c.variables)).toEqual([
+        { topic: 'ORDERS_CREATE', webhookSubscription: { uri } },
+        { topic: 'ORDERS_UPDATED', webhookSubscription: { uri } },
+      ]);
+      expect(fetchMock.mock.calls[0][0]).toBe('https://acme.myshopify.com/admin/api/2026-07/graphql.json');
+    });
+
+    it('reuses an existing (topic, uri) subscription and creates nothing for it — re-running is idempotent', async () => {
+      const fetchMock = vi.fn(async () =>
+        jsonResponse(200, {
+          data: {
+            webhookSubscriptions: {
+              nodes: [
+                { id: 'gid://1', topic: 'ORDERS_CREATE', uri },
+                { id: 'gid://2', topic: 'ORDERS_UPDATED', uri },
+              ],
+            },
+          },
+        }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      const result = await adapter.ensureWebhookSubscriptions(credentials, desired);
+
+      expect(result).toEqual({ created: [], existing: desired });
+      expect(fetchMock).toHaveBeenCalledTimes(1); // list only — no create mutation
+    });
+
+    it('does not treat a same-topic subscription to a different uri as the one BRAYN needs', async () => {
+      const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+        const { query } = JSON.parse(init!.body as string) as { query: string };
+        return query.includes('webhookSubscriptionCreate')
+          ? jsonResponse(200, { data: { webhookSubscriptionCreate: { webhookSubscription: { id: 'gid://9' }, userErrors: [] } } })
+          : jsonResponse(200, { data: { webhookSubscriptions: { nodes: [{ id: 'gid://1', topic: 'ORDERS_CREATE', uri: 'https://old.example.com/hook' }] } } });
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      const result = await adapter.ensureWebhookSubscriptions(credentials, [{ topic: 'orders/create', uri }]);
+
+      expect(result.created).toEqual([{ topic: 'orders/create', uri }]);
+    });
+
+    it('throws a ProviderError naming each topic Shopify refused (userErrors), after attempting the rest', async () => {
+      const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+        const { query, variables } = JSON.parse(init!.body as string) as { query: string; variables: { topic?: string } };
+        if (!query.includes('webhookSubscriptionCreate')) return jsonResponse(200, { data: { webhookSubscriptions: { nodes: [] } } });
+        return variables.topic === 'ORDERS_CREATE'
+          ? jsonResponse(200, { data: { webhookSubscriptionCreate: { webhookSubscription: null, userErrors: [{ field: ['topic'], message: 'Access denied' }] } } })
+          : jsonResponse(200, { data: { webhookSubscriptionCreate: { webhookSubscription: { id: 'gid://9' }, userErrors: [] } } });
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      await expect(adapter.ensureWebhookSubscriptions(credentials, desired)).rejects.toThrow(
+        'Shopify refused webhook subscriptions: orders/create (Access denied)',
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('fails closed on an unexpected list response shape', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { data: { webhookSubscriptions: {} } })));
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      await expect(adapter.ensureWebhookSubscriptions(credentials, desired)).rejects.toThrow('unexpected webhook subscription list');
+    });
+  });
+
   describe('verifyWebhookSignature()', () => {
     it('returns true for a correctly signed body', () => {
       const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
@@ -1317,7 +1508,7 @@ describe('ShopifyAdapter', () => {
         nextCursor: null,
       });
       const [url, init] = fetchMock.mock.calls[0];
-      expect(url).toBe('https://acme.myshopify.com/admin/api/2024-10/graphql.json');
+      expect(url).toBe('https://acme.myshopify.com/admin/api/2026-07/graphql.json');
       expect(init?.method).toBe('POST');
       const sentBody = JSON.parse(init?.body as string) as { query: string; variables: Record<string, unknown> };
       expect(sentBody.query).toContain('collections(first: $first, after: $after, query: $query)');
@@ -1689,7 +1880,7 @@ describe('ShopifyAdapter', () => {
 
       await adapter.fetchCollects({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' }, cursor);
 
-      expect(fetchMock.mock.calls[0][0]).toBe('https://acme.myshopify.com/admin/api/2024-10/graphql.json');
+      expect(fetchMock.mock.calls[0][0]).toBe('https://acme.myshopify.com/admin/api/2026-07/graphql.json');
     });
 
     it('throws ProviderError and never calls fetch for a stored shopDomain outside myshopify.com — SSRF guard', async () => {
@@ -1860,6 +2051,48 @@ describe('ShopifyAdapter', () => {
       expect(result?.payload).toMatchObject({
         resource: 'order',
         data: { sourceCreatedAt: new Date('2025-11-02T09:15:00Z'), sourceUpdatedAt: new Date('2026-01-01T00:00:00Z') },
+      });
+    });
+
+    it("maps an order delivery's cancelled_at to sourceCancelledAt (null when not cancelled)", () => {
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+      const order = { id: 902, customer: null, total_price: '19.99', created_at: '2025-11-02T09:15:00Z', updated_at: '2026-01-02T00:00:00Z', line_items: [] };
+      const parse = (body: object) => adapter.parseWebhookEvent(JSON.stringify(body), { 'x-shopify-topic': 'orders/updated', 'x-shopify-webhook-id': 'wh_evt_cancel' });
+
+      expect(parse({ ...order, cancelled_at: '2026-01-02T00:00:00Z' })?.payload).toMatchObject({ data: { sourceCancelledAt: new Date('2026-01-02T00:00:00Z') } });
+      expect(parse({ ...order, cancelled_at: null })?.payload).toMatchObject({ data: { sourceCancelledAt: null } });
+    });
+
+    it('normalizes a refunds/create delivery — bare refund plus order_id, same refund shape as an order-embedded refund', () => {
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+      const rawBody = JSON.stringify({
+        id: 1113796018497,
+        order_id: 18970128548161,
+        note: 'Things were damaged',
+        processed_at: '2026-01-02T00:00:00Z',
+        refund_line_items: [{ id: 1113796018498, line_item_id: 18970128548162, quantity: 1 }],
+        transactions: [
+          { amount: '75.00', status: 'success', kind: 'refund' },
+          { amount: '10.00', status: 'failure', kind: 'refund' },
+        ],
+      });
+
+      const result = adapter.parseWebhookEvent(rawBody, { 'x-shopify-topic': 'refunds/create', 'x-shopify-webhook-id': 'wh_evt_refund' });
+
+      expect(result).toEqual({
+        externalEventId: 'wh_evt_refund',
+        eventType: 'refunds/create',
+        payload: {
+          resource: 'refund',
+          data: {
+            externalId: '1113796018497',
+            orderExternalId: '18970128548161',
+            note: 'Things were damaged',
+            totalRefunded: '75.00',
+            processedAt: new Date('2026-01-02T00:00:00Z'),
+            lineItems: [{ externalId: '1113796018498', orderLineItemExternalId: '18970128548162', quantity: 1 }],
+          },
+        },
       });
     });
 

@@ -363,6 +363,7 @@ describe('WooCommerceAdapter', () => {
             sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
             // date_created_gmt (order placed), not date_modified_gmt.
             sourceCreatedAt: new Date('2025-12-20T10:00:00Z'),
+            sourceCancelledAt: null,
             lineItems: [{ externalId: '9001', variantExternalId: '55', quantity: 2, price: '9.99' }],
             refunds: [],
             fulfillments: [],
@@ -557,6 +558,18 @@ describe('WooCommerceAdapter', () => {
       });
 
       expect(result?.payload).toMatchObject({ resource: 'order', data: { externalId: '900', customerExternalId: null } });
+    });
+
+    it('marks a cancelled order as cancelled at its last-modified time (WooCommerce records no cancellation time); other statuses stay uncancelled', () => {
+      const adapter = new WooCommerceAdapter(makeRegistry());
+      const parse = (status: string) =>
+        adapter.parseWebhookEvent(JSON.stringify({ id: 901, customer_id: 1, total: '19.99', status, date_modified_gmt: '2026-01-02T00:00:00', line_items: [] }), {
+          'x-wc-webhook-topic': 'order.updated',
+          'x-wc-webhook-delivery-id': `wh_evt_${status}`,
+        });
+
+      expect(parse('cancelled')?.payload).toMatchObject({ data: { sourceCancelledAt: new Date('2026-01-02T00:00:00Z') } });
+      expect(parse('processing')?.payload).toMatchObject({ data: { sourceCancelledAt: null } });
     });
 
     it('returns null for an unrecognized topic (e.g. a delete event) — doc 21 "process only relevant events"', () => {

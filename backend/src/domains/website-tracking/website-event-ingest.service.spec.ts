@@ -10,6 +10,7 @@ function makeChain(finalResult: unknown) {
   const chain: Record<string, unknown> = {
     values: vi.fn(() => chain),
     onConflictDoUpdate: vi.fn(() => chain),
+    onConflictDoNothing: vi.fn(() => chain),
     returning: vi.fn(async () => finalResult),
     from: vi.fn(() => chain),
     where: vi.fn(() => chain),
@@ -36,6 +37,8 @@ function makeDeps(
     visitorRow?: unknown;
     sessionRow?: unknown;
     credentials?: Record<string, string> | null;
+    resolveWebsiteVisitor?: () => Promise<void>;
+    fail?: () => Promise<void>;
   } = {},
 ) {
   const selectResults = overrides.select ?? [[connectedIntegration]];
@@ -47,6 +50,7 @@ function makeDeps(
   const visitorRow = overrides.visitorRow ?? { id: 'visitor_row_1' };
   const sessionRow = overrides.sessionRow ?? { id: 'session_row_1' };
 
+  const eventInsertChain = makeChain(undefined);
   const client = {
     select: vi.fn(() => selectChains[selectCall++] ?? makeChain([])),
     insert: vi.fn(() => {
@@ -55,13 +59,14 @@ function makeDeps(
       const n = insertCallOrder.length;
       if (n === 1) return makeChain([visitorRow]);
       if (n === 2) return makeChain([sessionRow]);
-      return makeChain(undefined);
+      return eventInsertChain;
     }),
   };
 
   const idempotency = {
     reserve: vi.fn(async () => overrides.reserve ?? true),
     complete: vi.fn(async () => undefined),
+    fail: vi.fn(overrides.fail ?? (async () => undefined)),
   } as unknown as IdempotencyService;
 
   const integrationService = {
@@ -69,7 +74,7 @@ function makeDeps(
   } as unknown as IntegrationService;
 
   const identityResolutionService = {
-    resolveWebsiteVisitor: vi.fn(async () => undefined),
+    resolveWebsiteVisitor: vi.fn(overrides.resolveWebsiteVisitor ?? (async () => undefined)),
   } as unknown as IdentityResolutionService;
 
   const service = new WebsiteEventIngestService(
@@ -79,7 +84,7 @@ function makeDeps(
     identityResolutionService,
   );
 
-  return { service, client, idempotency, integrationService, identityResolutionService };
+  return { service, client, idempotency, integrationService, identityResolutionService, eventInsertChain };
 }
 
 describe('WebsiteEventIngestService', () => {
@@ -89,9 +94,41 @@ describe('WebsiteEventIngestService', () => {
     const result = await service.ingest('ws_1', baseInput, VALID_KEY);
 
     expect(result).toEqual({ status: 'accepted' });
-    expect(idempotency.reserve).toHaveBeenCalledWith('website-event:ws_1:evt_1');
+    expect(idempotency.reserve).toHaveBeenCalledWith('website-event:ws_1:evt_1', { leaseMs: 60_000 });
     expect(idempotency.complete).toHaveBeenCalledWith('website-event:ws_1:evt_1');
+    expect(idempotency.fail).not.toHaveBeenCalled();
     expect(client.insert).toHaveBeenCalledTimes(3);
+  });
+
+  describe('failure → retry', () => {
+    const identityInput: IngestWebsiteEventInput = { ...baseInput, eventType: 'identity_signal', payload: { email: 'a@b.co' } };
+
+    it('releases the key (fail, not complete) and rethrows when processing throws, so a retry is processed', async () => {
+      const boom = new Error('resolution exploded');
+      const { service, idempotency } = makeDeps({ resolveWebsiteVisitor: async () => { throw boom; } });
+
+      await expect(service.ingest('ws_1', identityInput, VALID_KEY)).rejects.toBe(boom);
+      expect(idempotency.fail).toHaveBeenCalledWith('website-event:ws_1:evt_1');
+      expect(idempotency.complete).not.toHaveBeenCalled();
+    });
+
+    it('rethrows the original error even if releasing the key also fails (the lease frees it later)', async () => {
+      const boom = new Error('resolution exploded');
+      const { service } = makeDeps({
+        resolveWebsiteVisitor: async () => { throw boom; },
+        fail: async () => { throw new Error('db down'); },
+      });
+
+      await expect(service.ingest('ws_1', identityInput, VALID_KEY)).rejects.toBe(boom);
+    });
+
+    it('makes the event insert conflict-tolerant, so a retry after a partial write does not violate the eventId unique index', async () => {
+      const { service, eventInsertChain } = makeDeps();
+
+      await service.ingest('ws_1', baseInput, VALID_KEY);
+
+      expect(eventInsertChain.onConflictDoNothing).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('throws NotFoundError when the workspace has no website_tracking connection', async () => {

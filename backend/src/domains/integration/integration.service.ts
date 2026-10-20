@@ -179,6 +179,27 @@ export class IntegrationService {
    * to match) is a no-op, not an error — idempotent by construction, no
    * special-casing needed.
    */
+  /**
+   * Surfaces (or clears) a connection-setup failure that leaves the
+   * integration connected but not fully usable — e.g. its provider webhook
+   * subscriptions couldn't be registered — through the same `status`/
+   * `lastSyncError` fields the integrations UI and health already show,
+   * rather than reporting a healthy connection. Clearing only resets an
+   * `error` status; it never overrides `syncing`/`disconnected`.
+   */
+  async setSetupError(workspaceId: string, provider: IntegrationProvider, error: string | null): Promise<void> {
+    const existing = await this.findByProvider(workspaceId, provider);
+    if (!existing) {
+      throw new NotFoundError('This workspace has no connection for that provider.');
+    }
+
+    if (error) {
+      await this.database.client.update(integrations).set({ status: 'error', lastSyncError: error }).where(eq(integrations.id, existing.id));
+    } else if (existing.status === 'error') {
+      await this.database.client.update(integrations).set({ status: 'connected', lastSyncError: null }).where(eq(integrations.id, existing.id));
+    }
+  }
+
   async purgeCustomerData(workspaceId: string, provider: IntegrationProvider) {
     const integration = await this.findByProvider(workspaceId, provider);
     if (!integration) {

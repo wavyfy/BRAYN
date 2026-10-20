@@ -3,6 +3,8 @@ import { and, desc, eq, ilike, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { commerceOrders, orderPlacedAt } from '../../database/schema/commerce-orders';
+import { commerceRefunds } from '../../database/schema/commerce-refunds';
+import { commerceFulfillments } from '../../database/schema/commerce-fulfillments';
 import { websiteVisitors } from '../../database/schema/website-visitors';
 import { websiteEvents } from '../../database/schema/website-events';
 import { DatabaseService } from '../../database/database.service';
@@ -96,6 +98,17 @@ export interface CustomerRecord {
 export type ActivityEntry =
   | { type: 'customer_created'; occurredAt: Date; provider: string; externalId: string }
   | { type: 'order_placed'; occurredAt: Date; provider: string; externalId: string; totalPrice: string | null }
+  | { type: 'order_cancelled'; occurredAt: Date; provider: string; externalId: string }
+  | { type: 'refund_processed'; occurredAt: Date; provider: string; externalId: string; orderExternalId: string; totalRefunded: string | null }
+  | {
+      type: 'fulfillment';
+      occurredAt: Date;
+      provider: string;
+      externalId: string;
+      orderExternalId: string;
+      status: string | null;
+      shipmentStatus: string | null;
+    }
   | { type: 'website_activity'; occurredAt: Date; eventType: string };
 
 interface SourceCustomerRow {
@@ -238,6 +251,14 @@ export class CustomerIntelligenceService {
    * row-insert time is when the store was connected/imported, not a
    * customer event, so using it would put an import timestamp into the
    * customer's history.
+   *
+   * The same source-time rule covers each order's follow-ups (doc08
+   * "Important customer events"): `order_cancelled` at the source
+   * cancellation time, `refund_processed` at the refund's processed time,
+   * and `fulfillment` at its last source update (the provider gives no
+   * separate fulfilled-at time — the entry shows the fulfillment's
+   * current status as of then). Any of these with no source time is left
+   * out rather than stamped with an import time.
    */
   async getActivity(workspaceId: string, canonicalCustomerId: string): Promise<ActivityEntry[]> {
     await this.requireCanonical(workspaceId, canonicalCustomerId);
@@ -249,13 +270,45 @@ export class CustomerIntelligenceService {
         ? []
         : await this.database.client
             .select({
+              id: commerceOrders.id,
               provider: commerceOrders.provider,
               externalId: commerceOrders.externalId,
               totalPrice: commerceOrders.totalPrice,
               placedAt: orderPlacedAt(),
+              cancelledAt: commerceOrders.sourceCancelledAt,
             })
             .from(commerceOrders)
             .where(and(eq(commerceOrders.workspaceId, workspaceId), inArray(commerceOrders.customerId, sourceCustomerIds)));
+
+    const orderExternalIdById = new Map(orders.map((order) => [order.id, order.externalId]));
+    const orderIds = [...orderExternalIdById.keys()];
+    const refunds =
+      orderIds.length === 0
+        ? []
+        : await this.database.client
+            .select({
+              orderId: commerceRefunds.orderId,
+              provider: commerceRefunds.provider,
+              externalId: commerceRefunds.externalId,
+              totalRefunded: commerceRefunds.totalRefunded,
+              processedAt: commerceRefunds.processedAt,
+            })
+            .from(commerceRefunds)
+            .where(and(eq(commerceRefunds.workspaceId, workspaceId), inArray(commerceRefunds.orderId, orderIds)));
+    const fulfillments =
+      orderIds.length === 0
+        ? []
+        : await this.database.client
+            .select({
+              orderId: commerceFulfillments.orderId,
+              provider: commerceFulfillments.provider,
+              externalId: commerceFulfillments.externalId,
+              status: commerceFulfillments.status,
+              shipmentStatus: commerceFulfillments.shipmentStatus,
+              sourceUpdatedAt: commerceFulfillments.sourceUpdatedAt,
+            })
+            .from(commerceFulfillments)
+            .where(and(eq(commerceFulfillments.workspaceId, workspaceId), inArray(commerceFulfillments.orderId, orderIds)));
 
     const visitorIds = await this.getLinkedVisitorIds(workspaceId, canonicalCustomerId);
     // Fetching only the ACTIVITY_LIMIT most recent website events (rather
@@ -280,6 +333,38 @@ export class CustomerIntelligenceService {
           externalId: order.externalId,
           totalPrice: order.totalPrice,
         }),
+      ),
+      ...orders.flatMap((order): ActivityEntry[] =>
+        order.cancelledAt ? [{ type: 'order_cancelled', occurredAt: order.cancelledAt, provider: order.provider, externalId: order.externalId }] : [],
+      ),
+      ...refunds.flatMap((refund): ActivityEntry[] =>
+        refund.processedAt
+          ? [
+              {
+                type: 'refund_processed',
+                occurredAt: refund.processedAt,
+                provider: refund.provider,
+                externalId: refund.externalId,
+                orderExternalId: orderExternalIdById.get(refund.orderId)!,
+                totalRefunded: refund.totalRefunded,
+              },
+            ]
+          : [],
+      ),
+      ...fulfillments.flatMap((fulfillment): ActivityEntry[] =>
+        fulfillment.sourceUpdatedAt
+          ? [
+              {
+                type: 'fulfillment',
+                occurredAt: fulfillment.sourceUpdatedAt,
+                provider: fulfillment.provider,
+                externalId: fulfillment.externalId,
+                orderExternalId: orderExternalIdById.get(fulfillment.orderId)!,
+                status: fulfillment.status,
+                shipmentStatus: fulfillment.shipmentStatus,
+              },
+            ]
+          : [],
       ),
       ...websiteActivity.map(
         (event): ActivityEntry => ({

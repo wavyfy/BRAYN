@@ -1,12 +1,23 @@
 import type { ComponentType, SVGProps } from 'react';
 import { EmptyState } from '@/components/ui/empty-state';
-import { CursorIcon, OrderIcon, UserPlusIcon } from '@/components/ui/icons';
+import { CancelIcon, CursorIcon, OrderIcon, RefundIcon, ShipmentIcon, UserPlusIcon } from '@/components/ui/icons';
 import { formatDateTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 export type ActivityEntry =
   | { type: 'customer_created'; occurredAt: string; provider: string; externalId: string }
   | { type: 'order_placed'; occurredAt: string; provider: string; externalId: string; totalPrice: string | null }
+  | { type: 'order_cancelled'; occurredAt: string; provider: string; externalId: string }
+  | { type: 'refund_processed'; occurredAt: string; provider: string; externalId: string; orderExternalId: string; totalRefunded: string | null }
+  | {
+      type: 'fulfillment';
+      occurredAt: string;
+      provider: string;
+      externalId: string;
+      orderExternalId: string;
+      status: string | null;
+      shipmentStatus: string | null;
+    }
   | { type: 'website_activity'; occurredAt: string; eventType: string };
 
 /** How many events show before the rest fold behind "Show earlier activity". */
@@ -18,6 +29,9 @@ function activityKey(entry: ActivityEntry): string {
 
 const typeStyle: Record<ActivityEntry['type'], { icon: ComponentType<SVGProps<SVGSVGElement>>; className: string }> = {
   order_placed: { icon: OrderIcon, className: 'bg-success/10 text-success ring-success/20' },
+  order_cancelled: { icon: CancelIcon, className: 'bg-danger/10 text-danger ring-danger/20' },
+  refund_processed: { icon: RefundIcon, className: 'bg-warning/10 text-warning ring-warning/20' },
+  fulfillment: { icon: ShipmentIcon, className: 'bg-subtle text-foreground/70 ring-border' },
   website_activity: { icon: CursorIcon, className: 'bg-info/10 text-info ring-info/20' },
   customer_created: { icon: UserPlusIcon, className: 'bg-subtle text-foreground/60 ring-border' },
 };
@@ -42,6 +56,25 @@ function ActivityLabel({ entry }: { entry: ActivityEntry }) {
       return (
         <span className="text-foreground">
           Became a customer in <span className="capitalize">{entry.provider}</span>
+        </span>
+      );
+    case 'order_cancelled':
+      return (
+        <span className="text-foreground">
+          Order cancelled in <span className="capitalize">{entry.provider}</span>
+        </span>
+      );
+    case 'refund_processed':
+      return (
+        <span className="text-foreground">
+          Refund processed
+          {entry.totalRefunded && <span className="font-semibold tabular-nums"> · {entry.totalRefunded}</span>}
+        </span>
+      );
+    case 'fulfillment':
+      return (
+        <span className="text-foreground">
+          Fulfillment <span className="capitalize">{(entry.shipmentStatus ?? entry.status ?? 'updated').replaceAll('_', ' ')}</span>
         </span>
       );
   }

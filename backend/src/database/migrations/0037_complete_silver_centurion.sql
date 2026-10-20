@@ -1,0 +1,1 @@
+ALTER TABLE "commerce_orders" ADD COLUMN "source_cancelled_at" timestamp with time zone;

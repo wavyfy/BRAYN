@@ -1,6 +1,6 @@
 import { createHmac, randomUUID } from 'node:crypto';
 import { Test, type TestingModule } from '@nestjs/testing';
-import { and, eq, like } from 'drizzle-orm';
+import { and, eq, like, or } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppModule } from '../../app.module';
 import { DatabaseService } from '../../database/database.service';
@@ -67,6 +67,7 @@ describe('Phase 16 — Commerce → Automation loop (e2e, real DB)', () => {
   const customerExternalId = String(Date.now());
   let automationDefinitionId: string;
   let canonicalCustomerId: string;
+  let integrationId: string;
 
   beforeAll(async () => {
     moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -88,7 +89,7 @@ describe('Phase 16 — Commerce → Automation loop (e2e, real DB)', () => {
 
     await db.client.insert(workspaces).values({ id: workspaceId, name: 'Full Loop Test Workspace' });
 
-    await integrationService.connect(workspaceId, 'shopify');
+    integrationId = (await integrationService.connect(workspaceId, 'shopify')).id;
     await integrationService.setCredentials(workspaceId, 'shopify', {
       shopDomain,
       accessToken: 'unused-in-this-test',
@@ -117,9 +118,17 @@ describe('Phase 16 — Commerce → Automation loop (e2e, real DB)', () => {
     await db.client.delete(integrationWebhookEvents).where(eq(integrationWebhookEvents.workspaceId, workspaceId));
     await db.client.delete(integrations).where(eq(integrations.workspaceId, workspaceId));
     await db.client.delete(workspaces).where(eq(workspaces.id, workspaceId));
-    // Idempotency keys embed workspaceId/integrationId in their string — no dedicated FK to filter on,
-    // so this is a best-effort sweep of every key this run could plausibly have reserved.
-    await db.client.delete(idempotencyKeys).where(like(idempotencyKeys.key, `%${workspaceId}%`));
+    // Idempotency keys embed an id in their string — no dedicated FK to filter on. Automation/AI
+    // Action Control keys carry this run's workspaceId; webhook keys carry the integration id
+    // (`webhook:<integrationId>:<externalEventId>`), never the workspaceId.
+    await db.client
+      .delete(idempotencyKeys)
+      .where(
+        or(
+          like(idempotencyKeys.key, `%${workspaceId}%`),
+          ...(integrationId ? [like(idempotencyKeys.key, `webhook:${integrationId}:%`)] : []),
+        ),
+      );
 
     await moduleRef.close();
   }, 30_000);

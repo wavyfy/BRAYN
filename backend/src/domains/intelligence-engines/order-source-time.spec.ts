@@ -26,7 +26,8 @@ import { RevenueOpportunityService } from './revenue-opportunity.service';
  * Real DB (same approach as full-loop.spec.ts — the dev DATABASE_URL is the
  * only database this repo supports), throwaway workspace deleted in afterAll.
  */
-describe('Order source time — batch import (real DB)', () => {
+// Every step is a real Neon round trip (~250ms each), so the default 5s per-test budget is too tight under full-suite load.
+describe('Order source time — batch import (real DB)', { timeout: 30_000 }, () => {
   let moduleRef: TestingModule;
   let db: DatabaseService;
   let customerIntelligence: CustomerIntelligenceService;

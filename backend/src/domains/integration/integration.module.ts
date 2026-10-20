@@ -21,6 +21,8 @@ import { ShopifyOAuthHandoffGuard } from './providers/shopify/shopify-oauth-hand
 import { ShopifyOAuthStartController, ShopifyOAuthCallbackController } from './providers/shopify/shopify-oauth.controller';
 import { ShopifyComplianceService } from './providers/shopify/shopify-compliance.service';
 import { ShopifyComplianceController } from './providers/shopify/shopify-compliance.controller';
+import { ShopifyUninstallService } from './providers/shopify/shopify-uninstall.service';
+import { ShopifyUninstallController } from './providers/shopify/shopify-uninstall.controller';
 import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter';
 
 /**
@@ -49,6 +51,7 @@ import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter'
     ShopifyOAuthStartController,
     ShopifyOAuthCallbackController,
     ShopifyComplianceController,
+    ShopifyUninstallController,
   ],
   providers: [
     IntegrationService,
@@ -66,6 +69,7 @@ import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter'
     ShopifyOAuthHandoffService,
     ShopifyOAuthHandoffGuard,
     ShopifyComplianceService,
+    ShopifyUninstallService,
     WooCommerceAdapter,
   ],
   exports: [

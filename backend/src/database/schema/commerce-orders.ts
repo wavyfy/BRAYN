@@ -45,6 +45,14 @@ export const commerceOrders = pgTable(
      * `orderPlacedAt` for the fallback.
      */
     sourceCreatedAt: timestamp('source_created_at', { withTimezone: true }),
+    /**
+     * When the order was cancelled at the source (Shopify `cancelled_at` /
+     * `Order.cancelledAt`; WooCommerce has no cancellation timestamp, so its
+     * `date_modified_gmt` at the moment the status is `cancelled`). Null for
+     * a not-cancelled order — the commerce-data source of `order.cancelled`
+     * (doc21).
+     */
+    sourceCancelledAt: timestamp('source_cancelled_at', { withTimezone: true }),
     ...timestamps(),
   },
   (table) => [

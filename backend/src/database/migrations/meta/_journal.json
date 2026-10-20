@@ -246,6 +246,27 @@
       "when": 1790166044561,
       "tag": "0034_tranquil_havok",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1792412738769,
+      "tag": "0035_nice_domino",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1792413839212,
+      "tag": "0036_shocking_firestar",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1792502036653,
+      "tag": "0037_complete_silver_centurion",
+      "breakpoints": true
     }
   ]
 }

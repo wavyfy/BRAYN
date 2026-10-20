@@ -6,11 +6,11 @@ import { commerceOrders } from './commerce-orders';
 /**
  * Normalized refund records from a connected provider (doc 20 Shopify
  * Phase 1 Data — "Refunds"). Belongs to a `commerce_orders` row — Shopify
- * has no top-level refunds list/webhook; a refund only ever arrives
- * embedded in its order's payload (`order.refunds[]`, including in
- * `orders/updated` webhooks), so this is written from the same order
- * import/sync/webhook/reconciliation pipeline that already writes
- * `commerce_orders`, not a separate resource loop — see OrderService.
+ * has no top-level refunds list, so imports/sync/reconciliation write
+ * refunds embedded in their order's payload (`order.refunds[]`); live
+ * changes arrive either embedded in `orders/updated` or as a standalone
+ * `refunds/create` webhook (refund + `order_id`). Both land on the same
+ * unique row — see OrderService.upsertMany/upsertRefunds.
  *
  * ponytail: `totalRefunded` stored as the provider's raw string — see
  * commerce_product_variants' `price` column for why.

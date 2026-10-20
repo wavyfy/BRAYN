@@ -33,12 +33,17 @@ function makeIntegrationService(overrides: Partial<IntegrationService> = {}): In
   return {
     connect: vi.fn(async () => ({})),
     setCredentials: vi.fn(async () => undefined),
+    setSetupError: vi.fn(async () => undefined),
     ...overrides,
   } as unknown as IntegrationService;
 }
 
 function makeAdapter(overrides: Partial<ShopifyAdapter> = {}): ShopifyAdapter {
-  return { verifyConnection: vi.fn(async () => true), ...overrides } as unknown as ShopifyAdapter;
+  return {
+    verifyConnection: vi.fn(async () => true),
+    ensureWebhookSubscriptions: vi.fn(async () => ({ created: [], existing: [] })),
+    ...overrides,
+  } as unknown as ShopifyAdapter;
 }
 
 /** Percent-encodes like a real browser would — the raw bytes Shopify's redirect would actually send. */
@@ -422,6 +427,95 @@ describe('ShopifyOAuthService', () => {
       expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=connected');
     });
 
+    describe('webhook subscription lifecycle', () => {
+      const businessUri = 'http://localhost:3001/api/v1/workspaces/ws_1/integrations/shopify/webhooks';
+      const uninstallUri = 'http://localhost:3001/api/v1/integrations/shopify/app-uninstalled';
+
+      it('ensures exactly the required subscriptions after storing credentials: business topics to this workspace, app/uninstalled to the app route', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpat_new' }), { status: 200 })));
+        const integrationService = makeIntegrationService();
+        const adapter = makeAdapter();
+        const service = new ShopifyOAuthService(makeConfig(), integrationService, adapter, makeLogger());
+
+        await startThenCallback(service);
+
+        expect(adapter.ensureWebhookSubscriptions).toHaveBeenCalledWith(
+          { shopDomain: SHOP, accessToken: 'shpat_new', grantType: 'authorization_code' },
+          [
+            { topic: 'customers/create', uri: businessUri },
+            { topic: 'customers/update', uri: businessUri },
+            { topic: 'products/create', uri: businessUri },
+            { topic: 'products/update', uri: businessUri },
+            { topic: 'orders/create', uri: businessUri },
+            { topic: 'orders/updated', uri: businessUri },
+            { topic: 'refunds/create', uri: businessUri },
+            { topic: 'collections/create', uri: businessUri },
+            { topic: 'collections/update', uri: businessUri },
+            { topic: 'app/uninstalled', uri: uninstallUri },
+          ],
+        );
+        // Registration runs only once the credentials it needs are stored.
+        expect(vi.mocked(integrationService.setCredentials).mock.invocationCallOrder[0]).toBeLessThan(
+          vi.mocked(adapter.ensureWebhookSubscriptions).mock.invocationCallOrder[0],
+        );
+        expect(integrationService.setSetupError).toHaveBeenCalledWith('ws_1', 'shopify', null);
+      });
+
+      it('surfaces a registration failure: marks the integration errored with the reason and redirects with webhook_registration_failed, not connected', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpat_new' }), { status: 200 })));
+        const integrationService = makeIntegrationService();
+        const adapter = makeAdapter({
+          ensureWebhookSubscriptions: vi.fn(async () => {
+            throw new Error('Shopify refused webhook subscriptions: orders/create (Access denied)');
+          }),
+        });
+        const service = new ShopifyOAuthService(makeConfig(), integrationService, adapter, makeLogger());
+
+        const redirect = await startThenCallback(service);
+
+        expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=webhook_registration_failed');
+        expect(integrationService.setSetupError).toHaveBeenCalledWith(
+          'ws_1',
+          'shopify',
+          'Webhook registration failed: Shopify refused webhook subscriptions: orders/create (Access denied)',
+        );
+      });
+
+      it('still redirects (never throws) if recording the registration failure itself fails', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpat_new' }), { status: 200 })));
+        const integrationService = makeIntegrationService({
+          setSetupError: vi.fn(async () => {
+            throw new Error('db down');
+          }),
+        });
+        const adapter = makeAdapter({
+          ensureWebhookSubscriptions: vi.fn(async () => {
+            throw new Error('boom');
+          }),
+        });
+        const service = new ShopifyOAuthService(makeConfig(), integrationService, adapter, makeLogger());
+
+        await expect(startThenCallback(service)).resolves.toContain('reason=webhook_registration_failed');
+      });
+
+      it('re-runs registration on a repeated OAuth (re-authorization), relying on the adapter to reuse what exists', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpat_new' }), { status: 200 })));
+        const adapter = makeAdapter();
+        const integrationService = makeIntegrationService({
+          connect: vi.fn(async () => {
+            throw new ConflictError('This provider is already connected.');
+          }),
+        });
+        const service = new ShopifyOAuthService(makeConfig(), integrationService, adapter, makeLogger());
+
+        await startThenCallback(service);
+        const redirect = await startThenCallback(service);
+
+        expect(adapter.ensureWebhookSubscriptions).toHaveBeenCalledTimes(2);
+        expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=connected');
+      });
+    });
+
     it('still stores fresh credentials when the workspace is already connected (re-authorization)', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpat_rotated' }), { status: 200 })));
       const integrationService = makeIntegrationService({
@@ -578,6 +672,30 @@ describe('ShopifyOAuthService', () => {
       const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), adapter, makeLogger());
 
       await expect(service.connectViaClientCredentials('ws_1', SHOP)).rejects.toThrow('Could not verify the client-credentials token with Shopify.');
+    });
+
+    it('ensures webhook subscriptions after storing the client-credentials token', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpca_new', expires_in: 86399 }), { status: 200 })));
+      const adapter = makeAdapter();
+      const service = new ShopifyOAuthService(makeConfig(), makeIntegrationService(), adapter, makeLogger());
+
+      await service.connectViaClientCredentials('ws_1', SHOP);
+
+      expect(adapter.ensureWebhookSubscriptions).toHaveBeenCalledWith(expect.objectContaining({ accessToken: 'shpca_new' }), expect.any(Array));
+    });
+
+    it('throws (and marks the integration errored) when webhook registration fails on the client-credentials path', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpca_new', expires_in: 86399 }), { status: 200 })));
+      const integrationService = makeIntegrationService();
+      const adapter = makeAdapter({
+        ensureWebhookSubscriptions: vi.fn(async () => {
+          throw new Error('Access denied');
+        }),
+      });
+      const service = new ShopifyOAuthService(makeConfig(), integrationService, adapter, makeLogger());
+
+      await expect(service.connectViaClientCredentials('ws_1', SHOP)).rejects.toThrow('webhook subscriptions could not be registered');
+      expect(integrationService.setSetupError).toHaveBeenCalledWith('ws_1', 'shopify', 'Webhook registration failed: Access denied');
     });
   });
 });

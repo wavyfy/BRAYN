@@ -20,7 +20,84 @@ import type { NormalizedProduct } from '../../../commerce/product.service';
 import type { NormalizedCollect, NormalizedCollection } from '../../../commerce/collection.service';
 import type { Env } from '../../../../config/env.schema';
 
-const SHOPIFY_API_VERSION = '2024-10';
+/**
+ * Admin API version for every GraphQL call. Matches `shopify.app.toml`'s
+ * `[webhooks] api_version` so request and webhook payload shapes agree.
+ * Shopify supports a stable version ≥12 months; a retired version silently
+ * falls forward to the oldest supported one (shopify.dev — API versioning),
+ * so bump this before it ages out — `X-Shopify-API-Version` in the
+ * connection-check diagnostic shows the version actually served.
+ */
+export const SHOPIFY_API_VERSION = '2026-07';
+
+/**
+ * Business topics BRAYN registers per shop (each one is parsed by
+ * SHOPIFY_WEBHOOK_TOPICS below). Deliberately not registered:
+ * - `fulfillments/*` — parsed, but requires the `read_fulfillments` scope
+ *   BRAYN doesn't request; fulfilments still arrive embedded in orders/updated.
+ * - deletes, inventory — no persistence for them exists yet (see the
+ *   topic-coverage report), so a subscription would only produce ignored
+ *   deliveries. Cancellations need no topic: `cancelled_at` rides on
+ *   orders/updated.
+ */
+export const SHOPIFY_REGISTERED_BUSINESS_TOPICS = [
+  'customers/create',
+  'customers/update',
+  'products/create',
+  'products/update',
+  'orders/create',
+  'orders/updated',
+  // A standalone refund (no cancellation) is not reliably carried by orders/updated — live-observed Oct 20, 2026.
+  'refunds/create',
+  'collections/create',
+  'collections/update',
+] as const;
+
+export const SHOPIFY_APP_UNINSTALLED_TOPIC = 'app/uninstalled';
+
+/** REST-style header topic (`orders/updated`) → GraphQL `WebhookSubscriptionTopic` enum (`ORDERS_UPDATED`). */
+export function shopifyTopicEnum(topic: string): string {
+  return topic.toUpperCase().replace('/', '_');
+}
+
+export interface DesiredWebhookSubscription {
+  /** Header-style topic, e.g. `orders/create`. */
+  topic: string;
+  uri: string;
+}
+
+export interface EnsureWebhookSubscriptionsResult {
+  created: DesiredWebhookSubscription[];
+  existing: DesiredWebhookSubscription[];
+}
+
+const SHOPIFY_WEBHOOK_SUBSCRIPTIONS_QUERY = `
+  query ListWebhookSubscriptions($first: Int!, $topics: [WebhookSubscriptionTopic!]) {
+    webhookSubscriptions(first: $first, topics: $topics) {
+      nodes {
+        id
+        topic
+        uri
+      }
+    }
+  }
+`;
+
+const SHOPIFY_WEBHOOK_SUBSCRIPTION_CREATE_MUTATION = `
+  mutation CreateWebhookSubscription($topic: WebhookSubscriptionTopic!, $webhookSubscription: WebhookSubscriptionInput!) {
+    webhookSubscriptionCreate(topic: $topic, webhookSubscription: $webhookSubscription) {
+      webhookSubscription {
+        id
+        topic
+        uri
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
 
 /** Minimal Admin GraphQL query for verifyConnection() — only `id` is consumed, proving the token works without over-fetching. */
 const SHOPIFY_VERIFY_CONNECTION_QUERY = `{ shop { id } }`;
@@ -162,6 +239,7 @@ const SHOPIFY_ORDERS_QUERY = `
     $lineItemsFirst: Int!
     $refundsFirst: Int!
     $refundLineItemsFirst: Int!
+    $refundTransactionsFirst: Int!
     $fulfillmentsFirst: Int!
   ) {
     orders(first: $first, after: $after, query: $query) {
@@ -178,6 +256,7 @@ const SHOPIFY_ORDERS_QUERY = `
           }
           createdAt
           updatedAt
+          cancelledAt
           lineItems(first: $lineItemsFirst) {
             edges {
               node {
@@ -217,11 +296,15 @@ const SHOPIFY_ORDERS_QUERY = `
                 endCursor
               }
             }
-            transactions {
-              status
-              amountSet {
-                shopMoney {
-                  amount
+            transactions(first: $refundTransactionsFirst) {
+              edges {
+                node {
+                  status
+                  amountSet {
+                    shopMoney {
+                      amount
+                    }
+                  }
                 }
               }
             }
@@ -229,7 +312,7 @@ const SHOPIFY_ORDERS_QUERY = `
           fulfillments(first: $fulfillmentsFirst) {
             id
             status
-            shipmentStatus
+            displayStatus
             updatedAt
             trackingInfo {
               company
@@ -415,6 +498,13 @@ const FULFILLMENTS_PAGE_SIZE = 250;
  * in one refund.
  */
 const REFUND_LINE_ITEMS_PAGE_SIZE = 250;
+/**
+ * Refund.transactions is a connection (`OrderTransactionConnection!`) in
+ * 2026-07, not a plain list — confirmed by a real-store import rejecting
+ * the bare-list selection. ponytail: no continuation; a single refund with
+ * >250 transactions is not a realistic shape.
+ */
+const REFUND_TRANSACTIONS_PAGE_SIZE = 250;
 const COLLECTIONS_PAGE_SIZE = 250;
 const COLLECTS_PAGE_SIZE = 250;
 /**
@@ -607,6 +697,8 @@ interface ShopifyRefundTransaction {
 
 interface ShopifyRefund {
   id: number;
+  /** Present on the standalone `refunds/create` webhook payload; absent (implied) when embedded in an order. */
+  order_id?: number;
   note: string | null;
   processed_at: string | null;
   refund_line_items: ShopifyRefundLineItem[];
@@ -712,8 +804,10 @@ interface ShopifyOrder {
   /** Shopify: set "when the customer completes checkout and remains unchanged throughout an order's lifecycle" — the order-placed time. Present on REST-shaped webhook payloads too. */
   created_at: string | null;
   updated_at: string;
+  /** Null unless the order was cancelled. Present on REST-shaped webhook payloads (orders/updated carries the cancellation). */
+  cancelled_at?: string | null;
   line_items: ShopifyLineItem[];
-  /** Embedded, not a separate resource — Shopify has no top-level refunds list/webhook (doc 20 Shopify Phase 1 Data — "Refunds"). */
+  /** Embedded — Shopify has no top-level refunds list (doc 20 Shopify Phase 1 Data — "Refunds"); live refunds also arrive standalone via `refunds/create`. */
   refunds: ShopifyRefund[];
   /** Embedded here too, in addition to its own `fulfillments/create`/`fulfillments/update` webhook topics — see normalizeFulfillment's doc comment. */
   fulfillments: ShopifyFulfillment[];
@@ -760,10 +854,10 @@ interface ShopifyGraphqlRefundNode {
   /** REST's `processed_at` has no exact GraphQL analog; `createdAt` is the closest documented field (see fetchOrders doc comment — flagged for real-provider verification). */
   createdAt: string;
   refundLineItems: ShopifyGraphqlRefundLineItemsConnection;
-  transactions: ShopifyGraphqlOrderTransactionNode[];
+  transactions: { edges: { node: ShopifyGraphqlOrderTransactionNode }[] };
 }
 
-/** Singular in the real schema (`ShipmentTrackingInfo`, not a list) — REST's flat tracking_company/number/url map directly, no list-to-single reduction needed. */
+/** `Fulfillment.trackingInfo` is a list (`[FulfillmentTrackingInfo!]!`) in 2026-07 — REST's flat tracking_company/number/url take the first entry. */
 interface ShopifyGraphqlFulfillmentTrackingInfo {
   company: string | null;
   number: string | null;
@@ -773,9 +867,10 @@ interface ShopifyGraphqlFulfillmentTrackingInfo {
 interface ShopifyGraphqlOrderFulfillmentNode {
   id: string;
   status: string | null;
-  shipmentStatus: string | null;
+  /** `FulfillmentDisplayStatus` enum — 2026-07 has no `shipmentStatus` field; see graphqlFulfillmentToRestShape. */
+  displayStatus: string | null;
   updatedAt: string | null;
-  trackingInfo: ShopifyGraphqlFulfillmentTrackingInfo | null;
+  trackingInfo: ShopifyGraphqlFulfillmentTrackingInfo[];
 }
 
 interface ShopifyGraphqlOrderNode {
@@ -784,6 +879,7 @@ interface ShopifyGraphqlOrderNode {
   totalPriceSet: ShopifyGraphqlMoneyBag | null;
   createdAt: string;
   updatedAt: string;
+  cancelledAt: string | null;
   lineItems: ShopifyGraphqlOrderLineItemsConnection;
   /** Plain list per Shopify's real schema, not a connection — see REFUNDS_PAGE_SIZE doc comment. */
   refunds: ShopifyGraphqlRefundNode[];
@@ -1272,6 +1368,7 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
       lineItemsFirst: LINE_ITEMS_PAGE_SIZE,
       refundsFirst: REFUNDS_PAGE_SIZE,
       refundLineItemsFirst: REFUND_LINE_ITEMS_PAGE_SIZE,
+      refundTransactionsFirst: REFUND_TRANSACTIONS_PAGE_SIZE,
       fulfillmentsFirst: FULFILLMENTS_PAGE_SIZE,
     };
     if (cursor) {
@@ -1434,13 +1531,77 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
   /**
    * Verifies Shopify's `X-Shopify-Hmac-Sha256` header: base64(HMAC-SHA256(
    * rawBody, secret)) — the exact check Shopify's own webhook docs specify.
-   * `secret` is whatever the merchant pasted as `credentials.webhookSecret`
-   * (their custom app's API secret key, or the signing secret shown when
-   * they create the webhook subscription — either way, a value only
-   * Shopify and BRAYN should know, not something BRAYN issues or derives).
+   * `secret` comes from `resolveWebhookSecret()` below.
    */
   verifyWebhookSignature(rawBody: string, headers: Record<string, string>, secret: string): boolean {
     return verifyShopifyHmac(rawBody, headers, secret);
+  }
+
+  /**
+   * Shopify signs every webhook an app subscribes to (via the Admin API or
+   * shopify.app.toml) with that app's client secret (shopify.dev — "HTTPS
+   * delivery": HMAC "generated using your app's client secret") — one
+   * app-level secret, not a per-store one. So an app-installed store (OAuth
+   * or client-credentials) has no per-integration secret at all and uses
+   * `SHOPIFY_APP_CLIENT_SECRET`. A manually connected store whose merchant
+   * pasted `credentials.webhookSecret` (a webhook created in their own admin,
+   * or their own custom app) keeps using that secret.
+   */
+  resolveWebhookSecret(credentials: Record<string, string> | null): string | null {
+    return credentials?.webhookSecret || this.config.get('SHOPIFY_APP_CLIENT_SECRET', { infer: true }) || null;
+  }
+
+  /**
+   * Idempotently ensures each desired (topic, uri) subscription exists for
+   * this shop: lists the shop's current subscriptions for those topics,
+   * reuses an exact (topic, uri) match, creates only what's missing.
+   * Re-running (OAuth retried, reconnect) therefore never duplicates a
+   * subscription. Throws a ProviderError naming every topic Shopify
+   * refused (e.g. a missing access scope) — the caller decides how to
+   * surface it; nothing is swallowed.
+   */
+  async ensureWebhookSubscriptions(
+    credentials: Record<string, string>,
+    desired: DesiredWebhookSubscription[],
+  ): Promise<EnsureWebhookSubscriptionsResult> {
+    const listed = await this.graphqlRequest(credentials, SHOPIFY_WEBHOOK_SUBSCRIPTIONS_QUERY, {
+      first: 100,
+      topics: [...new Set(desired.map((d) => shopifyTopicEnum(d.topic)))],
+    });
+    const nodes = (listed.webhookSubscriptions as { nodes?: unknown } | undefined)?.nodes;
+    if (!Array.isArray(nodes)) {
+      throw new ProviderError('Shopify returned an unexpected webhook subscription list.');
+    }
+    const existingKeys = new Set((nodes as { topic?: string; uri?: string }[]).map((node) => `${node.topic}|${node.uri}`));
+
+    const result: EnsureWebhookSubscriptionsResult = { created: [], existing: [] };
+    const failures: string[] = [];
+    for (const subscription of desired) {
+      const topicEnum = shopifyTopicEnum(subscription.topic);
+      if (existingKeys.has(`${topicEnum}|${subscription.uri}`)) {
+        result.existing.push(subscription);
+        continue;
+      }
+
+      const data = await this.graphqlRequest(credentials, SHOPIFY_WEBHOOK_SUBSCRIPTION_CREATE_MUTATION, {
+        topic: topicEnum,
+        webhookSubscription: { uri: subscription.uri },
+      });
+      const payload = data.webhookSubscriptionCreate as
+        | { webhookSubscription?: { id?: string } | null; userErrors?: { message?: string }[] }
+        | undefined;
+      const userErrors = payload?.userErrors ?? [];
+      if (userErrors.length > 0 || !payload?.webhookSubscription?.id) {
+        failures.push(`${subscription.topic} (${userErrors.map((e) => e.message).join('; ') || 'no subscription returned'})`);
+        continue;
+      }
+      result.created.push(subscription);
+    }
+
+    if (failures.length > 0) {
+      throw new ProviderError(`Shopify refused webhook subscriptions: ${failures.join(', ')}`);
+    }
+    return result;
   }
 
   /**
@@ -1478,7 +1639,9 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
                   resource,
                   data: { ...normalizeFulfillment(raw as ShopifyFulfillment), orderExternalId: String((raw as ShopifyFulfillment).order_id) },
                 }
-              : { resource, data: normalizeCollection(raw as ShopifyCollection) };
+              : resource === 'refund'
+                ? { resource, data: { ...normalizeRefund(raw as ShopifyRefund), orderExternalId: String((raw as ShopifyRefund).order_id) } }
+                : { resource, data: normalizeCollection(raw as ShopifyCollection) };
 
     // Present on every delivery since 2022, but derive a stable fallback
     // rather than reject an otherwise-valid, signature-verified delivery.
@@ -1556,7 +1719,7 @@ export function verifyShopifyHmac(rawBody: string, headers: Record<string, strin
 }
 
 /** Recognized webhook topics → the commerce resource they normalize to (doc 21 — "process only relevant events"). */
-const SHOPIFY_WEBHOOK_TOPICS: Record<string, 'customer' | 'product' | 'order' | 'fulfillment' | 'collection'> = {
+const SHOPIFY_WEBHOOK_TOPICS: Record<string, 'customer' | 'product' | 'order' | 'fulfillment' | 'refund' | 'collection'> = {
   'customers/create': 'customer',
   'customers/update': 'customer',
   'products/create': 'product',
@@ -1565,6 +1728,7 @@ const SHOPIFY_WEBHOOK_TOPICS: Record<string, 'customer' | 'product' | 'order' | 
   'orders/updated': 'order',
   'fulfillments/create': 'fulfillment',
   'fulfillments/update': 'fulfillment',
+  'refunds/create': 'refund',
   // Unified across CustomCollection/SmartCollection — same bare payload shape either way (doc 21 — "process only relevant events").
   'collections/create': 'collection',
   'collections/update': 'collection',
@@ -1675,7 +1839,7 @@ function assertShopifyOrderNodeShape(node: ShopifyGraphqlOrderNode): void {
     throw new ProviderError('Shopify GraphQL order refunds response had an unexpected shape.');
   }
   for (const refund of node.refunds) {
-    if (!refund.refundLineItems || !Array.isArray(refund.refundLineItems.edges) || !Array.isArray(refund.transactions)) {
+    if (!refund.refundLineItems || !Array.isArray(refund.refundLineItems.edges) || !Array.isArray(refund.transactions?.edges)) {
       throw new ProviderError('Shopify GraphQL order refund response had an unexpected shape.');
     }
   }
@@ -1716,20 +1880,35 @@ function graphqlRefundToRestShape(node: ShopifyGraphqlRefundNode): ShopifyRefund
     note: node.note,
     processed_at: node.createdAt,
     refund_line_items: node.refundLineItems.edges.map((edge) => graphqlRefundLineItemToRestShape(edge.node)),
-    transactions: node.transactions.map(graphqlTransactionToRestShape),
+    transactions: node.transactions.edges.map((edge) => graphqlTransactionToRestShape(edge.node)),
   };
 }
 
-/** `status`/`shipmentStatus` arrive as uppercase GraphQL enums (e.g. `IN_TRANSIT`) — lower-cased to match the REST/webhook lowercase string convention normalizeFulfillment already expects. `orderNumericId` fills ShopifyFulfillment.order_id, which normalizeFulfillment doesn't read for an order-embedded fetch (only the standalone webhook path does) but the REST shape requires. */
+/** REST `shipment_status` values — every one has a same-named `FulfillmentDisplayStatus` member. Display statuses outside this set (FULFILLED, CANCELED, …) describe the fulfillment, not the shipment, so they map to null exactly as REST/webhook payloads would. */
+const REST_SHIPMENT_STATUSES = new Set([
+  'label_printed',
+  'label_purchased',
+  'attempted_delivery',
+  'ready_for_pickup',
+  'confirmed',
+  'in_transit',
+  'out_for_delivery',
+  'delivered',
+  'failure',
+]);
+
+/** `status`/`displayStatus` arrive as uppercase GraphQL enums (e.g. `IN_TRANSIT`) — lower-cased to match the REST/webhook lowercase string convention normalizeFulfillment already expects. `orderNumericId` fills ShopifyFulfillment.order_id, which normalizeFulfillment doesn't read for an order-embedded fetch (only the standalone webhook path does) but the REST shape requires. */
 function graphqlFulfillmentToRestShape(node: ShopifyGraphqlOrderFulfillmentNode, orderNumericId: number): ShopifyFulfillment {
+  const tracking = node.trackingInfo?.[0];
+  const displayStatus = node.displayStatus?.toLowerCase() ?? null;
   return {
     id: shopifyGidToNumericId(node.id),
     order_id: orderNumericId,
     status: node.status ? node.status.toLowerCase() : null,
-    tracking_company: node.trackingInfo?.company ?? null,
-    tracking_number: node.trackingInfo?.number ?? null,
-    tracking_url: node.trackingInfo?.url ?? null,
-    shipment_status: node.shipmentStatus ? node.shipmentStatus.toLowerCase() : null,
+    tracking_company: tracking?.company ?? null,
+    tracking_number: tracking?.number ?? null,
+    tracking_url: tracking?.url ?? null,
+    shipment_status: displayStatus && REST_SHIPMENT_STATUSES.has(displayStatus) ? displayStatus : null,
     updated_at: node.updatedAt,
   };
 }
@@ -1743,6 +1922,7 @@ function graphqlOrderToRestShape(node: ShopifyGraphqlOrderNode, lineItemNodes: S
     total_price: node.totalPriceSet?.shopMoney.amount ?? null,
     created_at: node.createdAt,
     updated_at: node.updatedAt,
+    cancelled_at: node.cancelledAt,
     line_items: lineItemNodes.map(graphqlLineItemToRestShape),
     refunds: node.refunds.map(graphqlRefundToRestShape),
     fulfillments: node.fulfillments.map((fulfillment) => graphqlFulfillmentToRestShape(fulfillment, orderNumericId)),
@@ -1757,6 +1937,7 @@ function normalizeOrder(order: ShopifyOrder): NormalizedOrder {
     totalPrice: order.total_price,
     sourceUpdatedAt: new Date(order.updated_at),
     sourceCreatedAt: order.created_at ? new Date(order.created_at) : null,
+    sourceCancelledAt: order.cancelled_at ? new Date(order.cancelled_at) : null,
     lineItems: order.line_items.map((item) => ({
       externalId: String(item.id),
       variantExternalId: item.variant_id !== null ? String(item.variant_id) : null,
@@ -1781,7 +1962,7 @@ function normalizeFulfillment(fulfillment: ShopifyFulfillment): NormalizedFulfil
   };
 }
 
-/** Refunds arrive only embedded in an order (see ShopifyOrder.refunds doc comment). `totalRefunded` sums successful transaction amounts — a refund's own record carries no single total. */
+/** Shared by order-embedded refunds (ShopifyOrder.refunds) and the standalone `refunds/create` webhook (same refund shape plus `order_id`). `totalRefunded` sums successful transaction amounts — a refund's own record carries no single total. */
 function normalizeRefund(refund: ShopifyRefund): NormalizedRefund {
   const successfulAmounts = (refund.transactions ?? [])
     .filter((transaction) => transaction.status === 'success' && transaction.amount !== null)

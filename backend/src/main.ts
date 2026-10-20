@@ -10,6 +10,7 @@ import { registerHttpLogging } from './common/logging/http-logging.hook';
 import { StructuredLoggerService } from './common/logging/structured-logger.service';
 import { initSentry } from './common/observability/sentry';
 import { loadConfiguration } from './config/configuration';
+import { WebhookEventProcessorService } from './domains/integration/webhook-event-processor.service';
 import type { Env } from './config/env.schema';
 
 async function bootstrap() {
@@ -45,6 +46,11 @@ async function bootstrap() {
 
   const port = configService.get('PORT', { infer: true });
   await app.listen(port, '0.0.0.0');
+
+  // Durable webhook recovery: sweeps pending/abandoned webhook rows (see
+  // WebhookEventProcessorService). Started here, not on module init, so
+  // test modules never run a background poller against the shared dev DB.
+  app.get(WebhookEventProcessorService).startPolling();
 }
 
 void bootstrap();
