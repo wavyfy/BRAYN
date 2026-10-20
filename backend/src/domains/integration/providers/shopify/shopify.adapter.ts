@@ -20,7 +20,81 @@ import type { NormalizedProduct } from '../../../commerce/product.service';
 import type { NormalizedCollect, NormalizedCollection } from '../../../commerce/collection.service';
 import type { Env } from '../../../../config/env.schema';
 
-const SHOPIFY_API_VERSION = '2024-10';
+/**
+ * Admin API version for every GraphQL call. Matches `shopify.app.toml`'s
+ * `[webhooks] api_version` so request and webhook payload shapes agree.
+ * Shopify supports a stable version ≥12 months; a retired version silently
+ * falls forward to the oldest supported one (shopify.dev — API versioning),
+ * so bump this before it ages out — `X-Shopify-API-Version` in the
+ * connection-check diagnostic shows the version actually served.
+ */
+export const SHOPIFY_API_VERSION = '2026-07';
+
+/**
+ * Business topics BRAYN registers per shop (each one is parsed by
+ * SHOPIFY_WEBHOOK_TOPICS below). Deliberately not registered:
+ * - `fulfillments/*` — parsed, but requires the `read_fulfillments` scope
+ *   BRAYN doesn't request; fulfilments still arrive embedded in orders/updated.
+ * - deletes, inventory — no persistence for them exists yet (see the
+ *   topic-coverage report), so a subscription would only produce ignored
+ *   deliveries.
+ */
+export const SHOPIFY_REGISTERED_BUSINESS_TOPICS = [
+  'customers/create',
+  'customers/update',
+  'products/create',
+  'products/update',
+  'orders/create',
+  'orders/updated',
+  'collections/create',
+  'collections/update',
+] as const;
+
+export const SHOPIFY_APP_UNINSTALLED_TOPIC = 'app/uninstalled';
+
+/** REST-style header topic (`orders/updated`) → GraphQL `WebhookSubscriptionTopic` enum (`ORDERS_UPDATED`). */
+export function shopifyTopicEnum(topic: string): string {
+  return topic.toUpperCase().replace('/', '_');
+}
+
+export interface DesiredWebhookSubscription {
+  /** Header-style topic, e.g. `orders/create`. */
+  topic: string;
+  uri: string;
+}
+
+export interface EnsureWebhookSubscriptionsResult {
+  created: DesiredWebhookSubscription[];
+  existing: DesiredWebhookSubscription[];
+}
+
+const SHOPIFY_WEBHOOK_SUBSCRIPTIONS_QUERY = `
+  query ListWebhookSubscriptions($first: Int!, $topics: [WebhookSubscriptionTopic!]) {
+    webhookSubscriptions(first: $first, topics: $topics) {
+      nodes {
+        id
+        topic
+        uri
+      }
+    }
+  }
+`;
+
+const SHOPIFY_WEBHOOK_SUBSCRIPTION_CREATE_MUTATION = `
+  mutation CreateWebhookSubscription($topic: WebhookSubscriptionTopic!, $webhookSubscription: WebhookSubscriptionInput!) {
+    webhookSubscriptionCreate(topic: $topic, webhookSubscription: $webhookSubscription) {
+      webhookSubscription {
+        id
+        topic
+        uri
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
 
 /** Minimal Admin GraphQL query for verifyConnection() — only `id` is consumed, proving the token works without over-fetching. */
 const SHOPIFY_VERIFY_CONNECTION_QUERY = `{ shop { id } }`;
@@ -1434,13 +1508,77 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
   /**
    * Verifies Shopify's `X-Shopify-Hmac-Sha256` header: base64(HMAC-SHA256(
    * rawBody, secret)) — the exact check Shopify's own webhook docs specify.
-   * `secret` is whatever the merchant pasted as `credentials.webhookSecret`
-   * (their custom app's API secret key, or the signing secret shown when
-   * they create the webhook subscription — either way, a value only
-   * Shopify and BRAYN should know, not something BRAYN issues or derives).
+   * `secret` comes from `resolveWebhookSecret()` below.
    */
   verifyWebhookSignature(rawBody: string, headers: Record<string, string>, secret: string): boolean {
     return verifyShopifyHmac(rawBody, headers, secret);
+  }
+
+  /**
+   * Shopify signs every webhook an app subscribes to (via the Admin API or
+   * shopify.app.toml) with that app's client secret (shopify.dev — "HTTPS
+   * delivery": HMAC "generated using your app's client secret") — one
+   * app-level secret, not a per-store one. So an app-installed store (OAuth
+   * or client-credentials) has no per-integration secret at all and uses
+   * `SHOPIFY_APP_CLIENT_SECRET`. A manually connected store whose merchant
+   * pasted `credentials.webhookSecret` (a webhook created in their own admin,
+   * or their own custom app) keeps using that secret.
+   */
+  resolveWebhookSecret(credentials: Record<string, string> | null): string | null {
+    return credentials?.webhookSecret || this.config.get('SHOPIFY_APP_CLIENT_SECRET', { infer: true }) || null;
+  }
+
+  /**
+   * Idempotently ensures each desired (topic, uri) subscription exists for
+   * this shop: lists the shop's current subscriptions for those topics,
+   * reuses an exact (topic, uri) match, creates only what's missing.
+   * Re-running (OAuth retried, reconnect) therefore never duplicates a
+   * subscription. Throws a ProviderError naming every topic Shopify
+   * refused (e.g. a missing access scope) — the caller decides how to
+   * surface it; nothing is swallowed.
+   */
+  async ensureWebhookSubscriptions(
+    credentials: Record<string, string>,
+    desired: DesiredWebhookSubscription[],
+  ): Promise<EnsureWebhookSubscriptionsResult> {
+    const listed = await this.graphqlRequest(credentials, SHOPIFY_WEBHOOK_SUBSCRIPTIONS_QUERY, {
+      first: 100,
+      topics: [...new Set(desired.map((d) => shopifyTopicEnum(d.topic)))],
+    });
+    const nodes = (listed.webhookSubscriptions as { nodes?: unknown } | undefined)?.nodes;
+    if (!Array.isArray(nodes)) {
+      throw new ProviderError('Shopify returned an unexpected webhook subscription list.');
+    }
+    const existingKeys = new Set((nodes as { topic?: string; uri?: string }[]).map((node) => `${node.topic}|${node.uri}`));
+
+    const result: EnsureWebhookSubscriptionsResult = { created: [], existing: [] };
+    const failures: string[] = [];
+    for (const subscription of desired) {
+      const topicEnum = shopifyTopicEnum(subscription.topic);
+      if (existingKeys.has(`${topicEnum}|${subscription.uri}`)) {
+        result.existing.push(subscription);
+        continue;
+      }
+
+      const data = await this.graphqlRequest(credentials, SHOPIFY_WEBHOOK_SUBSCRIPTION_CREATE_MUTATION, {
+        topic: topicEnum,
+        webhookSubscription: { uri: subscription.uri },
+      });
+      const payload = data.webhookSubscriptionCreate as
+        | { webhookSubscription?: { id?: string } | null; userErrors?: { message?: string }[] }
+        | undefined;
+      const userErrors = payload?.userErrors ?? [];
+      if (userErrors.length > 0 || !payload?.webhookSubscription?.id) {
+        failures.push(`${subscription.topic} (${userErrors.map((e) => e.message).join('; ') || 'no subscription returned'})`);
+        continue;
+      }
+      result.created.push(subscription);
+    }
+
+    if (failures.length > 0) {
+      throw new ProviderError(`Shopify refused webhook subscriptions: ${failures.join(', ')}`);
+    }
+    return result;
   }
 
   /**

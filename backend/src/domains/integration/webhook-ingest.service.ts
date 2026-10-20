@@ -66,7 +66,7 @@ export class WebhookIngestService {
     }
 
     const credentials = await this.integrationService.getCredentials(workspaceId, provider);
-    const secret = credentials?.webhookSecret;
+    const secret = adapter.resolveWebhookSecret ? adapter.resolveWebhookSecret(credentials) : credentials?.webhookSecret;
     if (!secret) {
       throw new ProviderError('No webhook secret is configured for this integration.');
     }

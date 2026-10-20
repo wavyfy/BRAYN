@@ -195,6 +195,17 @@ describe('WebhookIngestService', () => {
     await expect(service.ingest('ws_1', 'shopify', '{}', {})).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
   });
 
+  it('verifies with the adapter-resolved secret (e.g. an app-level secret) when no per-integration webhookSecret is stored', async () => {
+    const verifyWebhookSignature = vi.fn(() => true);
+    const { service } = makeDeps({
+      credentials: { accessToken: 'tok' },
+      adapter: makeAdapter({ verifyWebhookSignature, resolveWebhookSecret: vi.fn(() => 'app_secret') }),
+    });
+
+    await expect(service.ingest('ws_1', 'shopify', '{}', {})).resolves.toMatchObject({ status: 'accepted' });
+    expect(verifyWebhookSignature).toHaveBeenCalledWith('{}', {}, 'app_secret');
+  });
+
   it('throws UnauthenticatedError when signature verification fails, persisting nothing', async () => {
     const { service, client } = makeDeps({ adapter: makeAdapter({ verifyWebhookSignature: vi.fn(() => false) }) });
 

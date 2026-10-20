@@ -12,9 +12,11 @@ import { StructuredLoggerService } from '../../../../common/logging/structured-l
 import { IntegrationService } from '../../integration.service';
 import {
   requestShopifyClientCredentialsToken,
+  SHOPIFY_APP_UNINSTALLED_TOPIC,
   SHOPIFY_AUTHORIZATION_CODE_GRANT_TYPE,
   SHOPIFY_CLIENT_CREDENTIALS_GRANT_TYPE,
   SHOPIFY_DOMAIN_PATTERN,
+  SHOPIFY_REGISTERED_BUSINESS_TOPICS,
   ShopifyAdapter,
 } from './shopify.adapter';
 import type { ShopifyConnectionCheckDiagnostic } from './shopify.adapter';
@@ -176,6 +178,47 @@ export class ShopifyOAuthService {
       }
     }
     await this.integrationService.setCredentials(workspaceId, 'shopify', credentials);
+
+    if (!(await this.ensureWebhookSubscriptions(workspaceId, credentials))) {
+      throw new ProviderError('Connected to Shopify, but its webhook subscriptions could not be registered. Reconnect to retry.');
+    }
+  }
+
+  /**
+   * OAuth/install → credentials stored → integration established →
+   * webhook subscriptions ensured. Idempotent (see
+   * ShopifyAdapter.ensureWebhookSubscriptions), so a retried OAuth or a
+   * reconnect re-checks and only fills gaps. Business topics go to this
+   * workspace's webhook route; `app/uninstalled` goes to the app-level
+   * uninstall route (resolved by shop domain, since it must still work
+   * once the integration is disconnected). On failure the integration is
+   * marked `error` with the reason, never left looking healthy; on success
+   * a previous setup error is cleared. Returns whether it succeeded.
+   */
+  private async ensureWebhookSubscriptions(workspaceId: string, credentials: Record<string, string>): Promise<boolean> {
+    const apiBase = `${this.config.get('BACKEND_URL', { infer: true })}/api/v1`;
+    const businessUri = `${apiBase}/workspaces/${workspaceId}/integrations/shopify/webhooks`;
+    const desired = [
+      ...SHOPIFY_REGISTERED_BUSINESS_TOPICS.map((topic) => ({ topic, uri: businessUri })),
+      { topic: SHOPIFY_APP_UNINSTALLED_TOPIC, uri: `${apiBase}/integrations/shopify/app-uninstalled` },
+    ];
+
+    try {
+      const result = await this.shopifyAdapter.ensureWebhookSubscriptions(credentials, desired);
+      await this.integrationService.setSetupError(workspaceId, 'shopify', null);
+      this.logger.event('log', 'Shopify webhook subscriptions ensured', 'ShopifyOAuth', {
+        workspaceId,
+        created: result.created.map((s) => s.topic),
+        existing: result.existing.map((s) => s.topic),
+      });
+      return true;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.event('error', 'Shopify webhook subscription registration failed', 'ShopifyOAuth', { workspaceId, reason });
+      // handleCallback must never throw (a mid-redirect browser has nowhere to receive it) — the log above still records the failure.
+      await this.integrationService.setSetupError(workspaceId, 'shopify', `Webhook registration failed: ${reason}`).catch(() => undefined);
+      return false;
+    }
   }
 
   /**
@@ -286,6 +329,10 @@ export class ShopifyOAuthService {
       }
     }
     await this.integrationService.setCredentials(state.workspaceId, 'shopify', credentials);
+
+    if (!(await this.ensureWebhookSubscriptions(state.workspaceId, credentials))) {
+      return `${integrationsUrl}?shopify=error&reason=webhook_registration_failed`;
+    }
 
     return `${integrationsUrl}?shopify=connected`;
   }

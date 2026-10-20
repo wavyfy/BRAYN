@@ -125,6 +125,13 @@ export interface ProviderAdapter {
   parseWebhookEvent?(rawBody: string, headers: Record<string, string>): ParsedWebhookEvent | null;
 
   /**
+   * Where this provider's webhook signing secret comes from, when it isn't
+   * simply the integration's stored `credentials.webhookSecret` (e.g. an
+   * app-level secret shared by every install). Omitted → that stored field.
+   */
+  resolveWebhookSecret?(credentials: Record<string, string> | null): string | null;
+
+  /**
    * Initial-import support (doc 20 — Initial Import). Optional: a provider
    * without commerce customer data (e.g. Website Tracking, WhatsApp)
    * implements neither. Fetches one page starting at `cursor` (undefined
