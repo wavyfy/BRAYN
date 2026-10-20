@@ -4,11 +4,12 @@ import { DatabaseService } from '../../database/database.service';
 import { integrations } from '../../database/schema/integrations';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
 import { ConflictError, NotFoundError, ProviderError, UnauthenticatedError } from '../../common/errors/app-error';
-import { IdempotencyService } from '../../common/idempotency/idempotency.service';
 import { createEvent } from '../../common/events/domain-event';
 import { EventBus } from '../../common/events/event-bus.service';
+import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import { IntegrationService } from './integration.service';
 import { ProviderRegistry } from './provider-registry.service';
+import type { WebhookReceivedPayload } from './webhook-event-processor.service';
 import type { IntegrationProvider } from './dto/connect-integration.schema';
 
 export type WebhookIngestResult =
@@ -24,6 +25,12 @@ export type WebhookIngestResult =
  * behind ProviderAdapter (doc 06 — Provider Isolation); this service owns
  * everything else and never depends on a provider's payload shape.
  *
+ * Ack semantics: `accepted`/`duplicate` (HTTP 200) means the delivery is
+ * durably persisted as a `pending` work item — not that it has been
+ * processed. WebhookEventProcessorService processes it afterwards and
+ * recovers it across crashes/restarts. Any failure before the row commits
+ * throws (non-2xx), so the provider retries.
+ *
  * Called from WebhookController — a `@Public()` route, since a provider's
  * webhook delivery carries no Clerk session; the signature check here
  * (via the adapter, using this integration's stored secret) is this
@@ -35,8 +42,8 @@ export class WebhookIngestService {
     private readonly database: DatabaseService,
     private readonly integrationService: IntegrationService,
     private readonly providerRegistry: ProviderRegistry,
-    private readonly idempotency: IdempotencyService,
     private readonly eventBus: EventBus,
+    private readonly logger: StructuredLoggerService,
   ) {}
 
   async ingest(
@@ -73,12 +80,11 @@ export class WebhookIngestService {
       return { status: 'ignored' };
     }
 
-    const idempotencyKey = `webhook:${integration.id}:${parsed.externalEventId}`;
-    const reserved = await this.idempotency.reserve(idempotencyKey);
-    if (!reserved) {
-      return { status: 'duplicate' };
-    }
-
+    // The durable row is both the dedup and the acknowledgement: once this
+    // insert commits, the delivery is BRAYN's to process (see
+    // integration_webhook_events' lifecycle). A conflict means this delivery
+    // already has a row — in any state, it's already durably owned, so a
+    // redelivery is acknowledged without creating anything.
     const [row] = await this.database.client
       .insert(integrationWebhookEvents)
       .values({
@@ -88,75 +94,68 @@ export class WebhookIngestService {
         eventType: parsed.eventType,
         payload: parsed.payload,
       })
-      .returning();
+      .onConflictDoNothing({ target: [integrationWebhookEvents.integrationId, integrationWebhookEvents.externalEventId] })
+      .returning({ id: integrationWebhookEvents.id });
 
-    try {
-      this.eventBus.emit(
-        createEvent({
-          type: 'integration.webhook.received',
-          workspaceId,
-          entityId: integration.id,
-          idempotencyKey,
-          payload: { provider, eventType: parsed.eventType, payload: parsed.payload, webhookEventId: row.id },
-        }),
-      );
-
-      await this.database.client
-        .update(integrationWebhookEvents)
-        .set({ status: 'processed', processedAt: new Date() })
-        .where(eq(integrationWebhookEvents.id, row.id));
-      await this.idempotency.complete(idempotencyKey);
-
-      return { status: 'accepted', webhookEventId: row.id };
-    } catch (error) {
-      await this.database.client
-        .update(integrationWebhookEvents)
-        .set({ status: 'failed', error: error instanceof Error ? error.message : 'Unknown error' })
-        .where(eq(integrationWebhookEvents.id, row.id));
-      throw error;
+    if (!row) {
+      return { status: 'duplicate' };
     }
+
+    this.wake(workspaceId, integration.id, row.id);
+    return { status: 'accepted', webhookEventId: row.id };
   }
 
   /**
    * Manual recovery for a dead-lettered delivery (doc 21/18 — "Manual
-   * recovery where required", "Replay where safe"). Re-dispatches the
-   * already-verified, already-deduplicated record straight from its
-   * stored `payload` — this does not re-verify the signature or reserve a
-   * fresh idempotency key, since it isn't a new delivery, it's a retry of
-   * one BRAYN already accepted.
+   * recovery where required", "Replay where safe"): puts the
+   * already-verified, already-deduplicated row back to `pending` with a
+   * fresh attempt budget — processed from its stored `payload`, no
+   * signature re-check, since it isn't a new delivery. Durable like any
+   * other pending row: the wake-up is only a shortcut.
    */
   async replay(workspaceId: string, webhookEventId: string): Promise<{ status: 'accepted' }> {
-    const [row] = await this.database.client
-      .select({
-        id: integrationWebhookEvents.id,
-        integrationId: integrationWebhookEvents.integrationId,
-        eventType: integrationWebhookEvents.eventType,
-        status: integrationWebhookEvents.status,
-        payload: integrationWebhookEvents.payload,
-        provider: integrations.provider,
-      })
-      .from(integrationWebhookEvents)
-      .innerJoin(integrations, eq(integrationWebhookEvents.integrationId, integrations.id))
-      .where(and(eq(integrationWebhookEvents.id, webhookEventId), eq(integrationWebhookEvents.workspaceId, workspaceId)))
-      .limit(1);
+    const t = integrationWebhookEvents;
+    const [requeued] = await this.database.client
+      .update(t)
+      .set({ status: 'pending', retryCount: 0, nextAttemptAt: new Date(), error: null })
+      .where(and(eq(t.id, webhookEventId), eq(t.workspaceId, workspaceId), eq(t.status, 'dead_letter')))
+      .returning({ id: t.id, integrationId: t.integrationId });
 
-    if (!row) {
-      throw new NotFoundError('No webhook event with that id exists in this workspace.');
-    }
-    if (row.status !== 'dead_letter') {
+    if (!requeued) {
+      const [existing] = await this.database.client
+        .select({ id: t.id })
+        .from(t)
+        .where(and(eq(t.id, webhookEventId), eq(t.workspaceId, workspaceId)))
+        .limit(1);
+      if (!existing) {
+        throw new NotFoundError('No webhook event with that id exists in this workspace.');
+      }
       throw new ConflictError('Only a dead-lettered webhook event can be replayed.');
     }
 
-    this.eventBus.emit(
-      createEvent({
-        type: 'integration.webhook.received',
-        workspaceId,
-        entityId: row.integrationId,
-        payload: { provider: row.provider as IntegrationProvider, eventType: row.eventType, payload: row.payload, webhookEventId: row.id },
-      }),
-    );
-
+    this.wake(workspaceId, requeued.integrationId, requeued.id);
     return { status: 'accepted' };
+  }
+
+  /** Best-effort immediate processing; correctness never depends on it — the recovery poller claims the row regardless. */
+  private wake(workspaceId: string, integrationId: string, webhookEventId: string): void {
+    try {
+      this.eventBus.emit(
+        createEvent<WebhookReceivedPayload>({
+          type: 'integration.webhook.received',
+          workspaceId,
+          entityId: integrationId,
+          payload: { webhookEventId },
+        }),
+      );
+    } catch (error) {
+      this.logger.event('warn', 'Webhook wake-up emit failed; the recovery poller will process the row', 'WebhookIngestService', {
+        webhookEventId,
+        integrationId,
+        workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private async findIntegration(workspaceId: string, provider: IntegrationProvider) {

@@ -253,6 +253,13 @@
       "when": 1792412738769,
       "tag": "0035_nice_domino",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1792413839212,
+      "tag": "0036_shocking_firestar",
+      "breakpoints": true
     }
   ]
 }
