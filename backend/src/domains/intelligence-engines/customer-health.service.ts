@@ -9,7 +9,7 @@ import { createEvent, type DomainEvent } from '../../common/events/domain-event'
 import { EventBus } from '../../common/events/event-bus.service';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import { CustomerIntelligenceService, type BehaviouralContext } from '../customer-intelligence/customer-intelligence.service';
-import type { OrderCreatedPayload } from '../integration/webhook-event-processor.service';
+import type { OrderEventPayload } from '../commerce/commerce-events';
 
 /** Doc10 — "Health changes should publish events for dependent intelligence and automation" (doc16 trigger: "Customer Risk & Engagement State changes"). */
 export interface CustomerHealthRecalculatedPayload {
@@ -84,14 +84,14 @@ export interface CustomerHealthState {
  * requirement).
  *
  * Recalculation is triggered two ways: manually via `recalculate()`
- * (merchant-triggered button, Phase 8), and automatically on
- * `order.created` (doc10 lists "Order Placed" as a significant Customer
- * Health event; emitted only for a webhook-delivered order that was
- * genuinely just inserted — see WebhookEventProcessorService's
- * OrderCreatedPayload doc comment). doc10's "event-driven recalculation"
- * still means *every* order/customer-change touchpoint, not just this
- * one — the order-placed touchpoint is the first piece built, not the
- * whole of it; "daily recalculation" (a scheduler) remains real
+ * (merchant-triggered button, Phase 8), and automatically on the commerce
+ * domain events that change a customer's commerce history —
+ * `order.created`, `order.cancelled`, `refund.processed` (doc10
+ * "Event-driven recalculation"; emitted by OrderService for a live,
+ * genuinely new state change — see commerce-events.ts). `order.updated`
+ * is deliberately not a trigger: it fires on any source edit, and the
+ * Phase 1 signals (recency/frequency/website) read nothing an edit
+ * changes. "daily recalculation" (a scheduler) remains real
  * additional scope, deliberately deferred rather than built speculatively
  * (doc18 — "Do not introduce... Schedulers... speculatively"). Every
  * completed recalculation, however triggered, emits
@@ -109,25 +109,27 @@ export class CustomerHealthService {
   ) {}
 
   /**
-   * `order.created` is only emitted for a genuinely new order (see
-   * OrderCreatedPayload's doc comment) — a retried/replayed webhook
-   * delivery naturally yields no event to react to here, so no separate
-   * dedup check is needed on this side either. Runs in-process, in the
-   * same tick as the emitting webhook processor (EventBus is synchronous
-   * EventEmitter2), so a failure here must never surface as a failure of
-   * that processor's own webhook-delivery retry/dead-letter handling —
-   * same fire-and-forget boundary `AutomationService`'s event handlers
-   * already rely on.
+   * Each of these events is emitted once per state change (a retried/
+   * replayed delivery re-applies already-stored state and emits nothing),
+   * so no separate dedup check is needed on this side. An event whose
+   * customer Identity Resolution hasn't linked (or a guest checkout) has
+   * no canonical customer to score and is skipped. Runs in-process off
+   * the emitting commerce write (EventBus is synchronous EventEmitter2),
+   * so a failure here must never surface as a failure of that write's
+   * webhook-delivery retry/dead-letter handling — same fire-and-forget
+   * boundary `AutomationService`'s event handlers already rely on.
    */
   @OnEvent('order.created')
-  async handleOrderCreated(event: DomainEvent<OrderCreatedPayload>): Promise<void> {
-    if (!event.workspaceId) return;
+  @OnEvent('order.cancelled')
+  @OnEvent('refund.processed')
+  async handleCommerceEvent(event: DomainEvent<OrderEventPayload>): Promise<void> {
     const { canonicalCustomerId } = event.payload;
+    if (!event.workspaceId || !canonicalCustomerId) return;
 
     try {
       await this.recalculate(event.workspaceId, canonicalCustomerId);
     } catch (error) {
-      this.logger.event('error', 'Health recalculation on order.created threw unexpectedly', 'CustomerHealthService', {
+      this.logger.event('error', `Health recalculation on ${event.type} threw unexpectedly`, 'CustomerHealthService', {
         canonicalCustomerId,
         error: error instanceof Error ? error.message : String(error),
       });

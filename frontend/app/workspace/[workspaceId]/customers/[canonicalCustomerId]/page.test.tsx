@@ -79,6 +79,20 @@ describe('CustomerDetailPage — Website Behaviour (Phase 8)', () => {
     expect(screen.getByText(/Order placed via/)).toBeTruthy();
   });
 
+  it('renders order cancellation, refund and fulfillment entries in Customer Activity History', async () => {
+    const activity = [
+      { type: 'order_cancelled', occurredAt: '2026-01-08T00:00:00.000Z', provider: 'woocommerce', externalId: 'ext_2' },
+      { type: 'refund_processed', occurredAt: '2026-01-07T00:00:00.000Z', provider: 'shopify', externalId: 'r_1', orderExternalId: 'ext_1', totalRefunded: '20.00' },
+      { type: 'fulfillment', occurredAt: '2026-01-06T00:00:00.000Z', provider: 'shopify', externalId: 'f_1', orderExternalId: 'ext_1', status: 'success', shipmentStatus: 'in_transit' },
+    ];
+
+    render(await renderPage(baseCustomer, activity));
+
+    expect(screen.getByText(/Order cancelled in/)).toBeTruthy();
+    expect(screen.getByText(/Refund processed/)).toBeTruthy();
+    expect(screen.getByText('in transit')).toBeTruthy();
+  });
+
   it('shows the "No activity yet" empty state when activity is empty, unaffected by an empty behavioural context', async () => {
     render(await renderPage(baseCustomer, []));
 

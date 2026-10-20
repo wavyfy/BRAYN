@@ -862,6 +862,7 @@ describe('ShopifyAdapter', () => {
             sourceUpdatedAt: new Date('2026-01-01T00:00:00Z'),
             // Order.createdAt (checkout time), not updatedAt — the order-placed time.
             sourceCreatedAt: new Date('2025-12-20T10:00:00Z'),
+            sourceCancelledAt: null,
             lineItems: [{ externalId: '9001', variantExternalId: '901', quantity: 2, price: '9.99' }],
             refunds: [],
             fulfillments: [],
@@ -1121,6 +1122,18 @@ describe('ShopifyAdapter', () => {
       expect(body.query).toContain('displayStatus');
       expect(body.query).not.toContain('shipmentStatus');
       expect(body.variables.refundTransactionsFirst).toBe(250);
+    });
+
+    it('requests Order.cancelledAt and maps it to sourceCancelledAt', async () => {
+      const fetchMock = vi.fn(async () => graphqlOrdersResponse([orderNode({ cancelledAt: '2026-01-02T00:00:00Z' })]));
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
+
+      const body = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+      expect(body.query).toContain('cancelledAt');
+      expect(page.orders[0].sourceCancelledAt).toEqual(new Date('2026-01-02T00:00:00Z'));
     });
 
     it('throws ProviderError on a non-2xx response', async () => {
@@ -2039,6 +2052,15 @@ describe('ShopifyAdapter', () => {
         resource: 'order',
         data: { sourceCreatedAt: new Date('2025-11-02T09:15:00Z'), sourceUpdatedAt: new Date('2026-01-01T00:00:00Z') },
       });
+    });
+
+    it("maps an order delivery's cancelled_at to sourceCancelledAt (null when not cancelled)", () => {
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+      const order = { id: 902, customer: null, total_price: '19.99', created_at: '2025-11-02T09:15:00Z', updated_at: '2026-01-02T00:00:00Z', line_items: [] };
+      const parse = (body: object) => adapter.parseWebhookEvent(JSON.stringify(body), { 'x-shopify-topic': 'orders/updated', 'x-shopify-webhook-id': 'wh_evt_cancel' });
+
+      expect(parse({ ...order, cancelled_at: '2026-01-02T00:00:00Z' })?.payload).toMatchObject({ data: { sourceCancelledAt: new Date('2026-01-02T00:00:00Z') } });
+      expect(parse({ ...order, cancelled_at: null })?.payload).toMatchObject({ data: { sourceCancelledAt: null } });
     });
 
     it('normalizes a fulfillments/create delivery — bare fulfillment plus order_id, no nested order', () => {

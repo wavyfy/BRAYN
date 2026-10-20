@@ -106,3 +106,22 @@ export const UserPlusIcon = (p: P) => (
     <path d="M3 20c.9-3.5 3.7-5.5 7-5.5 1.3 0 2.5.3 3.5.8M19 14v6M16 17h6" />
   </Icon>
 );
+export const CancelIcon = (p: P) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="8" />
+    <path d="m9 9 6 6M15 9l-6 6" />
+  </Icon>
+);
+export const RefundIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M9 14 4 9l5-5" />
+    <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+  </Icon>
+);
+export const ShipmentIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M3 7h11v9H3zM14 10h4l3 3v3h-7" />
+    <circle cx="7" cy="17.5" r="1.5" />
+    <circle cx="17" cy="17.5" r="1.5" />
+  </Icon>
+);

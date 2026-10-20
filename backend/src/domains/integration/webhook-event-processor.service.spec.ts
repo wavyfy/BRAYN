@@ -10,7 +10,6 @@ import type { OrderService } from '../commerce/order.service';
 import type { CollectionService } from '../commerce/collection.service';
 import type { IdentityResolutionService } from '../identity-resolution/identity-resolution.service';
 import type { StructuredLoggerService } from '../../common/logging/structured-logger.service';
-import type { EventBus } from '../../common/events/event-bus.service';
 
 /**
  * Routing and outcome logic with `claim()` stubbed. Real claiming,
@@ -38,7 +37,6 @@ function makeProcessor(options: { finishResult?: unknown[] } = {}) {
   } as unknown as OrderService;
   const collectionService = { upsertMany: vi.fn(async () => 1) } as unknown as CollectionService;
   const identityResolutionService = { resolveMany: vi.fn(async () => undefined) } as unknown as IdentityResolutionService;
-  const eventBus = { emit: vi.fn() } as unknown as EventBus;
   const logger = { event: vi.fn() } as unknown as StructuredLoggerService;
 
   const processor = new WebhookEventProcessorService(
@@ -48,11 +46,10 @@ function makeProcessor(options: { finishResult?: unknown[] } = {}) {
     orderService,
     collectionService,
     identityResolutionService,
-    eventBus,
     logger,
   );
 
-  return { processor, client, updateChain, eventBus, customerService, productService, orderService, collectionService, identityResolutionService, logger };
+  return { processor, client, updateChain, customerService, productService, orderService, collectionService, identityResolutionService, logger };
 }
 
 function claimed(payload: unknown, overrides: Partial<ClaimedWebhookEvent> = {}): ClaimedWebhookEvent {
@@ -116,33 +113,14 @@ describe('WebhookEventProcessorService', () => {
       expect(productService.upsertMany).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', [product]);
     });
 
-    it('applies an order resource event via OrderService.upsertMany, and emits no order.created when no order was newly created', async () => {
-      const { processor, orderService, eventBus } = makeProcessor();
+    it('applies an order resource event as a live change, leaving domain-event emission to the commerce domain', async () => {
+      const { processor, orderService } = makeProcessor();
       const order = { externalId: '900', customerExternalId: null, totalPrice: '19.99', sourceUpdatedAt: new Date(), lineItems: [] };
       stubClaim(processor, claimed({ resource: 'order', data: order }));
 
       await processor.processEvent('wh_1');
 
-      expect(orderService.upsertMany).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', [order]);
-      expect(eventBus.emit).not.toHaveBeenCalled();
-    });
-
-    it('emits order.created for each canonical customer id OrderService.upsertMany reports as newly created', async () => {
-      const { processor, orderService, eventBus } = makeProcessor();
-      vi.mocked(orderService.upsertMany).mockResolvedValueOnce({
-        ordersWritten: 1,
-        lineItemsWritten: 0,
-        refundsWritten: 0,
-        fulfillmentsWritten: 0,
-        newOrderCanonicalCustomerIds: ['canon_1'],
-      });
-      const order = { externalId: '900', customerExternalId: '1', totalPrice: '19.99', sourceUpdatedAt: new Date(), lineItems: [] };
-      stubClaim(processor, claimed({ resource: 'order', data: order }));
-
-      await processor.processEvent('wh_1');
-
-      expect(eventBus.emit).toHaveBeenCalledTimes(1);
-      expect(eventBus.emit).toHaveBeenCalledWith(expect.objectContaining({ type: 'order.created', workspaceId: 'ws_1', payload: { canonicalCustomerId: 'canon_1' } }));
+      expect(orderService.upsertMany).toHaveBeenCalledWith('ws_1', 'int_1', 'shopify', [order], { emitDomainEvents: true });
     });
 
     it('applies a fulfillment resource event via OrderService.upsertFulfillments', async () => {

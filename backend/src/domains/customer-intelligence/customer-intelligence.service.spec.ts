@@ -227,7 +227,9 @@ describe('CustomerIntelligenceService', () => {
       const select = makeSelectQueue([
         [{ id: 'canon_1', primaryEmail: 'a@example.com' }],
         [{ id: 'cc_1', provider: 'shopify', externalId: '900', firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: customerCreatedAt }],
-        [{ provider: 'shopify', externalId: '9001', totalPrice: '19.99', placedAt: orderPlacedAt }],
+        [{ id: 'order_1', provider: 'shopify', externalId: '9001', totalPrice: '19.99', placedAt: orderPlacedAt, cancelledAt: null }],
+        [], // refunds
+        [], // fulfillments
         [], // linked website visitors
       ]);
       const service = new CustomerIntelligenceService({ client: { select } } as unknown as DatabaseService);
@@ -245,7 +247,9 @@ describe('CustomerIntelligenceService', () => {
       const select = makeSelectQueue([
         [{ id: 'canon_1', primaryEmail: 'a@example.com' }],
         [{ id: 'cc_1', provider: 'shopify', externalId: '900', firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: null }],
-        [{ provider: 'shopify', externalId: '9001', totalPrice: '19.99', placedAt: orderPlacedAt }],
+        [{ id: 'order_1', provider: 'shopify', externalId: '9001', totalPrice: '19.99', placedAt: orderPlacedAt, cancelledAt: null }],
+        [], // refunds
+        [], // fulfillments
         [],
       ]);
       const service = new CustomerIntelligenceService({ client: { select } } as unknown as DatabaseService);
@@ -253,6 +257,37 @@ describe('CustomerIntelligenceService', () => {
       const result = await service.getActivity('ws_1', 'canon_1');
 
       expect(result).toEqual([{ type: 'order_placed', occurredAt: orderPlacedAt, provider: 'shopify', externalId: '9001', totalPrice: '19.99' }]);
+    });
+
+    it("adds an order's cancellation, refunds and fulfillments at their source times, omitting any without one", async () => {
+      const placedAt = new Date('2026-01-01T00:00:00Z');
+      const fulfilledAt = new Date('2026-01-02T00:00:00Z');
+      const refundedAt = new Date('2026-01-03T00:00:00Z');
+      const cancelledAt = new Date('2026-01-04T00:00:00Z');
+      const select = makeSelectQueue([
+        [{ id: 'canon_1', primaryEmail: 'a@example.com' }],
+        [{ id: 'cc_1', provider: 'woocommerce', externalId: '900', firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: null }],
+        [{ id: 'order_1', provider: 'woocommerce', externalId: '9001', totalPrice: '19.99', placedAt, cancelledAt }],
+        [
+          { orderId: 'order_1', provider: 'woocommerce', externalId: 'r1', totalRefunded: '19.99', processedAt: refundedAt },
+          { orderId: 'order_1', provider: 'woocommerce', externalId: 'r2', totalRefunded: '1.00', processedAt: null },
+        ],
+        [
+          { orderId: 'order_1', provider: 'woocommerce', externalId: 'f1', status: 'success', shipmentStatus: 'delivered', sourceUpdatedAt: fulfilledAt },
+          { orderId: 'order_1', provider: 'woocommerce', externalId: 'f2', status: 'success', shipmentStatus: null, sourceUpdatedAt: null },
+        ],
+        [], // linked website visitors
+      ]);
+      const service = new CustomerIntelligenceService({ client: { select } } as unknown as DatabaseService);
+
+      const result = await service.getActivity('ws_1', 'canon_1');
+
+      expect(result).toEqual([
+        { type: 'order_cancelled', occurredAt: cancelledAt, provider: 'woocommerce', externalId: '9001' },
+        { type: 'refund_processed', occurredAt: refundedAt, provider: 'woocommerce', externalId: 'r1', orderExternalId: '9001', totalRefunded: '19.99' },
+        { type: 'fulfillment', occurredAt: fulfilledAt, provider: 'woocommerce', externalId: 'f1', orderExternalId: '9001', status: 'success', shipmentStatus: 'delivered' },
+        { type: 'order_placed', occurredAt: placedAt, provider: 'woocommerce', externalId: '9001', totalPrice: '19.99' },
+      ]);
     });
 
     it('skips the orders query entirely when there are no source rows', async () => {
@@ -306,7 +341,9 @@ describe('CustomerIntelligenceService', () => {
       const select = makeSelectQueue([
         [{ id: 'canon_1', primaryEmail: 'a@example.com' }],
         [{ id: 'cc_1', provider: 'shopify', externalId: '900', firstName: null, lastName: null, phone: null, sourceUpdatedAt: null, sourceCreatedAt: customerCreatedAt }],
-        [{ provider: 'shopify', externalId: '9001', totalPrice: '19.99', placedAt: orderAt }],
+        [{ id: 'order_1', provider: 'shopify', externalId: '9001', totalPrice: '19.99', placedAt: orderAt, cancelledAt: null }],
+        [], // refunds
+        [], // fulfillments
         [{ id: 'visitor_1' }],
         [
           { eventType: 'page_view', occurredAt: pageViewAt },

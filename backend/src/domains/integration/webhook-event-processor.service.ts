@@ -6,8 +6,7 @@ import { DatabaseService } from '../../database/database.service';
 import { integrations } from '../../database/schema/integrations';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
 import { withRetry } from '../../common/async/retry';
-import { createEvent, type DomainEvent } from '../../common/events/domain-event';
-import { EventBus } from '../../common/events/event-bus.service';
+import type { DomainEvent } from '../../common/events/domain-event';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import { scrubSensitive } from '../../common/logging/scrub-sensitive';
 import { CustomerService } from '../commerce/customer.service';
@@ -60,12 +59,6 @@ export interface WebhookReceivedPayload {
   webhookEventId: string;
 }
 
-/** Doc10 — "Order Placed" is a significant Customer Health event. Emitted only for a webhook-delivered order that was genuinely just inserted (see OrderService.upsertMany's doc comment) — never for a bulk import/sync/reconciliation pass, which represents pre-existing order history, not a new order being placed. */
-export interface OrderCreatedPayload {
-  canonicalCustomerId: string;
-}
-
-
 export interface ClaimedWebhookEvent {
   id: string;
   workspaceId: string;
@@ -100,10 +93,11 @@ export interface ClaimedWebhookEvent {
  * WEBHOOK_MAX_ATTEMPTS it moves to `dead_letter` (replayable via
  * WebhookIngestService.replay) — never retried forever, never dropped.
  *
- * The `order` case additionally emits `order.created` (see
- * OrderCreatedPayload's doc comment) for a genuinely new order —
- * `CustomerHealthService` is its consumer. A retried attempt re-upserts an
- * already-stored order, which yields no new-order id, so it emits nothing new.
+ * Business-event semantics are not decided here: an order delivery is
+ * applied with `emitDomainEvents`, and OrderService (the commerce domain)
+ * emits `order.created`/`order.updated`/`order.cancelled`/
+ * `refund.processed` for the state change it actually applied. A retried
+ * attempt re-applies already-stored state, so it emits nothing new.
  */
 @Injectable()
 export class WebhookEventProcessorService implements OnModuleDestroy {
@@ -117,7 +111,6 @@ export class WebhookEventProcessorService implements OnModuleDestroy {
     private readonly orderService: OrderService,
     private readonly collectionService: CollectionService,
     private readonly identityResolutionService: IdentityResolutionService,
-    private readonly eventBus: EventBus,
     private readonly logger: StructuredLoggerService,
   ) {}
 
@@ -145,10 +138,10 @@ export class WebhookEventProcessorService implements OnModuleDestroy {
   }
 
   /** Claims and processes due/abandoned rows one at a time until none remain (bounded per call). Returns how many were processed. */
-  async processDue(maxEvents = MAX_EVENTS_PER_TICK): Promise<number> {
+  async processDue(maxEvents = MAX_EVENTS_PER_TICK, scope: { workspaceId?: string } = {}): Promise<number> {
     let processed = 0;
     while (processed < maxEvents) {
-      const [claimed] = await this.claim();
+      const [claimed] = await this.claim(scope);
       if (!claimed) break;
       await this.run(claimed);
       processed++;
@@ -173,7 +166,8 @@ export class WebhookEventProcessorService implements OnModuleDestroy {
    * `processing` with an expired lease. Each claim gets a fresh token, a
    * new lease, and an incremented attempt count.
    */
-  async claim(options: { webhookEventId?: string; limit?: number } = {}): Promise<ClaimedWebhookEvent[]> {
+  /** `workspaceId` narrows the sweep to one workspace — the recovery poller never passes it; tests sharing the dev DB do, so they can't claim each other's rows. */
+  async claim(options: { webhookEventId?: string; workspaceId?: string; limit?: number } = {}): Promise<ClaimedWebhookEvent[]> {
     const t = integrationWebhookEvents;
     const claimable = this.database.client
       .select({ id: t.id })
@@ -181,6 +175,7 @@ export class WebhookEventProcessorService implements OnModuleDestroy {
       .where(
         and(
           options.webhookEventId ? eq(t.id, options.webhookEventId) : undefined,
+          options.workspaceId ? eq(t.workspaceId, options.workspaceId) : undefined,
           or(
             and(eq(t.status, 'pending'), lte(t.nextAttemptAt, sql`now()`)),
             and(eq(t.status, 'processing'), lt(t.lockedUntil, sql`now()`)),
@@ -316,15 +311,9 @@ export class WebhookEventProcessorService implements OnModuleDestroy {
       case 'product':
         await this.productService.upsertMany(workspaceId, integrationId, provider, [payload.data]);
         break;
-      case 'order': {
-        const { newOrderCanonicalCustomerIds } = await this.orderService.upsertMany(workspaceId, integrationId, provider, [payload.data]);
-        for (const canonicalCustomerId of newOrderCanonicalCustomerIds) {
-          this.eventBus.emit(
-            createEvent<OrderCreatedPayload>({ type: 'order.created', workspaceId, payload: { canonicalCustomerId } }),
-          );
-        }
+      case 'order':
+        await this.orderService.upsertMany(workspaceId, integrationId, provider, [payload.data], { emitDomainEvents: true });
         break;
-      }
       case 'fulfillment':
         await this.orderService.upsertFulfillments(workspaceId, integrationId, provider, [payload.data]);
         break;

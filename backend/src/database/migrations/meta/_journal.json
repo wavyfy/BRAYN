@@ -260,6 +260,13 @@
       "when": 1792413839212,
       "tag": "0036_shocking_firestar",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1792502036653,
+      "tag": "0037_complete_silver_centurion",
+      "breakpoints": true
     }
   ]
 }

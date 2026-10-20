@@ -56,6 +56,8 @@ interface WooCommerceOrder {
   /** WooCommerce: "The date the order was created, as GMT." — the order-placed time. */
   date_created_gmt: string | null;
   date_modified_gmt: string | null;
+  /** e.g. `processing`, `completed`, `cancelled`. Optional so payloads/fixtures without it read as not cancelled. */
+  status?: string;
   line_items: WooCommerceLineItem[];
 }
 
@@ -455,6 +457,8 @@ function normalizeOrder(order: WooCommerceOrder): NormalizedOrder {
     totalPrice: order.total,
     sourceUpdatedAt: order.date_modified_gmt ? parseGmtDate(order.date_modified_gmt) : null,
     sourceCreatedAt: order.date_created_gmt ? parseGmtDate(order.date_created_gmt) : null,
+    // WooCommerce records no cancellation time; the last-modified time of a `cancelled` order is the closest the provider gives.
+    sourceCancelledAt: order.status === 'cancelled' && order.date_modified_gmt ? parseGmtDate(order.date_modified_gmt) : null,
     lineItems: order.line_items.map((item) => ({
       externalId: String(item.id),
       variantExternalId: item.product_id !== null ? String(item.product_id) : null,

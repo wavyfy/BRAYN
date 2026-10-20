@@ -5,7 +5,7 @@ import type { DomainEvent } from '../../common/events/domain-event';
 import type { EventBus } from '../../common/events/event-bus.service';
 import type { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import type { CustomerIntelligenceService } from '../customer-intelligence/customer-intelligence.service';
-import type { OrderCreatedPayload } from '../integration/webhook-event-processor.service';
+import type { OrderEventPayload } from '../commerce/commerce-events';
 
 function makeEventBus() {
   return { emit: vi.fn() } as unknown as EventBus;
@@ -219,15 +219,15 @@ describe('CustomerHealthService', () => {
     });
   });
 
-  describe('handleOrderCreated()', () => {
-    function makeOrderCreatedEvent(overrides: Partial<DomainEvent<OrderCreatedPayload>> = {}): DomainEvent<OrderCreatedPayload> {
+  describe('handleCommerceEvent()', () => {
+    function makeOrderCreatedEvent(overrides: Partial<DomainEvent<OrderEventPayload>> = {}): DomainEvent<OrderEventPayload> {
       return {
         id: 'evt_1',
         type: 'order.created',
         version: 1,
         workspaceId: 'ws_1',
         occurredAt: new Date().toISOString(),
-        payload: { canonicalCustomerId: 'canon_1' },
+        payload: { orderId: 'order_1', orderExternalId: '900', provider: 'shopify', canonicalCustomerId: 'canon_1', sourceOccurredAt: null },
         ...overrides,
       };
     }
@@ -239,9 +239,31 @@ describe('CustomerHealthService', () => {
       const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
       const recalculateSpy = vi.spyOn(service, 'recalculate');
 
-      await service.handleOrderCreated(makeOrderCreatedEvent());
+      await service.handleCommerceEvent(makeOrderCreatedEvent());
 
       expect(recalculateSpy).toHaveBeenCalledWith('ws_1', 'canon_1');
+    });
+
+    it.each(['order.cancelled', 'refund.processed'])('recalculates on %s exactly like order.created', async (type) => {
+      const insert = vi.fn().mockReturnValue(makeInsertChain());
+      const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: null, ordersLast90Days: 0 });
+      const service = new CustomerHealthService({ client: { insert } } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
+      const recalculateSpy = vi.spyOn(service, 'recalculate');
+
+      await service.handleCommerceEvent(makeOrderCreatedEvent({ type }));
+
+      expect(recalculateSpy).toHaveBeenCalledWith('ws_1', 'canon_1');
+    });
+
+    it('skips an event whose customer is not identity-resolved (or a guest checkout)', async () => {
+      const client = { insert: vi.fn() };
+      const service = new CustomerHealthService({ client } as unknown as DatabaseService, {} as CustomerIntelligenceService, makeEventBus(), makeLogger());
+      const recalculateSpy = vi.spyOn(service, 'recalculate');
+      const event = makeOrderCreatedEvent();
+
+      await service.handleCommerceEvent({ ...event, payload: { ...event.payload, canonicalCustomerId: null } });
+
+      expect(recalculateSpy).not.toHaveBeenCalled();
     });
 
     it('does nothing when workspaceId is missing from the event envelope', async () => {
@@ -254,7 +276,7 @@ describe('CustomerHealthService', () => {
       );
       const recalculateSpy = vi.spyOn(service, 'recalculate');
 
-      await service.handleOrderCreated(makeOrderCreatedEvent({ workspaceId: undefined }));
+      await service.handleCommerceEvent(makeOrderCreatedEvent({ workspaceId: undefined }));
 
       expect(recalculateSpy).not.toHaveBeenCalled();
       expect(client.insert).not.toHaveBeenCalled();
@@ -265,7 +287,7 @@ describe('CustomerHealthService', () => {
       const logger = makeLogger();
       const service = new CustomerHealthService({ client: {} } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), logger);
 
-      await expect(service.handleOrderCreated(makeOrderCreatedEvent())).resolves.toBeUndefined();
+      await expect(service.handleCommerceEvent(makeOrderCreatedEvent())).resolves.toBeUndefined();
 
       expect(logger.event).toHaveBeenCalledWith(
         'error',

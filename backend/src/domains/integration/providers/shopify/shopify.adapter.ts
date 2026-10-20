@@ -37,7 +37,8 @@ export const SHOPIFY_API_VERSION = '2026-07';
  *   BRAYN doesn't request; fulfilments still arrive embedded in orders/updated.
  * - deletes, inventory — no persistence for them exists yet (see the
  *   topic-coverage report), so a subscription would only produce ignored
- *   deliveries.
+ *   deliveries. Cancellations need no topic: `cancelled_at` rides on
+ *   orders/updated.
  */
 export const SHOPIFY_REGISTERED_BUSINESS_TOPICS = [
   'customers/create',
@@ -253,6 +254,7 @@ const SHOPIFY_ORDERS_QUERY = `
           }
           createdAt
           updatedAt
+          cancelledAt
           lineItems(first: $lineItemsFirst) {
             edges {
               node {
@@ -798,6 +800,8 @@ interface ShopifyOrder {
   /** Shopify: set "when the customer completes checkout and remains unchanged throughout an order's lifecycle" — the order-placed time. Present on REST-shaped webhook payloads too. */
   created_at: string | null;
   updated_at: string;
+  /** Null unless the order was cancelled. Present on REST-shaped webhook payloads (orders/updated carries the cancellation). */
+  cancelled_at?: string | null;
   line_items: ShopifyLineItem[];
   /** Embedded, not a separate resource — Shopify has no top-level refunds list/webhook (doc 20 Shopify Phase 1 Data — "Refunds"). */
   refunds: ShopifyRefund[];
@@ -871,6 +875,7 @@ interface ShopifyGraphqlOrderNode {
   totalPriceSet: ShopifyGraphqlMoneyBag | null;
   createdAt: string;
   updatedAt: string;
+  cancelledAt: string | null;
   lineItems: ShopifyGraphqlOrderLineItemsConnection;
   /** Plain list per Shopify's real schema, not a connection — see REFUNDS_PAGE_SIZE doc comment. */
   refunds: ShopifyGraphqlRefundNode[];
@@ -1910,6 +1915,7 @@ function graphqlOrderToRestShape(node: ShopifyGraphqlOrderNode, lineItemNodes: S
     total_price: node.totalPriceSet?.shopMoney.amount ?? null,
     created_at: node.createdAt,
     updated_at: node.updatedAt,
+    cancelled_at: node.cancelledAt,
     line_items: lineItemNodes.map(graphqlLineItemToRestShape),
     refunds: node.refunds.map(graphqlRefundToRestShape),
     fulfillments: node.fulfillments.map((fulfillment) => graphqlFulfillmentToRestShape(fulfillment, orderNumericId)),
@@ -1924,6 +1930,7 @@ function normalizeOrder(order: ShopifyOrder): NormalizedOrder {
     totalPrice: order.total_price,
     sourceUpdatedAt: new Date(order.updated_at),
     sourceCreatedAt: order.created_at ? new Date(order.created_at) : null,
+    sourceCancelledAt: order.cancelled_at ? new Date(order.cancelled_at) : null,
     lineItems: order.line_items.map((item) => ({
       externalId: String(item.id),
       variantExternalId: item.variant_id !== null ? String(item.variant_id) : null,

@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { OrderService, type NormalizedOrder } from './order.service';
 import type { DatabaseService } from '../../database/database.service';
+import type { EventBus } from '../../common/events/event-bus.service';
+
+/** Transactions run their callback against the same mocked client; event emission is covered by the real-DB commerce-events spec. */
+function makeService(client: object) {
+  const database = { client, transaction: (fn: (tx: unknown) => unknown) => fn(client) } as unknown as DatabaseService;
+  return new OrderService(database, { emit: vi.fn() } as unknown as EventBus);
+}
 
 function makeSelectChain(result: unknown) {
   const chain: Record<string, unknown> = {
@@ -59,7 +66,7 @@ describe('OrderService', () => {
   describe('upsertMany()', () => {
     it('does nothing and returns zero counts for an empty batch', async () => {
       const client = { select: vi.fn(), insert: vi.fn() };
-      const service = new OrderService({ client } as unknown as DatabaseService);
+      const service = makeService(client);
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', []);
 
@@ -78,7 +85,7 @@ describe('OrderService', () => {
         [{ canonicalCustomerId: null }], // new order's customer canonicalCustomerId lookup — not yet identity-resolved
       ]);
       const client = { select, insert };
-      const service = new OrderService({ client } as unknown as DatabaseService);
+      const service = makeService(client);
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [order]);
 
@@ -93,6 +100,7 @@ describe('OrderService', () => {
           totalPrice: '19.99',
           sourceUpdatedAt: order.sourceUpdatedAt,
           sourceCreatedAt: order.sourceCreatedAt,
+          sourceCancelledAt: null,
         },
       ]);
       expect(lineItemChain.values).toHaveBeenCalledWith([
@@ -121,7 +129,7 @@ describe('OrderService', () => {
       // Only the variant lookup runs — no customerExternalId to look up.
       const select = makeSelectQueue([[]]);
       const client = { select, insert };
-      const service = new OrderService({ client } as unknown as DatabaseService);
+      const service = makeService(client);
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [guestOrder]);
 
@@ -143,7 +151,7 @@ describe('OrderService', () => {
       const insert = vi.fn().mockReturnValueOnce(orderChain);
       const select = makeSelectQueue([[{ id: 'cust_1', externalId: '1' }], []]);
       const client = { select, insert };
-      const service = new OrderService({ client } as unknown as DatabaseService);
+      const service = makeService(client);
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [order]);
 
@@ -180,7 +188,7 @@ describe('OrderService', () => {
         [{ canonicalCustomerId: null }],
       ]);
       const client = { select, insert };
-      const service = new OrderService({ client } as unknown as DatabaseService);
+      const service = makeService(client);
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [refundedOrder]);
 
@@ -235,7 +243,7 @@ describe('OrderService', () => {
         [{ canonicalCustomerId: null }],
       ]);
       const client = { select, insert };
-      const service = new OrderService({ client } as unknown as DatabaseService);
+      const service = makeService(client);
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [fulfilledOrder]);
 
@@ -267,7 +275,7 @@ describe('OrderService', () => {
         [{ canonicalCustomerId: 'canon_1' }],
       ]);
       const client = { select, insert };
-      const service = new OrderService({ client } as unknown as DatabaseService);
+      const service = makeService(client);
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [order]);
 
@@ -283,7 +291,7 @@ describe('OrderService', () => {
       const insert = vi.fn().mockReturnValueOnce(orderChain).mockReturnValueOnce(lineItemChain);
       const select = makeSelectQueue([[{ id: 'cust_1', externalId: '1' }], [{ id: 'variant_1', externalId: '901' }]]);
       const client = { select, insert };
-      const service = new OrderService({ client } as unknown as DatabaseService);
+      const service = makeService(client);
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [order]);
 
@@ -306,7 +314,7 @@ describe('OrderService', () => {
         [{ canonicalCustomerId: 'canon_1' }],
       ]);
       const client = { select, insert };
-      const service = new OrderService({ client } as unknown as DatabaseService);
+      const service = makeService(client);
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [order, secondOrder]);
 
@@ -317,7 +325,7 @@ describe('OrderService', () => {
   describe('upsertFulfillments()', () => {
     it('does nothing for an empty batch', async () => {
       const client = { select: vi.fn(), insert: vi.fn() };
-      const service = new OrderService({ client } as unknown as DatabaseService);
+      const service = makeService(client);
 
       const result = await service.upsertFulfillments('ws_1', 'int_1', 'shopify', []);
 
@@ -331,7 +339,7 @@ describe('OrderService', () => {
       const insert = vi.fn().mockReturnValueOnce(fulfillmentChain);
       const select = makeSelectQueue([[{ id: 'order_1', externalId: '900' }]]);
       const client = { select, insert };
-      const service = new OrderService({ client } as unknown as DatabaseService);
+      const service = makeService(client);
 
       const result = await service.upsertFulfillments('ws_1', 'int_1', 'shopify', [
         {
@@ -356,7 +364,7 @@ describe('OrderService', () => {
       const insert = vi.fn();
       const select = makeSelectQueue([[]]);
       const client = { select, insert };
-      const service = new OrderService({ client } as unknown as DatabaseService);
+      const service = makeService(client);
 
       const result = await service.upsertFulfillments('ws_1', 'int_1', 'shopify', [
         {
@@ -379,7 +387,7 @@ describe('OrderService', () => {
   describe('findExistingUpdatedAt()', () => {
     it('returns an empty map without querying for an empty batch', async () => {
       const client = { select: vi.fn() };
-      const service = new OrderService({ client } as unknown as DatabaseService);
+      const service = makeService(client);
 
       const result = await service.findExistingUpdatedAt('ws_1', 'shopify', []);
 
@@ -391,7 +399,7 @@ describe('OrderService', () => {
       const updatedAt = new Date('2026-01-01T00:00:00Z');
       const select = makeSelectQueue([[{ externalId: '900', sourceUpdatedAt: updatedAt }]]);
       const client = { select };
-      const service = new OrderService({ client } as unknown as DatabaseService);
+      const service = makeService(client);
 
       const result = await service.findExistingUpdatedAt('ws_1', 'shopify', ['900', '901']);
 

@@ -23,7 +23,9 @@ import { WebhookEventProcessorService, WEBHOOK_MAX_ATTEMPTS } from './webhook-ev
  * Timing is driven through the database, not sleeps: a crash is a claim
  * that's never finished, lease expiry / backoff elapse are simulated by
  * moving `locked_until` / `next_attempt_at` into the past. Concurrency and
- * fencing cases only ever claim this spec's own rows by id.
+ * fencing cases only ever claim this spec's own rows by id, and the poller
+ * sweeps (`processDue`) are scoped to this spec's workspace, so they can't
+ * claim or strand rows another spec file (running in parallel) is waiting on.
  */
 // Every step is a real Neon round trip (~250ms each), so the default 5s per-test budget is too tight.
 describe('Durable webhook processing (real DB)', { timeout: 30_000 }, () => {
@@ -164,7 +166,7 @@ describe('Durable webhook processing (real DB)', { timeout: 30_000 }, () => {
     const webhookEventId = (result as { webhookEventId: string }).webhookEventId;
     expect((await row(webhookEventId)).status).toBe('pending');
 
-    await processor.processDue();
+    await processor.processDue(undefined, { workspaceId });
 
     expect((await row(webhookEventId)).status).toBe('processed');
     expect(await customerRows(d.externalCustomerId)).toHaveLength(1);
@@ -254,7 +256,7 @@ describe('Durable webhook processing (real DB)', { timeout: 30_000 }, () => {
       .where(sql`${integrationWebhookEvents.integrationId} = ${integrationId} and ${integrationWebhookEvents.externalEventId} = ${first.headers['x-shopify-webhook-id']}`);
     expect(rows).toHaveLength(1);
 
-    await processor.processDue();
+    await processor.processDue(undefined, { workspaceId });
     expect((await row(first.webhookEventId)).status).toBe('processed');
     expect(await customerRows(first.externalCustomerId)).toHaveLength(1);
   });
@@ -298,7 +300,7 @@ describe('Durable webhook processing (real DB)', { timeout: 30_000 }, () => {
     useModule(await bootModule());
 
     expect((await row(webhookEventId)).status).toBe('pending');
-    await processor.processDue();
+    await processor.processDue(undefined, { workspaceId });
 
     expect((await row(webhookEventId)).status).toBe('processed');
     expect(await customerRows(externalCustomerId)).toHaveLength(1);
