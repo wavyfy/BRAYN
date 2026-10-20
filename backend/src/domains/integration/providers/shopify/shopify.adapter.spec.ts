@@ -796,7 +796,7 @@ describe('ShopifyAdapter', () => {
         note: 'Damaged item',
         createdAt: '2026-01-02T00:00:00Z',
         refundLineItems: { edges: refundLineItemNodes.map((node) => ({ node })), pageInfo: { hasNextPage: false, endCursor: null } },
-        transactions,
+        transactions: { edges: transactions.map((node) => ({ node })) },
         ...overrides,
       };
     }
@@ -805,9 +805,9 @@ describe('ShopifyAdapter', () => {
       return {
         id: 'gid://shopify/Fulfillment/7001',
         status: 'SUCCESS',
-        shipmentStatus: 'IN_TRANSIT',
+        displayStatus: 'IN_TRANSIT',
         updatedAt: '2026-01-03T00:00:00Z',
-        trackingInfo: { company: 'UPS', number: '1Z999', url: 'https://ups.com/track/1Z999' },
+        trackingInfo: [{ company: 'UPS', number: '1Z999', url: 'https://ups.com/track/1Z999' }],
         ...overrides,
       };
     }
@@ -1059,7 +1059,7 @@ describe('ShopifyAdapter', () => {
       },
     );
 
-    it("normalizes an order's embedded fulfillments (GraphQL SUCCESS/IN_TRANSIT enums lower-cased, singular trackingInfo mapped to REST's flat fields)", async () => {
+    it("normalizes an order's embedded fulfillments (GraphQL SUCCESS/IN_TRANSIT enums lower-cased, first trackingInfo entry mapped to REST's flat fields)", async () => {
       vi.stubGlobal(
         'fetch',
         vi.fn(async () => graphqlOrdersResponse([orderNode({}, [], { hasNextPage: false, endCursor: null }, [], [fulfillmentNode()])])),
@@ -1085,7 +1085,7 @@ describe('ShopifyAdapter', () => {
       vi.stubGlobal(
         'fetch',
         vi.fn(async () =>
-          graphqlOrdersResponse([orderNode({}, [], { hasNextPage: false, endCursor: null }, [], [fulfillmentNode({ trackingInfo: null })])]),
+          graphqlOrdersResponse([orderNode({}, [], { hasNextPage: false, endCursor: null }, [], [fulfillmentNode({ trackingInfo: [] })])]),
         ),
       );
       const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
@@ -1093,6 +1093,34 @@ describe('ShopifyAdapter', () => {
       const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
 
       expect(page.orders[0].fulfillments[0]).toMatchObject({ trackingCompany: null, trackingNumber: null, trackingUrl: null });
+    });
+
+    it('maps a non-shipment displayStatus (e.g. FULFILLED) to a null shipmentStatus, matching REST/webhook payloads', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          graphqlOrdersResponse([orderNode({}, [], { hasNextPage: false, endCursor: null }, [], [fulfillmentNode({ displayStatus: 'FULFILLED' })])]),
+        ),
+      );
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
+
+      expect(page.orders[0].fulfillments[0].shipmentStatus).toBeNull();
+    });
+
+    it('requests refund transactions as a connection and fulfillment displayStatus (2026-07 schema), never shipmentStatus', async () => {
+      const fetchMock = vi.fn(async () => graphqlOrdersResponse([]));
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
+
+      const body = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+      expect(body.query).toMatch(/transactions\(first: \$refundTransactionsFirst\)\s*\{\s*edges/);
+      expect(body.query).toContain('displayStatus');
+      expect(body.query).not.toContain('shipmentStatus');
+      expect(body.variables.refundTransactionsFirst).toBe(250);
     });
 
     it('throws ProviderError on a non-2xx response', async () => {

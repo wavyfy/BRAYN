@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { disconnectIntegration, startIntegrationImport } from '@/app/actions';
 import { Button } from '@/components/ui/button';
@@ -14,6 +14,8 @@ export type ImportRun = {
   startedAt: string;
   completedAt: string | null;
 };
+
+const IMPORT_POLL_MS = 3000;
 
 function formatDate(value: string | null): string {
   return value ? new Date(value).toLocaleString() : '—';
@@ -55,6 +57,13 @@ export function IntegrationActions({
   }
 
   const importRunning = latestImport?.status === 'running';
+
+  // The import runs server-side after the start request returns; re-fetch until the run leaves `running` so progress and the final state show without a manual reload.
+  useEffect(() => {
+    if (!importRunning) return;
+    const timer = setInterval(() => router.refresh(), IMPORT_POLL_MS);
+    return () => clearInterval(timer);
+  }, [importRunning, router]);
 
   return (
     <div className="space-y-3">

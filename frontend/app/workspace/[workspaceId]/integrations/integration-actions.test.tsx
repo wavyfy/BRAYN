@@ -97,6 +97,31 @@ describe('IntegrationActions', () => {
     expect(screen.getByRole('button', { name: 'Import running…' }).hasAttribute('disabled')).toBe(true);
   });
 
+  it('polls for import progress only while an import is running', () => {
+    vi.useFakeTimers();
+    try {
+      const props = {
+        workspaceId: 'ws_1',
+        provider: 'shopify',
+        providerLabel: 'Shopify',
+        status: 'connected',
+        lastSyncedAt: null,
+        lastSyncError: null,
+      };
+      const running = { status: 'running' as const, recordsImported: 1, recordsFailed: 0, error: null, startedAt: '2026-01-01T00:00:00.000Z', completedAt: null };
+      const { rerender } = render(<IntegrationActions {...props} latestImport={running} />);
+
+      vi.advanceTimersByTime(6000);
+      expect(refresh).toHaveBeenCalledTimes(2);
+
+      rerender(<IntegrationActions {...props} latestImport={{ ...running, status: 'failed', completedAt: '2026-01-01T00:00:20.000Z' }} />);
+      vi.advanceTimersByTime(9000);
+      expect(refresh).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('disconnects only after the user confirms', async () => {
     disconnectIntegration.mockResolvedValueOnce(undefined);
     render(

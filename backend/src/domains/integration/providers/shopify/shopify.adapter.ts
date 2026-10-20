@@ -236,6 +236,7 @@ const SHOPIFY_ORDERS_QUERY = `
     $lineItemsFirst: Int!
     $refundsFirst: Int!
     $refundLineItemsFirst: Int!
+    $refundTransactionsFirst: Int!
     $fulfillmentsFirst: Int!
   ) {
     orders(first: $first, after: $after, query: $query) {
@@ -291,11 +292,15 @@ const SHOPIFY_ORDERS_QUERY = `
                 endCursor
               }
             }
-            transactions {
-              status
-              amountSet {
-                shopMoney {
-                  amount
+            transactions(first: $refundTransactionsFirst) {
+              edges {
+                node {
+                  status
+                  amountSet {
+                    shopMoney {
+                      amount
+                    }
+                  }
                 }
               }
             }
@@ -303,7 +308,7 @@ const SHOPIFY_ORDERS_QUERY = `
           fulfillments(first: $fulfillmentsFirst) {
             id
             status
-            shipmentStatus
+            displayStatus
             updatedAt
             trackingInfo {
               company
@@ -489,6 +494,13 @@ const FULFILLMENTS_PAGE_SIZE = 250;
  * in one refund.
  */
 const REFUND_LINE_ITEMS_PAGE_SIZE = 250;
+/**
+ * Refund.transactions is a connection (`OrderTransactionConnection!`) in
+ * 2026-07, not a plain list — confirmed by a real-store import rejecting
+ * the bare-list selection. ponytail: no continuation; a single refund with
+ * >250 transactions is not a realistic shape.
+ */
+const REFUND_TRANSACTIONS_PAGE_SIZE = 250;
 const COLLECTIONS_PAGE_SIZE = 250;
 const COLLECTS_PAGE_SIZE = 250;
 /**
@@ -834,10 +846,10 @@ interface ShopifyGraphqlRefundNode {
   /** REST's `processed_at` has no exact GraphQL analog; `createdAt` is the closest documented field (see fetchOrders doc comment — flagged for real-provider verification). */
   createdAt: string;
   refundLineItems: ShopifyGraphqlRefundLineItemsConnection;
-  transactions: ShopifyGraphqlOrderTransactionNode[];
+  transactions: { edges: { node: ShopifyGraphqlOrderTransactionNode }[] };
 }
 
-/** Singular in the real schema (`ShipmentTrackingInfo`, not a list) — REST's flat tracking_company/number/url map directly, no list-to-single reduction needed. */
+/** `Fulfillment.trackingInfo` is a list (`[FulfillmentTrackingInfo!]!`) in 2026-07 — REST's flat tracking_company/number/url take the first entry. */
 interface ShopifyGraphqlFulfillmentTrackingInfo {
   company: string | null;
   number: string | null;
@@ -847,9 +859,10 @@ interface ShopifyGraphqlFulfillmentTrackingInfo {
 interface ShopifyGraphqlOrderFulfillmentNode {
   id: string;
   status: string | null;
-  shipmentStatus: string | null;
+  /** `FulfillmentDisplayStatus` enum — 2026-07 has no `shipmentStatus` field; see graphqlFulfillmentToRestShape. */
+  displayStatus: string | null;
   updatedAt: string | null;
-  trackingInfo: ShopifyGraphqlFulfillmentTrackingInfo | null;
+  trackingInfo: ShopifyGraphqlFulfillmentTrackingInfo[];
 }
 
 interface ShopifyGraphqlOrderNode {
@@ -1346,6 +1359,7 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
       lineItemsFirst: LINE_ITEMS_PAGE_SIZE,
       refundsFirst: REFUNDS_PAGE_SIZE,
       refundLineItemsFirst: REFUND_LINE_ITEMS_PAGE_SIZE,
+      refundTransactionsFirst: REFUND_TRANSACTIONS_PAGE_SIZE,
       fulfillmentsFirst: FULFILLMENTS_PAGE_SIZE,
     };
     if (cursor) {
@@ -1813,7 +1827,7 @@ function assertShopifyOrderNodeShape(node: ShopifyGraphqlOrderNode): void {
     throw new ProviderError('Shopify GraphQL order refunds response had an unexpected shape.');
   }
   for (const refund of node.refunds) {
-    if (!refund.refundLineItems || !Array.isArray(refund.refundLineItems.edges) || !Array.isArray(refund.transactions)) {
+    if (!refund.refundLineItems || !Array.isArray(refund.refundLineItems.edges) || !Array.isArray(refund.transactions?.edges)) {
       throw new ProviderError('Shopify GraphQL order refund response had an unexpected shape.');
     }
   }
@@ -1854,20 +1868,35 @@ function graphqlRefundToRestShape(node: ShopifyGraphqlRefundNode): ShopifyRefund
     note: node.note,
     processed_at: node.createdAt,
     refund_line_items: node.refundLineItems.edges.map((edge) => graphqlRefundLineItemToRestShape(edge.node)),
-    transactions: node.transactions.map(graphqlTransactionToRestShape),
+    transactions: node.transactions.edges.map((edge) => graphqlTransactionToRestShape(edge.node)),
   };
 }
 
-/** `status`/`shipmentStatus` arrive as uppercase GraphQL enums (e.g. `IN_TRANSIT`) — lower-cased to match the REST/webhook lowercase string convention normalizeFulfillment already expects. `orderNumericId` fills ShopifyFulfillment.order_id, which normalizeFulfillment doesn't read for an order-embedded fetch (only the standalone webhook path does) but the REST shape requires. */
+/** REST `shipment_status` values — every one has a same-named `FulfillmentDisplayStatus` member. Display statuses outside this set (FULFILLED, CANCELED, …) describe the fulfillment, not the shipment, so they map to null exactly as REST/webhook payloads would. */
+const REST_SHIPMENT_STATUSES = new Set([
+  'label_printed',
+  'label_purchased',
+  'attempted_delivery',
+  'ready_for_pickup',
+  'confirmed',
+  'in_transit',
+  'out_for_delivery',
+  'delivered',
+  'failure',
+]);
+
+/** `status`/`displayStatus` arrive as uppercase GraphQL enums (e.g. `IN_TRANSIT`) — lower-cased to match the REST/webhook lowercase string convention normalizeFulfillment already expects. `orderNumericId` fills ShopifyFulfillment.order_id, which normalizeFulfillment doesn't read for an order-embedded fetch (only the standalone webhook path does) but the REST shape requires. */
 function graphqlFulfillmentToRestShape(node: ShopifyGraphqlOrderFulfillmentNode, orderNumericId: number): ShopifyFulfillment {
+  const tracking = node.trackingInfo?.[0];
+  const displayStatus = node.displayStatus?.toLowerCase() ?? null;
   return {
     id: shopifyGidToNumericId(node.id),
     order_id: orderNumericId,
     status: node.status ? node.status.toLowerCase() : null,
-    tracking_company: node.trackingInfo?.company ?? null,
-    tracking_number: node.trackingInfo?.number ?? null,
-    tracking_url: node.trackingInfo?.url ?? null,
-    shipment_status: node.shipmentStatus ? node.shipmentStatus.toLowerCase() : null,
+    tracking_company: tracking?.company ?? null,
+    tracking_number: tracking?.number ?? null,
+    tracking_url: tracking?.url ?? null,
+    shipment_status: displayStatus && REST_SHIPMENT_STATUSES.has(displayStatus) ? displayStatus : null,
     updated_at: node.updatedAt,
   };
 }
