@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { DatabaseService } from '../../database/database.service';
 import { integrations } from '../../database/schema/integrations';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
@@ -117,7 +117,8 @@ export class WebhookIngestService {
     const t = integrationWebhookEvents;
     const [requeued] = await this.database.client
       .update(t)
-      .set({ status: 'pending', retryCount: 0, nextAttemptAt: new Date(), error: null })
+      // DB clock, never the app clock: claim() compares against `now()`, so an app clock running ahead would leave the row "not yet due" and skip the wake-up.
+      .set({ status: 'pending', retryCount: 0, nextAttemptAt: sql`now()`, error: null })
       .where(and(eq(t.id, webhookEventId), eq(t.workspaceId, workspaceId), eq(t.status, 'dead_letter')))
       .returning({ id: t.id, integrationId: t.integrationId });
 
