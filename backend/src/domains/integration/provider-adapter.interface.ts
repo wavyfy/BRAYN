@@ -1,7 +1,7 @@
 import type { IntegrationProvider } from './dto/connect-integration.schema';
 import type { NormalizedCustomer } from '../commerce/customer.service';
 import type { NormalizedProduct } from '../commerce/product.service';
-import type { NormalizedFulfillment, NormalizedOrder } from '../commerce/order.service';
+import type { NormalizedFulfillment, NormalizedOrder, NormalizedRefund } from '../commerce/order.service';
 import type { NormalizedCollect, NormalizedCollection } from '../commerce/collection.service';
 
 /** A webhook payload the adapter recognized and normalized (doc 21 — External → Internal Conversion). */
@@ -24,6 +24,7 @@ export type WebhookResourceEvent =
   | { resource: 'product'; data: NormalizedProduct }
   | { resource: 'order'; data: NormalizedOrder }
   | { resource: 'fulfillment'; data: NormalizedFulfillment & { orderExternalId: string } }
+  | { resource: 'refund'; data: NormalizedRefund & { orderExternalId: string } }
   | { resource: 'collection'; data: NormalizedCollection };
 
 export function isWebhookResourceEvent(value: unknown): value is WebhookResourceEvent {

@@ -95,6 +95,18 @@ describe('Commerce domain events (real DB)', { timeout: 60_000 }, () => {
     return result;
   }
 
+  /** A standalone Shopify `refunds/create` body: the bare refund plus `order_id`. */
+  function refundBody(refundId: number, orderId: number) {
+    return JSON.stringify({ ...refund(refundId, orderId * 10), order_id: orderId });
+  }
+
+  async function deliverRefund(refundId: number, orderId: number, webhookId?: string) {
+    const body = refundBody(refundId, orderId);
+    const result = await ingestWithoutWake(body, signed('refunds/create', body, webhookId));
+    await processor.processEvent(result);
+    return result;
+  }
+
   /** Ingest with the wake-up dropped, so the test processes the row itself. Dropped by event type, not call order — a still-running health handler from a previous step may emit concurrently. */
   let suppressWake = false;
   async function ingestWithoutWake(body: string, headers: Record<string, string>): Promise<string> {
@@ -369,6 +381,80 @@ describe('Commerce domain events (real DB)', { timeout: 60_000 }, () => {
 
     const activity = await moduleRef.get(CustomerIntelligenceService).getActivity(workspaceId, canonicalCustomerId);
     expect(activity).toContainEqual(expect.objectContaining({ type: 'order_cancelled', externalId: '101', occurredAt: new Date('2026-03-07T09:00:00Z') }));
+  });
+
+  it('A: a standalone refunds/create delivery persists the refund, emits refund.processed once, recalculates health and lands in activity', async () => {
+    const before = await healthHistoryCount();
+
+    await deliverRefund(5101, 100);
+
+    const refunds = ofType('refund.processed') as DomainEvent<RefundProcessedPayload>[];
+    expect(commerceEvents()).toHaveLength(1);
+    expect(refunds[0].payload).toMatchObject({
+      orderExternalId: '100',
+      refundExternalId: '5101',
+      totalRefunded: '50.00',
+      provider: 'shopify',
+      canonicalCustomerId,
+      sourceOccurredAt: '2026-03-05T12:00:00.000Z',
+    });
+    const [row] = await db.client.select().from(commerceRefunds).where(and(eq(commerceRefunds.workspaceId, workspaceId), eq(commerceRefunds.externalId, '5101')));
+    expect(row).toMatchObject({ totalRefunded: '50.00', processedAt: new Date('2026-03-05T12:00:00Z') });
+    const [lineItem] = await db.client.select().from(commerceRefundLineItems).where(eq(commerceRefundLineItems.refundId, row.id));
+    expect(lineItem.orderLineItemId).not.toBeNull();
+    await waitForHealthHistory(before + 1);
+    const activity = await moduleRef.get(CustomerIntelligenceService).getActivity(workspaceId, canonicalCustomerId);
+    expect(activity).toContainEqual(expect.objectContaining({ type: 'refund_processed', externalId: '5101', orderExternalId: '100' }));
+  });
+
+  it('B: a duplicate refunds/create — redelivered (same webhook id) or re-sent (new webhook id) — emits nothing more', async () => {
+    const body = refundBody(5101, 100);
+    const webhookId = randomUUID();
+    await deliverRefund(5101, 100, webhookId);
+
+    expect(await ingest.ingest(workspaceId, 'shopify', body, signed('refunds/create', body, webhookId))).toEqual({ status: 'duplicate' });
+    await deliverRefund(5101, 100);
+
+    expect(commerceEvents()).toEqual([]);
+  });
+
+  it('C: refunds/create then orders/updated carrying the same refund — and the reverse — each yields exactly one refund.processed', async () => {
+    await deliver('orders/updated', { id: 100, updatedAt: '2026-03-09T10:00:00Z', refunds: [refund(5001, 1000), refund(5101, 1000)] });
+    expect(ofType('refund.processed')).toEqual([]);
+    expect(ofType('order.updated')).toHaveLength(1);
+
+    emitted = [];
+    await deliver('orders/updated', { id: 100, updatedAt: '2026-03-10T10:00:00Z', refunds: [refund(5001, 1000), refund(5101, 1000), refund(5102, 1000)] });
+    await deliverRefund(5102, 100);
+    expect(ofType('refund.processed').map((event) => (event.payload as unknown as RefundProcessedPayload).refundExternalId)).toEqual(['5102']);
+  });
+
+  it('E: two concurrent deliveries of the same new refund emit exactly one refund.processed', async () => {
+    const body = refundBody(5103, 100);
+    const first = await ingestWithoutWake(body, signed('refunds/create', body));
+    const second = await ingestWithoutWake(body, signed('refunds/create', body));
+
+    await Promise.all([processor.processEvent(first), processor.processEvent(second)]);
+
+    expect(ofType('refund.processed')).toHaveLength(1);
+    const rows = await db.client.select().from(commerceRefunds).where(and(eq(commerceRefunds.workspaceId, workspaceId), eq(commerceRefunds.externalId, '5103')));
+    expect(rows).toHaveLength(1);
+  });
+
+  it('retries (never drops) a refund whose order is not stored yet, then emits once the order exists', async () => {
+    const webhookEventId = await deliverRefund(5201, 102);
+
+    const [pending] = await db.client.select().from(integrationWebhookEvents).where(eq(integrationWebhookEvents.id, webhookEventId));
+    expect(pending.status).toBe('pending');
+    expect(pending.error).toContain('not stored yet');
+    expect(commerceEvents()).toEqual([]);
+
+    await deliver('orders/create', { id: 102, updatedAt: '2026-03-11T10:00:00Z' });
+    await db.client.execute(sql`update integration_webhook_events set next_attempt_at = now() - interval '1 second' where id = ${webhookEventId}`);
+    emitted = [];
+    await processor.processEvent(webhookEventId);
+
+    expect(ofType('refund.processed').map((event) => (event.payload as unknown as RefundProcessedPayload).refundExternalId)).toEqual(['5201']);
   });
 
   it('emits nothing for import/sync/reconciliation (no emitDomainEvents) — backfilled history is not a live change', async () => {

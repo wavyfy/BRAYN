@@ -317,6 +317,9 @@ export class WebhookEventProcessorService implements OnModuleDestroy {
       case 'fulfillment':
         await this.orderService.upsertFulfillments(workspaceId, integrationId, provider, [payload.data]);
         break;
+      case 'refund':
+        await this.orderService.upsertRefunds(workspaceId, integrationId, provider, [payload.data], { emitDomainEvents: true });
+        break;
       case 'collection':
         await this.collectionService.upsertMany(workspaceId, integrationId, provider, [payload.data]);
         break;

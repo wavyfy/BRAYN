@@ -47,6 +47,8 @@ export const SHOPIFY_REGISTERED_BUSINESS_TOPICS = [
   'products/update',
   'orders/create',
   'orders/updated',
+  // A standalone refund (no cancellation) is not reliably carried by orders/updated — live-observed Oct 20, 2026.
+  'refunds/create',
   'collections/create',
   'collections/update',
 ] as const;
@@ -695,6 +697,8 @@ interface ShopifyRefundTransaction {
 
 interface ShopifyRefund {
   id: number;
+  /** Present on the standalone `refunds/create` webhook payload; absent (implied) when embedded in an order. */
+  order_id?: number;
   note: string | null;
   processed_at: string | null;
   refund_line_items: ShopifyRefundLineItem[];
@@ -803,7 +807,7 @@ interface ShopifyOrder {
   /** Null unless the order was cancelled. Present on REST-shaped webhook payloads (orders/updated carries the cancellation). */
   cancelled_at?: string | null;
   line_items: ShopifyLineItem[];
-  /** Embedded, not a separate resource — Shopify has no top-level refunds list/webhook (doc 20 Shopify Phase 1 Data — "Refunds"). */
+  /** Embedded — Shopify has no top-level refunds list (doc 20 Shopify Phase 1 Data — "Refunds"); live refunds also arrive standalone via `refunds/create`. */
   refunds: ShopifyRefund[];
   /** Embedded here too, in addition to its own `fulfillments/create`/`fulfillments/update` webhook topics — see normalizeFulfillment's doc comment. */
   fulfillments: ShopifyFulfillment[];
@@ -1635,7 +1639,9 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
                   resource,
                   data: { ...normalizeFulfillment(raw as ShopifyFulfillment), orderExternalId: String((raw as ShopifyFulfillment).order_id) },
                 }
-              : { resource, data: normalizeCollection(raw as ShopifyCollection) };
+              : resource === 'refund'
+                ? { resource, data: { ...normalizeRefund(raw as ShopifyRefund), orderExternalId: String((raw as ShopifyRefund).order_id) } }
+                : { resource, data: normalizeCollection(raw as ShopifyCollection) };
 
     // Present on every delivery since 2022, but derive a stable fallback
     // rather than reject an otherwise-valid, signature-verified delivery.
@@ -1713,7 +1719,7 @@ export function verifyShopifyHmac(rawBody: string, headers: Record<string, strin
 }
 
 /** Recognized webhook topics → the commerce resource they normalize to (doc 21 — "process only relevant events"). */
-const SHOPIFY_WEBHOOK_TOPICS: Record<string, 'customer' | 'product' | 'order' | 'fulfillment' | 'collection'> = {
+const SHOPIFY_WEBHOOK_TOPICS: Record<string, 'customer' | 'product' | 'order' | 'fulfillment' | 'refund' | 'collection'> = {
   'customers/create': 'customer',
   'customers/update': 'customer',
   'products/create': 'product',
@@ -1722,6 +1728,7 @@ const SHOPIFY_WEBHOOK_TOPICS: Record<string, 'customer' | 'product' | 'order' | 
   'orders/updated': 'order',
   'fulfillments/create': 'fulfillment',
   'fulfillments/update': 'fulfillment',
+  'refunds/create': 'refund',
   // Unified across CustomCollection/SmartCollection — same bare payload shape either way (doc 21 — "process only relevant events").
   'collections/create': 'collection',
   'collections/update': 'collection',
@@ -1955,7 +1962,7 @@ function normalizeFulfillment(fulfillment: ShopifyFulfillment): NormalizedFulfil
   };
 }
 
-/** Refunds arrive only embedded in an order (see ShopifyOrder.refunds doc comment). `totalRefunded` sums successful transaction amounts — a refund's own record carries no single total. */
+/** Shared by order-embedded refunds (ShopifyOrder.refunds) and the standalone `refunds/create` webhook (same refund shape plus `order_id`). `totalRefunded` sums successful transaction amounts — a refund's own record carries no single total. */
 function normalizeRefund(refund: ShopifyRefund): NormalizedRefund {
   const successfulAmounts = (refund.transactions ?? [])
     .filter((transaction) => transaction.status === 'success' && transaction.amount !== null)

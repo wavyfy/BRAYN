@@ -2063,6 +2063,39 @@ describe('ShopifyAdapter', () => {
       expect(parse({ ...order, cancelled_at: null })?.payload).toMatchObject({ data: { sourceCancelledAt: null } });
     });
 
+    it('normalizes a refunds/create delivery — bare refund plus order_id, same refund shape as an order-embedded refund', () => {
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+      const rawBody = JSON.stringify({
+        id: 1113796018497,
+        order_id: 18970128548161,
+        note: 'Things were damaged',
+        processed_at: '2026-01-02T00:00:00Z',
+        refund_line_items: [{ id: 1113796018498, line_item_id: 18970128548162, quantity: 1 }],
+        transactions: [
+          { amount: '75.00', status: 'success', kind: 'refund' },
+          { amount: '10.00', status: 'failure', kind: 'refund' },
+        ],
+      });
+
+      const result = adapter.parseWebhookEvent(rawBody, { 'x-shopify-topic': 'refunds/create', 'x-shopify-webhook-id': 'wh_evt_refund' });
+
+      expect(result).toEqual({
+        externalEventId: 'wh_evt_refund',
+        eventType: 'refunds/create',
+        payload: {
+          resource: 'refund',
+          data: {
+            externalId: '1113796018497',
+            orderExternalId: '18970128548161',
+            note: 'Things were damaged',
+            totalRefunded: '75.00',
+            processedAt: new Date('2026-01-02T00:00:00Z'),
+            lineItems: [{ externalId: '1113796018498', orderLineItemExternalId: '18970128548162', quantity: 1 }],
+          },
+        },
+      });
+    });
+
     it('normalizes a fulfillments/create delivery — bare fulfillment plus order_id, no nested order', () => {
       const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
       const rawBody = JSON.stringify({

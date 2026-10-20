@@ -530,7 +530,89 @@ export class OrderService {
   }
 
   /**
-   * Writes refund rows (embedded in an order payload) with
+   * Applies standalone refund deliveries (Shopify `refunds/create` — the
+   * bare refund plus `order_id`; Shopify does not reliably repeat a
+   * standalone refund on `orders/updated`). Same refund rows and the same
+   * `refund.processed` as an order-embedded refund: whichever delivery
+   * inserts the refund row first emits the event, the other only updates
+   * it, so one refund is one event regardless of path or order.
+   *
+   * A refund for an order BRAYN hasn't stored yet throws, so the durable
+   * webhook row retries with backoff (and dead-letters, replayable) until
+   * the order arrives — never silently dropped.
+   */
+  async upsertRefunds(
+    workspaceId: string,
+    integrationId: string,
+    provider: IntegrationProvider,
+    refunds: Array<NormalizedRefund & { orderExternalId: string }>,
+    options: UpsertOrdersOptions = {},
+  ): Promise<number> {
+    if (refunds.length === 0) {
+      return 0;
+    }
+
+    const { written, events } = await this.database.transaction(async (db) => {
+      const orderRows = await db
+        .select({ id: commerceOrders.id, externalId: commerceOrders.externalId, customerId: commerceOrders.customerId })
+        .from(commerceOrders)
+        .where(
+          and(
+            eq(commerceOrders.workspaceId, workspaceId),
+            eq(commerceOrders.provider, provider),
+            inArray(
+              commerceOrders.externalId,
+              refunds.map((refund) => refund.orderExternalId),
+            ),
+          ),
+        );
+      const orderByExternalId = new Map(orderRows.map((row) => [row.externalId, row]));
+      const missing = refunds.find((refund) => !orderByExternalId.has(refund.orderExternalId));
+      if (missing) {
+        throw new Error(`Refund ${missing.externalId} references order ${missing.orderExternalId}, which is not stored yet.`);
+      }
+
+      const lineItemRows = await db
+        .select({ id: commerceOrderLineItems.id, externalId: commerceOrderLineItems.externalId })
+        .from(commerceOrderLineItems)
+        .where(
+          and(
+            eq(commerceOrderLineItems.workspaceId, workspaceId),
+            eq(commerceOrderLineItems.provider, provider),
+            inArray(commerceOrderLineItems.orderId, orderRows.map((row) => row.id)),
+          ),
+        );
+
+      const refundRows = await this.writeRefunds(
+        db,
+        workspaceId,
+        integrationId,
+        provider,
+        refunds.map((refund) => ({ ...refund, orderId: orderByExternalId.get(refund.orderExternalId)!.id })),
+        new Map(lineItemRows.map((row) => [row.externalId, row.id])),
+      );
+
+      if (options.emitDomainEvents !== true) {
+        return { written: refundRows.length, events: [] };
+      }
+      const canonicalByCustomerId = await this.canonicalIdsByCustomerId(
+        db,
+        orderRows.map((row) => row.customerId).filter((id): id is string => id !== null),
+      );
+      return {
+        written: refundRows.length,
+        events: refundProcessedEvents(workspaceId, provider, refundRows, new Map(orderRows.map((row) => [row.id, row])), canonicalByCustomerId),
+      };
+    });
+
+    for (const event of events) {
+      this.eventBus.emit(event);
+    }
+    return written;
+  }
+
+  /**
+   * Writes refund rows (embedded in an order payload, or standalone) with
    * their line items, linked to the given orders. Returns the written
    * refund rows; one inserted by this call (rather than updated) is a
    * newly processed refund.

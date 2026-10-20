@@ -448,6 +448,7 @@ describe('ShopifyOAuthService', () => {
             { topic: 'products/update', uri: businessUri },
             { topic: 'orders/create', uri: businessUri },
             { topic: 'orders/updated', uri: businessUri },
+            { topic: 'refunds/create', uri: businessUri },
             { topic: 'collections/create', uri: businessUri },
             { topic: 'collections/update', uri: businessUri },
             { topic: 'app/uninstalled', uri: uninstallUri },
