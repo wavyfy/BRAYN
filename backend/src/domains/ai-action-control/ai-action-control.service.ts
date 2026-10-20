@@ -423,8 +423,8 @@ export class AiActionControlService {
 
     try {
       const result = await definition.execute(input, context);
-      // No `complete()` call here on failure, deliberately — same as `WebhookIngestService`'s own
-      // failure path: the key stays reserved-but-incomplete rather than being silently released, so
+      // No `complete()`/`fail()` call here on failure, deliberately (and no lease on `reserve()`):
+      // the key stays reserved-but-incomplete rather than being released for a retry, so
       // a blind retry can't paper over a real execution failure. Recovery from this state is a
       // separate, explicit operation, not built here.
       await this.idempotency.complete(namespacedKey);

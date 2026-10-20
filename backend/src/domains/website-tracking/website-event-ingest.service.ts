@@ -7,7 +7,7 @@ import { websiteVisitors } from '../../database/schema/website-visitors';
 import { websiteSessions } from '../../database/schema/website-sessions';
 import { websiteEvents } from '../../database/schema/website-events';
 import { ConflictError, NotFoundError, UnauthenticatedError } from '../../common/errors/app-error';
-import { IdempotencyService } from '../../common/idempotency/idempotency.service';
+import { IdempotencyService, INGEST_IDEMPOTENCY_LEASE_MS } from '../../common/idempotency/idempotency.service';
 import { IntegrationService } from '../integration/integration.service';
 import { IdentityResolutionService } from '../identity-resolution/identity-resolution.service';
 import type { IngestWebsiteEventInput } from './dto/ingest-website-event.schema';
@@ -71,17 +71,29 @@ export class WebsiteEventIngestService {
     await this.verifyWriteKey(workspaceId, writeKey);
 
     const idempotencyKey = `website-event:${workspaceId}:${input.eventId}`;
-    const reserved = await this.idempotency.reserve(idempotencyKey);
+    const reserved = await this.idempotency.reserve(idempotencyKey, { leaseMs: INGEST_IDEMPOTENCY_LEASE_MS });
     if (!reserved) {
+      // Completed, or another attempt holds it — either way the SDK never
+      // retries, so there's nothing to signal back beyond "not accepted twice".
       return { status: 'duplicate' };
     }
 
-    // No persisted "failed" marker exists for this table (unlike
-    // integration_webhook_events' status column) — on a thrown error
-    // below, the idempotency key stays reserved, matching
-    // WebhookIngestService's own failure behavior: a retry with the same
-    // eventId comes back 'duplicate', not silently retried (see
-    // IdempotencyService.reserve()'s doc comment).
+    try {
+      await this.persist(workspaceId, input);
+    } catch (error) {
+      // Release so a retry with the same eventId is processed again rather
+      // than reported 'duplicate'; if this write also fails, the lease
+      // still frees the key.
+      await this.idempotency.fail(idempotencyKey).catch(() => undefined);
+      throw error;
+    }
+
+    await this.idempotency.complete(idempotencyKey);
+    return { status: 'accepted' };
+  }
+
+  /** Every write here is retry-safe: upserts, plus a conflict-tolerant event insert (a failed attempt may already have written the row). */
+  private async persist(workspaceId: string, input: IngestWebsiteEventInput): Promise<void> {
     const now = new Date();
 
     const [visitor] = await this.database.client
@@ -102,24 +114,24 @@ export class WebsiteEventIngestService {
       })
       .returning();
 
-    await this.database.client.insert(websiteEvents).values({
-      workspaceId,
-      visitorId: visitor.id,
-      sessionId: session.id,
-      eventId: input.eventId,
-      eventType: input.eventType,
-      payload: input.payload ?? null,
-      occurredAt: input.occurredAt ? new Date(input.occurredAt) : now,
-    });
+    await this.database.client
+      .insert(websiteEvents)
+      .values({
+        workspaceId,
+        visitorId: visitor.id,
+        sessionId: session.id,
+        eventId: input.eventId,
+        eventType: input.eventType,
+        payload: input.payload ?? null,
+        occurredAt: input.occurredAt ? new Date(input.occurredAt) : now,
+      })
+      .onConflictDoNothing({ target: [websiteEvents.workspaceId, websiteEvents.eventId] });
 
     if (input.eventType === 'identity_signal') {
       // DTO validation already guarantees a non-empty string here.
       const email = input.payload?.email as string;
       await this.identityResolutionService.resolveWebsiteVisitor(workspaceId, visitor.id, email);
     }
-
-    await this.idempotency.complete(idempotencyKey);
-    return { status: 'accepted' };
   }
 
   private async verifyWriteKey(workspaceId: string, writeKey: string | null): Promise<void> {
