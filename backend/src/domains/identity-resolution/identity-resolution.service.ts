@@ -31,9 +31,9 @@ import type { IntegrationProvider } from '../integration/dto/connect-integration
  *
  * Anonymous → known linking (doc09/doc20 — Website Tracking Identity
  * Linking, Part 3): `resolveWebsiteVisitor()` links a `website_visitors`
- * row using the exact same deterministic email match as `resolveOne()`
- * — the one signal doc09 names, reused rather than reinvented for a
- * second identity source.
+ * row by the same normalized email match `resolveOne()` uses — the one
+ * signal doc09 names — but lookup-only: it never creates a canonical
+ * customer (see its own doc comment).
  *
  * ponytail: only ever resolves a row once (`canonicalCustomerId IS NULL`)
  * — if a customer's email later changes, the existing link isn't
@@ -86,11 +86,13 @@ export class IdentityResolutionService {
    * Links a Website Behaviour visitor to a canonical customer once a
    * reliable identity signal (email) is available for it (doc20 Identity
    * Linking: `Anonymous Visitor → Identity Signal → Identity Resolution
-   * → Canonical Customer → Historical Behaviour Linked`). Reuses
-   * `resolveOne()`'s find-or-create-by-email rule unchanged — a visitor
-   * whose email already resolved a commerce canonical customer links to
-   * that *same* row, not a second competing one (doc08 Canonical
-   * Customer Rule).
+   * → Canonical Customer → Historical Behaviour Linked`). Callers pass
+   * only a *verified* email (see `WebsiteEventIngestService`). Links only
+   * to an *existing* canonical customer with that email — never creates
+   * one: a website signal is not a customer source of its own, and
+   * find-or-create here let any write-key holder mint canonical customers
+   * at will. An unknown email leaves the visitor anonymous (a no-op); the
+   * next verified signal after that customer exists links it.
    *
    * Only ever links a visitor once, same "resolves once" contract as
    * `resolveMany` (see this service's own ponytail note above): an
@@ -118,7 +120,15 @@ export class IdentityResolutionService {
       return;
     }
 
-    const canonicalCustomerId = await this.resolveOne(workspaceId, email);
+    const [canonical] = await this.database.client
+      .select({ id: canonicalCustomers.id })
+      .from(canonicalCustomers)
+      .where(and(eq(canonicalCustomers.workspaceId, workspaceId), eq(canonicalCustomers.primaryEmail, email.trim().toLowerCase())))
+      .limit(1);
+    if (!canonical) {
+      return;
+    }
+    const canonicalCustomerId = canonical.id;
 
     await this.database.client
       .update(websiteVisitors)

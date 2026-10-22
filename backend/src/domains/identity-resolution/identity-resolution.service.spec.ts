@@ -150,30 +150,34 @@ describe('IdentityResolutionService', () => {
   });
 
   describe('resolveWebsiteVisitor() — anonymous → known linking (Part 3)', () => {
-    it('links an unlinked visitor to a newly created canonical customer for a reliable email signal', async () => {
-      const select = vi.fn(() => makeSelectChain([{ id: 'visitor_1', canonicalCustomerId: null }]));
-      const insertChain = makeInsertChain({ id: 'canon_new' });
+    it('links an unlinked visitor to the EXISTING canonical customer with that (normalized) email', async () => {
+      const visitorSelect = makeSelectChain([{ id: 'visitor_1', canonicalCustomerId: null }]);
+      const canonicalSelect = makeSelectChain([{ id: 'canon_existing_from_shopify' }]);
+      const select = vi.fn().mockReturnValueOnce(visitorSelect).mockReturnValueOnce(canonicalSelect);
+      const insert = vi.fn();
       const updateChain = makeUpdateChain();
-      const client = { select, insert: vi.fn(() => insertChain), update: vi.fn(() => updateChain) };
+      const client = { select, insert, update: vi.fn(() => updateChain) };
       const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
 
-      await service.resolveWebsiteVisitor('ws_1', 'visitor_1', 'Shopper@Example.com');
-
-      expect(insertChain.values).toHaveBeenCalledWith({ workspaceId: 'ws_1', primaryEmail: 'shopper@example.com' });
-      expect(updateChain.set).toHaveBeenCalledWith(expect.objectContaining({ canonicalCustomerId: 'canon_new' }));
-    });
-
-    it('links to the SAME canonical customer an email already resolved from commerce (unifies anonymous + known identity)', async () => {
-      // onConflictDoUpdate hitting the existing (workspace, email) row returns the pre-existing canonical customer.
-      const select = vi.fn(() => makeSelectChain([{ id: 'visitor_1', canonicalCustomerId: null }]));
-      const insertChain = makeInsertChain({ id: 'canon_existing_from_shopify' });
-      const updateChain = makeUpdateChain();
-      const client = { select, insert: vi.fn(() => insertChain), update: vi.fn(() => updateChain) };
-      const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
-
-      await service.resolveWebsiteVisitor('ws_1', 'visitor_1', 'known@example.com');
+      await service.resolveWebsiteVisitor('ws_1', 'visitor_1', ' Shopper@Example.com ');
 
       expect(updateChain.set).toHaveBeenCalledWith(expect.objectContaining({ canonicalCustomerId: 'canon_existing_from_shopify' }));
+      expect(insert).not.toHaveBeenCalled();
+    });
+
+    it('never creates a canonical customer: an unknown email leaves the visitor anonymous', async () => {
+      const select = vi
+        .fn()
+        .mockReturnValueOnce(makeSelectChain([{ id: 'visitor_1', canonicalCustomerId: null }]))
+        .mockReturnValueOnce(makeSelectChain([]));
+      const insert = vi.fn();
+      const update = vi.fn();
+      const service = new IdentityResolutionService({ client: { select, insert, update } } as unknown as DatabaseService);
+
+      await service.resolveWebsiteVisitor('ws_1', 'visitor_1', 'nobody@example.com');
+
+      expect(insert).not.toHaveBeenCalled();
+      expect(update).not.toHaveBeenCalled();
     });
 
     it('does nothing when the visitor does not exist in this workspace (tenant isolation)', async () => {
@@ -203,22 +207,21 @@ describe('IdentityResolutionService', () => {
     });
 
     it('is idempotent across repeated calls with the same signal: the second call is a no-op once linked', async () => {
-      const insertChain = makeInsertChain({ id: 'canon_1' });
       const updateChain = makeUpdateChain();
-      const insert = vi.fn(() => insertChain);
       const update = vi.fn(() => updateChain);
 
       const select = vi
         .fn()
         .mockReturnValueOnce(makeSelectChain([{ id: 'visitor_1', canonicalCustomerId: null }]))
+        .mockReturnValueOnce(makeSelectChain([{ id: 'canon_1' }]))
         .mockReturnValueOnce(makeSelectChain([{ id: 'visitor_1', canonicalCustomerId: 'canon_1' }]));
-      const client = { select, insert, update };
+      const client = { select, insert: vi.fn(), update };
       const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
 
       await service.resolveWebsiteVisitor('ws_1', 'visitor_1', 'shopper@example.com');
       await service.resolveWebsiteVisitor('ws_1', 'visitor_1', 'shopper@example.com');
 
-      expect(insert).toHaveBeenCalledTimes(1);
+      expect(client.insert).not.toHaveBeenCalled();
       expect(update).toHaveBeenCalledTimes(1);
     });
   });
