@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, HttpStatus, Param, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Put, UseGuards } from '@nestjs/common';
 import { WorkspaceMembershipGuard } from '../workspace/workspace-membership.guard';
 import { RequireWorkspaceRole } from '../workspace/require-workspace-role.decorator';
 import { ZodValidationPipe } from '../../common/api/zod-validation.pipe';
@@ -23,6 +23,11 @@ import { setAllowedOriginsSchema, type SetAllowedOriginsInput } from './dto/set-
 @RequireWorkspaceRole('owner', 'admin')
 export class WebsiteTrackingKeyController {
   constructor(private readonly websiteTrackingKeyService: WebsiteTrackingKeyService) {}
+
+  @Get('settings')
+  async getSettings(@Param('workspaceId') workspaceId: string) {
+    return this.websiteTrackingKeyService.getSettings(workspaceId);
+  }
 
   @Post('write-key')
   @HttpCode(HttpStatus.OK)

@@ -132,6 +132,21 @@ export async function connectProviderWithCredentials(workspaceId: string, provid
   await connectIntegrationCredentials(workspaceId, provider, credentials);
 }
 
+export async function generateWebsiteTrackingWriteKey(workspaceId: string): Promise<{ writeKey: string }> {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/website-tracking/write-key`, { method: 'POST' });
+}
+
+export async function generateWebsiteTrackingIdentitySecret(workspaceId: string): Promise<{ identitySecret: string }> {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/website-tracking/identity-secret`, { method: 'POST' });
+}
+
+export async function setWebsiteTrackingAllowedOrigins(workspaceId: string, origins: string[]): Promise<{ allowedOrigins: string[] }> {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/website-tracking/allowed-origins`, {
+    method: 'PUT',
+    body: JSON.stringify({ origins }),
+  });
+}
+
 export async function startIntegrationImport(workspaceId: string, provider: string) {
   return apiFetch(`/api/v1/workspaces/${workspaceId}/integrations/${provider}/import`, { method: 'POST' });
 }

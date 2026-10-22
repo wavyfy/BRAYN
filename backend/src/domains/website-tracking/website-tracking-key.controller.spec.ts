@@ -26,6 +26,7 @@ describe('WebsiteTrackingKeyController (e2e)', () => {
   let app: NestFastifyApplication;
 
   const websiteTrackingKeyService = {
+    getSettings: vi.fn(async () => ({ allowedOrigins: ['https://shop.example.com'], writeKeyConfigured: true, identitySecretConfigured: false, lastEventAt: null })),
     generate: vi.fn(async () => ({ writeKey: 'generated_key_123' })),
     generateIdentitySecret: vi.fn(async () => ({ identitySecret: 'generated_secret_123' })),
     setAllowedOrigins: vi.fn(async (_workspaceId: string, origins: string[]) => ({ allowedOrigins: origins })),
@@ -127,6 +128,24 @@ describe('WebsiteTrackingKeyController (e2e)', () => {
   });
 
   const auth = { authorization: 'Bearer valid-token' };
+
+  it('returns settings for an admin', async () => {
+    memberWithRole('admin');
+
+    const res = await app.inject({ method: 'GET', url: '/workspaces/ws_1/website-tracking/settings', headers: auth });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ allowedOrigins: ['https://shop.example.com'], writeKeyConfigured: true, identitySecretConfigured: false, lastEventAt: null });
+    expect(websiteTrackingKeyService.getSettings).toHaveBeenCalledWith('ws_1');
+  });
+
+  it('rejects a support member reading settings with 403', async () => {
+    memberWithRole('support');
+
+    const res = await app.inject({ method: 'GET', url: '/workspaces/ws_1/website-tracking/settings', headers: auth });
+
+    expect(res.statusCode).toBe(403);
+  });
 
   it('generates an identity secret for an owner', async () => {
     memberWithRole('owner');

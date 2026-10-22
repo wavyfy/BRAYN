@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
+import { eq, sql } from 'drizzle-orm';
+import { DatabaseService } from '../../database/database.service';
+import { websiteEvents } from '../../database/schema/website-events';
 import { IntegrationService } from '../integration/integration.service';
 
 /**
@@ -22,9 +25,37 @@ import { IntegrationService } from '../integration/integration.service';
  * never wipes another. Secrets are returned in plaintext exactly once, on
  * generation/rotation; nothing here exposes them otherwise.
  */
+export interface WebsiteTrackingSettings {
+  allowedOrigins: string[];
+  writeKeyConfigured: boolean;
+  identitySecretConfigured: boolean;
+  /** Most recent event's `occurredAt` — the merchant's "is my snippet working?" signal. */
+  lastEventAt: Date | null;
+}
+
 @Injectable()
 export class WebsiteTrackingKeyService {
-  constructor(private readonly integrationService: IntegrationService) {}
+  constructor(
+    private readonly integrationService: IntegrationService,
+    private readonly database: DatabaseService,
+  ) {}
+
+  /** Current state for the setup UI. Never returns the write key or identity secret themselves. */
+  async getSettings(workspaceId: string): Promise<WebsiteTrackingSettings> {
+    const credentials = (await this.integrationService.getCredentials(workspaceId, 'website_tracking')) ?? {};
+    const [last] = await this.database.client
+      .select({ lastEventAt: sql<string | null>`max(${websiteEvents.occurredAt})` })
+      .from(websiteEvents)
+      .where(eq(websiteEvents.workspaceId, workspaceId));
+
+    return {
+      allowedOrigins: credentials.allowedOrigins ? (JSON.parse(credentials.allowedOrigins) as string[]) : [],
+      writeKeyConfigured: Boolean(credentials.writeKey),
+      identitySecretConfigured: Boolean(credentials.identitySecret),
+      // A raw aggregate comes back from pg as a string, not a Date (same caveat as CustomerIntelligenceService).
+      lastEventAt: last?.lastEventAt ? new Date(last.lastEventAt) : null,
+    };
+  }
 
   async generate(workspaceId: string): Promise<{ writeKey: string }> {
     const writeKey = randomBytes(24).toString('base64url');
