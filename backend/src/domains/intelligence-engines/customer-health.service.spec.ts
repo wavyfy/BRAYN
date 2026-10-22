@@ -167,6 +167,20 @@ describe('CustomerHealthService', () => {
       expect(website.score).toBe(100);
     });
 
+    it('caps the website recency sub-score at 100 when lastActivityAt is slightly in the future (client clock skew)', async () => {
+      const insert = vi.fn().mockReturnValue(makeInsertChain());
+      const customerIntelligenceService = makeCustomerIntelligenceService(
+        { lastOrderAt: null, ordersLast90Days: 0 },
+        { eventsCount: 500, lastActivityAt: new Date(Date.now() + 4 * 60 * 1000) },
+      );
+      const service = new CustomerHealthService({ client: { insert } } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
+
+      const result = await service.recalculate('ws_1', 'canon_1');
+
+      const website = (result.signals as Record<string, { value: number; score: number }>).websiteEngagement;
+      expect(website.score).toBe(100);
+    });
+
     it('scopes the website engagement signal to the requested workspace via getCustomer', async () => {
       const insert = vi.fn().mockReturnValue(makeInsertChain());
       const client = { insert };
