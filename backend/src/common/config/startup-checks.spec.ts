@@ -14,6 +14,8 @@ function makeEnv(overrides: Partial<Env>): Env {
     RATE_LIMIT_DEFAULT_MAX: 120,
     RATE_LIMIT_AI_MAX: 10,
     RATE_LIMIT_PUBLIC_MAX: 20,
+    WEBSITE_EVENT_RATE_LIMIT_IP_MAX: 120,
+    WEBSITE_EVENT_RATE_LIMIT_WORKSPACE_MAX: 6000,
     ...overrides,
   };
 }

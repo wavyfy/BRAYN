@@ -80,6 +80,11 @@ export const envSchema = z.object({
   RATE_LIMIT_DEFAULT_MAX: z.coerce.number().int().positive().default(120),
   RATE_LIMIT_AI_MAX: z.coerce.number().int().positive().default(10),
   RATE_LIMIT_PUBLIC_MAX: z.coerce.number().int().positive().default(20),
+  // Website-event intake (`@SkipRateLimit()` — its own limits, see
+  // WebsiteEventIngestService): per caller IP across all workspaces, and
+  // per workspace once the write key is verified. Same window as above.
+  WEBSITE_EVENT_RATE_LIMIT_IP_MAX: z.coerce.number().int().positive().default(120),
+  WEBSITE_EVENT_RATE_LIMIT_WORKSPACE_MAX: z.coerce.number().int().positive().default(6000),
 
   // Explicit deployment identifier for rate-limit Redis key namespacing
   // (doc19 Phase 17 hardening) — deliberately NOT NODE_ENV: Render can run

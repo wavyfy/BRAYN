@@ -22,6 +22,17 @@
  *
  * `page_view` is captured automatically on script load — no call needed.
  *
+ * The storefront's origin (e.g. `https://shop.example.com`) must be listed
+ * via PUT /workspaces/:id/website-tracking/allowed-origins, or every event
+ * is rejected.
+ *
+ * Identity (logged-in shopper): the merchant's *server* signs the email
+ * with the workspace identity secret (POST /workspaces/:id/website-
+ * tracking/identity-secret — never put the secret in the page):
+ *   signature = hex(HMAC-SHA256(identitySecret, lowercase(trim(email))))
+ *   window.brayn.track('identity_signal', { email: email, signature: signature });
+ * An unsigned or invalid signal is recorded but never links the visitor.
+ *
  * CORS: deliberately sent as a CORS-"simple" request (see below) so the
  * ingestion endpoint (backend/src/domains/website-tracking/website-event.
  * controller.ts) never needs a CORS response header for an arbitrary
