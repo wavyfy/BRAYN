@@ -9,7 +9,7 @@ import { AuthGuard } from '../../common/auth/auth.guard';
 import { AllExceptionsFilter } from '../../common/errors/all-exceptions.filter';
 import { registerHttpLogging } from '../../common/logging/http-logging.hook';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
-import { ConflictError, NotFoundError, UnauthenticatedError } from '../../common/errors/app-error';
+import { ConflictError, RateLimitError, UnauthenticatedError, UnauthorizedError } from '../../common/errors/app-error';
 
 describe('WebsiteEventController (e2e)', () => {
   let app: NestFastifyApplication;
@@ -62,14 +62,14 @@ describe('WebsiteEventController (e2e)', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ status: 'accepted' });
-    expect(websiteEventIngestService.ingest).toHaveBeenCalledWith('ws_1', validBody, 'write_key_1');
+    expect(websiteEventIngestService.ingest).toHaveBeenCalledWith('ws_1', validBody, expect.objectContaining({ writeKey: 'write_key_1' }));
   });
 
   it('passes null when no write key is supplied in the query string', async () => {
     const res = await app.inject({ method: 'POST', url: '/workspaces/ws_1/website-events', payload: validBody });
 
     expect(res.statusCode).toBe(200);
-    expect(websiteEventIngestService.ingest).toHaveBeenCalledWith('ws_1', validBody, null);
+    expect(websiteEventIngestService.ingest).toHaveBeenCalledWith('ws_1', validBody, expect.objectContaining({ writeKey: null }));
   });
 
   it('accepts a text/plain body — the SDK sends this content type deliberately to stay CORS-simple', async () => {
@@ -81,7 +81,7 @@ describe('WebsiteEventController (e2e)', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(websiteEventIngestService.ingest).toHaveBeenCalledWith('ws_1', validBody, 'write_key_1');
+    expect(websiteEventIngestService.ingest).toHaveBeenCalledWith('ws_1', validBody, expect.objectContaining({ writeKey: 'write_key_1' }));
   });
 
   it('rejects a malformed text/plain body with 400', async () => {
@@ -129,19 +129,98 @@ describe('WebsiteEventController (e2e)', () => {
     expect(websiteEventIngestService.ingest).not.toHaveBeenCalled();
   });
 
-  it('accepts an identity_signal event with a reliable email signal', async () => {
+  it('accepts an identity_signal event with an email and signature (signature checked by the service)', async () => {
+    const payload = { email: 'shopper@example.com', signature: 'ab'.repeat(32) };
     const res = await app.inject({
       method: 'POST',
       url: '/workspaces/ws_1/website-events?key=write_key_1',
-      payload: { ...validBody, eventType: 'identity_signal', payload: { email: 'shopper@example.com' } },
+      payload: { ...validBody, eventType: 'identity_signal', payload },
     });
 
     expect(res.statusCode).toBe(200);
     expect(websiteEventIngestService.ingest).toHaveBeenCalledWith(
       'ws_1',
-      { ...validBody, eventType: 'identity_signal', payload: { email: 'shopper@example.com' } },
-      'write_key_1',
+      { ...validBody, eventType: 'identity_signal', payload },
+      expect.objectContaining({ writeKey: 'write_key_1' }),
     );
+  });
+
+  it('rejects an identity_signal whose email is not a valid address with 400', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/website-events',
+      payload: { ...validBody, eventType: 'identity_signal', payload: { email: 'not-an-email' } },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(websiteEventIngestService.ingest).not.toHaveBeenCalled();
+  });
+
+  it('rejects an identity_signal whose signature is not a string with 400', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/website-events',
+      payload: { ...validBody, eventType: 'identity_signal', payload: { email: 'shopper@example.com', signature: 123 } },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('passes the request Origin header and caller IP to the service', async () => {
+    await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/website-events?key=write_key_1',
+      headers: { origin: 'https://shop.example.com' },
+      payload: validBody,
+    });
+
+    expect(websiteEventIngestService.ingest).toHaveBeenCalledWith(
+      'ws_1',
+      validBody,
+      { writeKey: 'write_key_1', origin: 'https://shop.example.com', ip: expect.any(String) },
+    );
+  });
+
+  it('falls back to the Referer origin when no Origin header is sent', async () => {
+    await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/website-events?key=write_key_1',
+      headers: { referer: 'https://shop.example.com/products/1?x=y' },
+      payload: validBody,
+    });
+
+    expect(websiteEventIngestService.ingest).toHaveBeenCalledWith('ws_1', validBody, expect.objectContaining({ origin: 'https://shop.example.com' }));
+  });
+
+  it('passes a null origin when neither header is present', async () => {
+    await app.inject({ method: 'POST', url: '/workspaces/ws_1/website-events?key=write_key_1', payload: validBody });
+
+    expect(websiteEventIngestService.ingest).toHaveBeenCalledWith('ws_1', validBody, expect.objectContaining({ origin: null }));
+  });
+
+  for (const [label, overrides] of [
+    ['an occurredAt more than 5 minutes in the future', { occurredAt: new Date(Date.now() + 10 * 60 * 1000).toISOString() }],
+    ['an occurredAt older than 7 days', { occurredAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString() }],
+    ['a payload over 4 KB', { payload: { blob: 'x'.repeat(5000) } }],
+    ['a visitorId with characters outside [A-Za-z0-9_-]', { visitorId: 'visitor abc;drop' }],
+    ['a sessionId longer than 128 characters', { sessionId: 's'.repeat(129) }],
+  ] as const) {
+    it(`rejects ${label} with 400`, async () => {
+      const res = await app.inject({ method: 'POST', url: '/workspaces/ws_1/website-events', payload: { ...validBody, ...overrides } });
+
+      expect(res.statusCode).toBe(400);
+      expect(websiteEventIngestService.ingest).not.toHaveBeenCalled();
+    });
+  }
+
+  it('accepts an occurredAt within the allowed window (slight clock skew)', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/website-events',
+      payload: { ...validBody, occurredAt: new Date(Date.now() + 60 * 1000).toISOString() },
+    });
+
+    expect(res.statusCode).toBe(200);
   });
 
   it('rejects an unknown eventType with 400', async () => {
@@ -155,20 +234,24 @@ describe('WebsiteEventController (e2e)', () => {
     expect(websiteEventIngestService.ingest).not.toHaveBeenCalled();
   });
 
-  it('surfaces an unconnected website_tracking provider as 404', async () => {
-    websiteEventIngestService.ingest.mockRejectedValueOnce(
-      new NotFoundError('This workspace has no connection for the website_tracking provider.'),
-    );
+  it('surfaces a disallowed origin as 403', async () => {
+    websiteEventIngestService.ingest.mockRejectedValueOnce(new UnauthorizedError('This origin is not allowed for this write key.'));
 
     const res = await app.inject({ method: 'POST', url: '/workspaces/ws_1/website-events', payload: validBody });
 
-    expect(res.statusCode).toBe(404);
+    expect(res.statusCode).toBe(403);
   });
 
-  it('surfaces a disconnected website_tracking provider as 409', async () => {
-    websiteEventIngestService.ingest.mockRejectedValueOnce(
-      new ConflictError('Cannot ingest a website event for a disconnected integration.'),
-    );
+  it('surfaces a rate-limited request as 429', async () => {
+    websiteEventIngestService.ingest.mockRejectedValueOnce(new RateLimitError());
+
+    const res = await app.inject({ method: 'POST', url: '/workspaces/ws_1/website-events', payload: validBody });
+
+    expect(res.statusCode).toBe(429);
+  });
+
+  it('surfaces a session/visitor mismatch as 409', async () => {
+    websiteEventIngestService.ingest.mockRejectedValueOnce(new ConflictError('This session belongs to a different visitor.'));
 
     const res = await app.inject({ method: 'POST', url: '/workspaces/ws_1/website-events', payload: validBody });
 

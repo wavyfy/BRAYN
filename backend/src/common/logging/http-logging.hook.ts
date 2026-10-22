@@ -26,11 +26,16 @@ export function registerHttpLogging(
     // on the customer list endpoint) — never log it verbatim, or a search
     // box becomes a PII leak into every deployment's log stream.
     const path = request.url.split('?')[0];
+    // Entry count only, never the addresses — how TRUST_PROXY_HOPS is read
+    // off a real deployment (see the env schema's comment).
+    const forwardedFor = request.headers['x-forwarded-for'];
+    const forwardedHops = typeof forwardedFor === 'string' ? forwardedFor.split(',').length : 0;
     logger.event('log', `${request.method} ${path}`, 'HTTP', {
       method: request.method,
       path,
       statusCode: reply.statusCode,
       durationMs: Math.round(reply.elapsedTime * 100) / 100,
+      forwardedHops,
     });
     done();
   });

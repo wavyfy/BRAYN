@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { createHmac } from 'node:crypto';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { and, eq } from 'drizzle-orm';
@@ -14,7 +15,7 @@ import { ProductService, type NormalizedProduct } from '../domains/commerce/prod
 import { OrderService, type NormalizedOrder } from '../domains/commerce/order.service';
 import { IdentityResolutionService } from '../domains/identity-resolution/identity-resolution.service';
 import { WebsiteTrackingKeyService } from '../domains/website-tracking/website-tracking-key.service';
-import { WebsiteEventIngestService } from '../domains/website-tracking/website-event-ingest.service';
+import { WebsiteEventIngestService, identitySignaturePayload } from '../domains/website-tracking/website-event-ingest.service';
 import { CustomerHealthService } from '../domains/intelligence-engines/customer-health.service';
 import { RevenueOpportunityService } from '../domains/intelligence-engines/revenue-opportunity.service';
 import { RecommendationService } from '../domains/intelligence-engines/recommendation.service';
@@ -212,7 +213,16 @@ async function main() {
     const orderResult = await app.get(OrderService).upsertMany(workspaceId, shopify.id, PROVIDER, orders);
 
     // 4. Website behaviour through the real ingest path (write key verified, eventId-deduped).
-    const { writeKey } = await app.get(WebsiteTrackingKeyService).generate(workspaceId);
+    // The seed plays both the storefront (origin + write key) and the merchant server (signs the identity signal).
+    const trackingKeys = app.get(WebsiteTrackingKeyService);
+    const { writeKey } = await trackingKeys.generate(workspaceId);
+    const { identitySecret } = await trackingKeys.generateIdentitySecret(workspaceId);
+    const demoOrigin = 'https://demo-storefront.brayn.local';
+    await trackingKeys.setAllowedOrigins(workspaceId, [demoOrigin]);
+    const signed = (payload: Record<string, unknown>) =>
+      typeof payload.email === 'string'
+        ? { ...payload, signature: createHmac('sha256', identitySecret).update(identitySignaturePayload(payload.email)).digest('hex') }
+        : payload;
     const ingest = app.get(WebsiteEventIngestService);
     let eventsAccepted = 0;
     for (const [index, [age, eventType, payload]] of mayaWebsiteEvents.entries()) {
@@ -224,9 +234,9 @@ async function main() {
           eventId: `demo-event-maya-${index + 1}`,
           eventType,
           occurredAt: new Date(Date.now() - age * DAY_MS + index * 60_000).toISOString(),
-          payload,
+          payload: eventType === 'identity_signal' ? signed(payload) : payload,
         },
-        writeKey,
+        { writeKey, origin: demoOrigin, ip: '127.0.0.1' },
       );
       if (result.status === 'accepted') eventsAccepted++;
     }

@@ -22,6 +22,9 @@ const REQUIRED_IN_PRODUCTION: ReadonlyArray<keyof Env> = [
   // missing Redis itself — deliberately not inferred from NODE_ENV, since
   // more than one Render service can run NODE_ENV=production.
   'BRAYN_ENV',
+  // 0 (the default) behind Render's proxy means every IP-keyed rate limit
+  // shares the proxy's IP — see the env schema's own comment.
+  'TRUST_PROXY_HOPS',
 ];
 
 export function warnOnMissingProductionSecrets(env: Env, logger: StructuredLoggerService): void {

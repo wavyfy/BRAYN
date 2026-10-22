@@ -238,7 +238,8 @@ function computeWebsiteEngagementSignal(behaviouralContext: BehaviouralContext):
   }
 
   const daysSinceLastActivity = Math.floor((Date.now() - lastActivityAt.getTime()) / (24 * 60 * 60 * 1000));
-  const recencyScore = Math.max(0, Math.round(100 - (daysSinceLastActivity / WEBSITE_RECENCY_DECAY_DAYS) * 100));
+  // Clamped above too: client clock skew (accepted within a few minutes) can put lastActivityAt slightly in the future.
+  const recencyScore = Math.min(100, Math.max(0, Math.round(100 - (daysSinceLastActivity / WEBSITE_RECENCY_DECAY_DAYS) * 100)));
   const frequencyScore = Math.min(100, Math.round((eventsCount / WEBSITE_FREQUENCY_TARGET_EVENTS) * 100));
   const score = Math.round(recencyScore * WEBSITE_RECENCY_SUBWEIGHT + frequencyScore * WEBSITE_FREQUENCY_SUBWEIGHT);
 

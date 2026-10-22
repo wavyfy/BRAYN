@@ -27,6 +27,8 @@ describe('WebsiteTrackingKeyController (e2e)', () => {
 
   const websiteTrackingKeyService = {
     generate: vi.fn(async () => ({ writeKey: 'generated_key_123' })),
+    generateIdentitySecret: vi.fn(async () => ({ identitySecret: 'generated_secret_123' })),
+    setAllowedOrigins: vi.fn(async (_workspaceId: string, origins: string[]) => ({ allowedOrigins: origins })),
   };
   const userService = {
     findOrCreateByClerkId: vi.fn(async (clerkUserId: string) => ({ id: 'user_1', clerkUserId })),
@@ -67,6 +69,8 @@ describe('WebsiteTrackingKeyController (e2e)', () => {
 
   beforeEach(() => {
     websiteTrackingKeyService.generate.mockClear();
+    websiteTrackingKeyService.generateIdentitySecret.mockClear();
+    websiteTrackingKeyService.setAllowedOrigins.mockClear();
   });
 
   function memberWithRole(role: string) {
@@ -121,4 +125,58 @@ describe('WebsiteTrackingKeyController (e2e)', () => {
     expect(res.statusCode).toBe(200);
     expect(websiteTrackingKeyService.generate).toHaveBeenCalledWith('ws_1');
   });
+
+  const auth = { authorization: 'Bearer valid-token' };
+
+  it('generates an identity secret for an owner', async () => {
+    memberWithRole('owner');
+
+    const res = await app.inject({ method: 'POST', url: '/workspaces/ws_1/website-tracking/identity-secret', headers: auth });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ identitySecret: 'generated_secret_123' });
+  });
+
+  it('sets normalized, deduped allowed origins for an admin', async () => {
+    memberWithRole('admin');
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/workspaces/ws_1/website-tracking/allowed-origins',
+      headers: auth,
+      payload: { origins: ['https://Shop.Example.com/', 'https://shop.example.com/products', 'http://localhost:3000'] },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(websiteTrackingKeyService.setAllowedOrigins).toHaveBeenCalledWith('ws_1', ['https://shop.example.com', 'http://localhost:3000']);
+  });
+
+  it('rejects a non-http(s) origin with 400', async () => {
+    memberWithRole('owner');
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/workspaces/ws_1/website-tracking/allowed-origins',
+      headers: auth,
+      payload: { origins: ['javascript:alert(1)'] },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(websiteTrackingKeyService.setAllowedOrigins).not.toHaveBeenCalled();
+  });
+
+  for (const [method, url] of [
+    ['POST', '/workspaces/ws_1/website-tracking/identity-secret'],
+    ['PUT', '/workspaces/ws_1/website-tracking/allowed-origins'],
+  ] as const) {
+    it(`rejects a marketing member on ${method} ${url} with 403`, async () => {
+      memberWithRole('marketing');
+
+      const res = await app.inject({ method, url, headers: auth, payload: { origins: [] } });
+
+      expect(res.statusCode).toBe(403);
+      expect(websiteTrackingKeyService.generateIdentitySecret).not.toHaveBeenCalled();
+      expect(websiteTrackingKeyService.setAllowedOrigins).not.toHaveBeenCalled();
+    });
+  }
 });

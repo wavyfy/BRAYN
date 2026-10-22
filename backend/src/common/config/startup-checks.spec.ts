@@ -14,6 +14,9 @@ function makeEnv(overrides: Partial<Env>): Env {
     RATE_LIMIT_DEFAULT_MAX: 120,
     RATE_LIMIT_AI_MAX: 10,
     RATE_LIMIT_PUBLIC_MAX: 20,
+    WEBSITE_EVENT_RATE_LIMIT_IP_MAX: 120,
+    WEBSITE_EVENT_RATE_LIMIT_WORKSPACE_MAX: 6000,
+    TRUST_PROXY_HOPS: 1,
     ...overrides,
   };
 }
@@ -88,6 +91,25 @@ describe('warnOnMissingProductionSecrets', () => {
       'StartupChecks',
       expect.objectContaining({ missing: ['BRAYN_ENV'] }),
     );
+  });
+
+  it('warns when production trusts no proxy hops — behind Render every IP-keyed rate limit would share the proxy IP', () => {
+    const logger = makeLoggerSpy();
+
+    warnOnMissingProductionSecrets(
+      makeEnv({
+        NODE_ENV: 'production',
+        DATABASE_URL: 'postgres://user:pass@host/db',
+        CLERK_SECRET_KEY: 'sk_live_xxx',
+        BRAYN_CREDENTIAL_ENCRYPTION_KEY: 'a'.repeat(64),
+        UPSTASH_REDIS_REST_URL: 'https://example.upstash.io',
+        BRAYN_ENV: 'production',
+        TRUST_PROXY_HOPS: 0,
+      }),
+      logger,
+    );
+
+    expect(logger.event).toHaveBeenCalledWith('warn', expect.any(String), 'StartupChecks', expect.objectContaining({ missing: ['TRUST_PROXY_HOPS'] }));
   });
 
   it('does not warn when production has all required secrets', () => {

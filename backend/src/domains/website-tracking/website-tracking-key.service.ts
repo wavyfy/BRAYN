@@ -3,22 +3,24 @@ import { randomBytes } from 'node:crypto';
 import { IntegrationService } from '../integration/integration.service';
 
 /**
- * Generates/rotates the `website_tracking` write key (Part 2 — the
- * per-request authenticity mechanism `WebsiteEventIngestService`
- * validates). Unlike Shopify/WooCommerce credentials, this key isn't
- * merchant-supplied — BRAYN generates it and the merchant copies it into
- * the tracking snippet embedded on their storefront (same shape as any
- * analytics "write key"/"measurement id": client-embeddable, rotatable,
- * but not a server-side secret). Stored through the same
- * `IntegrationService.setCredentials()` encrypted-credential mechanism
- * every other provider uses — `connectCredentials()` is not used here
- * since there is no external provider connection to verify against.
+ * Manages the `website_tracking` integration's three settings, all kept
+ * in the one encrypted credential payload every provider uses
+ * (`IntegrationService.setCredentials()`/`getCredentials()`):
  *
- * Returns the key in plaintext exactly once, on generation/rotation —
- * `IntegrationService.getCredentials()` is the only other way to read
- * it, and that's internal-only (never exposed through a controller),
- * matching this codebase's existing "credentials never returned by
- * list" discipline.
+ * - `writeKey` — client-embeddable, rotatable; the per-request
+ *   authenticity check `WebsiteEventIngestService` validates. Public by
+ *   nature (it sits in storefront HTML), so it is never the only control.
+ * - `identitySecret` — server-side only, never embedded in a storefront.
+ *   The merchant's server signs a logged-in shopper's email with it
+ *   (HMAC-SHA256, see `WebsiteEventIngestService`), which is what makes an
+ *   `identity_signal` a *reliable* signal (doc09/doc20) rather than an
+ *   email anyone holding the write key could claim.
+ * - `allowedOrigins` — storefront origins the write key is accepted from
+ *   (JSON array; stored here only to avoid a second storage path).
+ *
+ * Every update merges into the existing payload, so rotating one setting
+ * never wipes another. Secrets are returned in plaintext exactly once, on
+ * generation/rotation; nothing here exposes them otherwise.
  */
 @Injectable()
 export class WebsiteTrackingKeyService {
@@ -26,7 +28,24 @@ export class WebsiteTrackingKeyService {
 
   async generate(workspaceId: string): Promise<{ writeKey: string }> {
     const writeKey = randomBytes(24).toString('base64url');
-    await this.integrationService.setCredentials(workspaceId, 'website_tracking', { writeKey });
+    await this.update(workspaceId, { writeKey });
     return { writeKey };
+  }
+
+  async generateIdentitySecret(workspaceId: string): Promise<{ identitySecret: string }> {
+    const identitySecret = randomBytes(32).toString('base64url');
+    await this.update(workspaceId, { identitySecret });
+    return { identitySecret };
+  }
+
+  /** `origins` are already normalized by the DTO (`URL.origin`, deduped). */
+  async setAllowedOrigins(workspaceId: string, origins: string[]): Promise<{ allowedOrigins: string[] }> {
+    await this.update(workspaceId, { allowedOrigins: JSON.stringify(origins) });
+    return { allowedOrigins: origins };
+  }
+
+  private async update(workspaceId: string, changes: Record<string, string>): Promise<void> {
+    const existing = (await this.integrationService.getCredentials(workspaceId, 'website_tracking')) ?? {};
+    await this.integrationService.setCredentials(workspaceId, 'website_tracking', { ...existing, ...changes });
   }
 }

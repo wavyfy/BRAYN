@@ -80,6 +80,23 @@ export const envSchema = z.object({
   RATE_LIMIT_DEFAULT_MAX: z.coerce.number().int().positive().default(120),
   RATE_LIMIT_AI_MAX: z.coerce.number().int().positive().default(10),
   RATE_LIMIT_PUBLIC_MAX: z.coerce.number().int().positive().default(20),
+  // Website-event intake (`@SkipRateLimit()` — its own limits, see
+  // WebsiteEventIngestService): per caller IP across all workspaces, and
+  // per workspace once the write key is verified. Same window as above.
+  WEBSITE_EVENT_RATE_LIMIT_IP_MAX: z.coerce.number().int().positive().default(120),
+  WEBSITE_EVENT_RATE_LIMIT_WORKSPACE_MAX: z.coerce.number().int().positive().default(6000),
+
+  // Number of reverse-proxy hops in front of this API whose
+  // X-Forwarded-For entries are trusted (Fastify `trustProxy` as a hop
+  // count). `request.ip` becomes the entry that many hops in from the
+  // right, so anything a client puts on the left of the header is ignored
+  // — never "trust everything" (Render only appends to a client-supplied
+  // X-Forwarded-For). 0 = trust none: `request.ip` is the socket peer,
+  // which behind Render is the proxy itself, so every IP-keyed rate limit
+  // collapses into one bucket — hence the production startup warning. Set
+  // it to the `forwardedHops` value the HTTP log shows for a plain request
+  // (no client-set X-Forwarded-For) to the deployed service.
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
 
   // Explicit deployment identifier for rate-limit Redis key namespacing
   // (doc19 Phase 17 hardening) — deliberately NOT NODE_ENV: Render can run
