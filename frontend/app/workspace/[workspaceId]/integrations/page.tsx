@@ -7,6 +7,7 @@ import { StatusDot, type BadgeTone } from '@/components/ui/status-badge';
 import { ConnectForm } from './connect-form';
 import { ShopifyConnect } from './shopify-connect';
 import { IntegrationActions, type ImportRun } from './integration-actions';
+import { WebsiteTrackingConnect, WebsiteTrackingSetup, type WebsiteTrackingSettings } from './website-tracking-setup';
 
 type Integration = {
   id: string;
@@ -39,6 +40,7 @@ function ProviderCard({
   latestImport,
   canManage,
   connect,
+  manage,
 }: {
   workspaceId: string;
   provider: string;
@@ -48,6 +50,8 @@ function ProviderCard({
   latestImport: ImportRun | null;
   canManage: boolean;
   connect: ReactNode;
+  /** Replaces the default import/sync controls for a provider that has none (Website Tracking). */
+  manage?: ReactNode;
 }) {
   const isLive = integration && integration.status !== 'disconnected';
   const status = integration?.status ?? 'disconnected';
@@ -71,6 +75,8 @@ function ProviderCard({
       <div className="flex-1 border-t border-border bg-subtle/40 px-5 py-4">
         {!canManage ? (
           <p className="text-[13px] text-muted-foreground">{isLive ? `Connected. Ask an owner or admin to manage this integration.` : 'Not connected.'}</p>
+        ) : isLive && manage ? (
+          manage
         ) : isLive ? (
           <IntegrationActions
             workspaceId={workspaceId}
@@ -126,15 +132,19 @@ export default async function IntegrationsPage({
 
   const shopify = integrations.find((i) => i.provider === 'shopify') ?? null;
   const woocommerce = integrations.find((i) => i.provider === 'woocommerce') ?? null;
+  const websiteTracking = integrations.find((i) => i.provider === 'website_tracking') ?? null;
+  const websiteTrackingLive = websiteTracking !== null && websiteTracking.status !== 'disconnected';
 
-  const [shopifyImport, woocommerceImport] = await Promise.all([
+  const [shopifyImport, woocommerceImport, websiteTrackingSettings] = await Promise.all([
     shopify && shopify.status !== 'disconnected' ? apiFetch(`/api/v1/workspaces/${workspaceId}/integrations/shopify/import`) : null,
     woocommerce && woocommerce.status !== 'disconnected' ? apiFetch(`/api/v1/workspaces/${workspaceId}/integrations/woocommerce/import`) : null,
+    // Settings are owner/admin-only on the backend, same as the controls that use them.
+    websiteTrackingLive && canManage ? (apiFetch(`/api/v1/workspaces/${workspaceId}/website-tracking/settings`) as Promise<WebsiteTrackingSettings>) : null,
   ]);
 
   return (
     <main>
-      <PageHeader title="Integrations" description="The stores BRAYN imports customers, orders and products from." />
+      <PageHeader title="Integrations" description="The stores BRAYN imports customers, orders and products from, and BRAYN's own website tracking." />
 
       <PageBody className="space-y-4">
         {searchParams.shopify === 'connected' && (
@@ -180,6 +190,18 @@ export default async function IntegrationsPage({
               ]}
             />
           }
+        />
+
+        <ProviderCard
+          workspaceId={workspaceId}
+          provider="website_tracking"
+          providerLabel="Website tracking"
+          description="Storefront page views and activity, captured by BRAYN's own script."
+          integration={websiteTracking}
+          latestImport={null}
+          canManage={canManage}
+          connect={<WebsiteTrackingConnect workspaceId={workspaceId} />}
+          manage={websiteTrackingSettings && <WebsiteTrackingSetup workspaceId={workspaceId} settings={websiteTrackingSettings} />}
         />
       </div>
       </PageBody>
