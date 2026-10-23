@@ -105,9 +105,14 @@ describe('IdentityResolutionService', () => {
       expect(setCalls[1][0]).toMatchObject({ canonicalCustomerId: 'canon_1' });
     });
 
-    it('flags a pending duplicate when the resolved row shares a phone with a different, already-linked canonical customer', async () => {
-      const select = vi.fn(() => makeSelectChain([{ id: 'cc_2', email: 'b@example.com', phone: '555-1234' }]));
-      const selectDistinct = vi.fn(() => makeSelectChain([{ canonicalCustomerId: 'canon_1' }]));
+    it('flags a pending duplicate when the resolved row shares an E.164 phone with a different, already-linked canonical customer', async () => {
+      const select = vi.fn(() => makeSelectChain([{ id: 'cc_2', email: 'b@example.com', phoneE164: '+14155552671', canonicalCustomerId: null }]));
+      const selectDistinct = vi.fn(() =>
+        makeSelectChain([
+          { phoneE164: '+14155552671', canonicalCustomerId: 'canon_1' },
+          { phoneE164: '+14155552671', canonicalCustomerId: 'canon_2' },
+        ]),
+      );
       const insertChain = makeInsertChain({ id: 'canon_2' });
       const duplicateInsertChain = makeDuplicateInsertChain();
       const updateChain = makeUpdateChain();
@@ -119,12 +124,52 @@ describe('IdentityResolutionService', () => {
 
       expect(selectDistinct).toHaveBeenCalledTimes(1);
       expect(duplicateInsertChain.values).toHaveBeenCalledWith([
-        { workspaceId: 'ws_1', canonicalCustomerAId: 'canon_1', canonicalCustomerBId: 'canon_2', matchedSignal: 'phone', matchedValue: '555-1234' },
+        { workspaceId: 'ws_1', canonicalCustomerAId: 'canon_1', canonicalCustomerBId: 'canon_2', matchedSignal: 'phone', matchedValue: '+14155552671' },
       ]);
     });
 
-    it('does not check for phone duplicates when the row has no phone', async () => {
-      const select = vi.fn(() => makeSelectChain([{ id: 'cc_1', email: 'a@example.com', phone: null }]));
+    it('checks phone duplicates for an already-linked row too (phone changed on a later sync), without re-resolving it', async () => {
+      const select = vi.fn(() => makeSelectChain([{ id: 'cc_2', email: 'b@example.com', phoneE164: '+14155552671', canonicalCustomerId: 'canon_2' }]));
+      const selectDistinct = vi.fn(() =>
+        makeSelectChain([
+          { phoneE164: '+14155552671', canonicalCustomerId: 'canon_2' },
+          { phoneE164: '+14155552671', canonicalCustomerId: 'canon_1' },
+        ]),
+      );
+      const duplicateInsertChain = makeDuplicateInsertChain();
+      const insert = vi.fn(() => duplicateInsertChain);
+      const update = vi.fn();
+      const client = { select, selectDistinct, insert, update };
+      const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
+
+      await service.resolveMany('ws_1', 'shopify', ['2']);
+
+      expect(update).not.toHaveBeenCalled();
+      expect(insert).toHaveBeenCalledTimes(1);
+      expect(duplicateInsertChain.values).toHaveBeenCalledWith([
+        { workspaceId: 'ws_1', canonicalCustomerAId: 'canon_1', canonicalCustomerBId: 'canon_2', matchedSignal: 'phone', matchedValue: '+14155552671' },
+      ]);
+    });
+
+    it('never pairs a canonical customer with itself (two source rows of the same customer sharing a phone)', async () => {
+      const select = vi.fn(() =>
+        makeSelectChain([
+          { id: 'cc_1', email: 'a@example.com', phoneE164: '+14155552671', canonicalCustomerId: 'canon_1' },
+          { id: 'cc_2', email: 'a@example.com', phoneE164: '+14155552671', canonicalCustomerId: 'canon_1' },
+        ]),
+      );
+      const selectDistinct = vi.fn(() => makeSelectChain([{ phoneE164: '+14155552671', canonicalCustomerId: 'canon_1' }]));
+      const insert = vi.fn();
+      const client = { select, selectDistinct, insert, update: vi.fn() };
+      const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
+
+      await service.resolveMany('ws_1', 'shopify', ['1', '2']);
+
+      expect(insert).not.toHaveBeenCalled();
+    });
+
+    it('does not check for phone duplicates when the row has no (normalizable) phone', async () => {
+      const select = vi.fn(() => makeSelectChain([{ id: 'cc_1', email: 'a@example.com', phoneE164: null }]));
       const selectDistinct = vi.fn();
       const insertChain = makeInsertChain({ id: 'canon_1' });
       const client = { select, selectDistinct, insert: vi.fn(() => insertChain), update: vi.fn(() => makeUpdateChain()) };
@@ -136,7 +181,7 @@ describe('IdentityResolutionService', () => {
     });
 
     it('does not flag a duplicate when no other canonical customer shares the phone', async () => {
-      const select = vi.fn(() => makeSelectChain([{ id: 'cc_1', email: 'a@example.com', phone: '555-1234' }]));
+      const select = vi.fn(() => makeSelectChain([{ id: 'cc_1', email: 'a@example.com', phoneE164: '+14155552671' }]));
       const selectDistinct = vi.fn(() => makeSelectChain([]));
       const insertChain = makeInsertChain({ id: 'canon_1' });
       const insert = vi.fn().mockReturnValueOnce(insertChain);

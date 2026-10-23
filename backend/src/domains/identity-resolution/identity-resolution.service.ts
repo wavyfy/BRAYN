@@ -1,11 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull } from 'drizzle-orm';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { canonicalCustomerDuplicates } from '../../database/schema/canonical-customer-duplicates';
 import { websiteVisitors } from '../../database/schema/website-visitors';
 import { DatabaseService } from '../../database/database.service';
 import type { IntegrationProvider } from '../integration/dto/connect-integration.schema';
+
+const DUPLICATE_INSERT_CHUNK = 1000;
 
 /**
  * Links `commerce_customers` rows to a canonical customer identity (doc 09
@@ -26,8 +28,13 @@ import type { IntegrationProvider } from '../integration/dto/connect-integration
  * "Conflicting identity signals require explicit handling", not solved
  * here) — instead, a shared phone across two *different* canonical
  * customers is flagged as a pending duplicate candidate for a human to
- * review. Confidence evaluation, safe merge, and conflict handling stay
- * out of scope; so does identity history/audit.
+ * review. Matching uses `commerce_customers.phoneE164` (E.164, recomputed
+ * by CustomerService on every upsert), never the raw provider `phone`; a
+ * number with no country code normalizes to null and is never matched.
+ * Detection runs for every row in the batch — already-linked ones too —
+ * so a phone that changes on a later sync is still checked. Confidence
+ * evaluation, safe merge, and conflict handling stay out of scope; so
+ * does identity history/audit.
  *
  * Anonymous → known linking (doc09/doc20 — Website Tracking Identity
  * Linking, Part 3): `resolveWebsiteVisitor()` links a `website_visitors`
@@ -39,9 +46,6 @@ import type { IntegrationProvider } from '../integration/dto/connect-integration
  * — if a customer's email later changes, the existing link isn't
  * re-evaluated. Add re-resolution-on-email-change if that turns out to
  * matter in practice; today it would need merge logic this part doesn't have.
- * ponytail: phone matching is an exact string match on whatever the
- * provider sent — no E.164/format normalization. Add real phone
- * normalization if formatting differences turn out to hide real matches.
  */
 @Injectable()
 export class IdentityResolutionService {
@@ -49,37 +53,49 @@ export class IdentityResolutionService {
 
   /**
    * Resolves every not-yet-linked row among `externalIds` for this
-   * workspace/provider. Safe to call repeatedly with the same ids — an
-   * already-linked row is simply skipped (doc 20 Idempotency).
+   * workspace/provider, then runs phone duplicate detection for every row
+   * in the batch. Safe to call repeatedly with the same ids — an
+   * already-linked row keeps its link, and re-flagging an already-recorded
+   * pair is a no-op (doc 20 Idempotency).
    */
   async resolveMany(workspaceId: string, provider: IntegrationProvider, externalIds: string[]): Promise<void> {
     if (externalIds.length === 0) {
       return;
     }
 
-    const unresolved = await this.database.client
-      .select({ id: commerceCustomers.id, email: commerceCustomers.email, phone: commerceCustomers.phone })
+    const rows = await this.database.client
+      .select({
+        id: commerceCustomers.id,
+        email: commerceCustomers.email,
+        phoneE164: commerceCustomers.phoneE164,
+        canonicalCustomerId: commerceCustomers.canonicalCustomerId,
+      })
       .from(commerceCustomers)
       .where(
         and(
           eq(commerceCustomers.workspaceId, workspaceId),
           eq(commerceCustomers.provider, provider),
           inArray(commerceCustomers.externalId, externalIds),
-          isNull(commerceCustomers.canonicalCustomerId),
         ),
       );
 
-    for (const row of unresolved) {
-      const canonicalCustomerId = await this.resolveOne(workspaceId, row.email);
-      await this.database.client
-        .update(commerceCustomers)
-        .set({ canonicalCustomerId, updatedAt: new Date() })
-        .where(eq(commerceCustomers.id, row.id));
+    const withPhone: { canonicalCustomerId: string; phoneE164: string }[] = [];
+    for (const row of rows) {
+      let canonicalCustomerId = row.canonicalCustomerId;
+      if (!canonicalCustomerId) {
+        canonicalCustomerId = await this.resolveOne(workspaceId, row.email);
+        await this.database.client
+          .update(commerceCustomers)
+          .set({ canonicalCustomerId, updatedAt: new Date() })
+          .where(eq(commerceCustomers.id, row.id));
+      }
 
-      if (row.phone) {
-        await this.flagPhoneDuplicates(workspaceId, canonicalCustomerId, row.phone);
+      if (row.phoneE164) {
+        withPhone.push({ canonicalCustomerId, phoneE164: row.phoneE164 });
       }
     }
+
+    await this.flagPhoneDuplicates(workspaceId, withPhone);
   }
 
   /**
@@ -168,36 +184,47 @@ export class IdentityResolutionService {
   }
 
   /**
-   * Finds every *other* canonical customer in this workspace with a
-   * source row sharing this exact phone, and records each pairing as a
-   * pending duplicate candidate. Idempotent — re-flagging an already-
-   * recorded pair just no-ops via the unique index.
+   * For each batch row, finds every *other* canonical customer in this
+   * workspace with a source row sharing its E.164 phone, and records each
+   * pairing as a pending duplicate candidate (`matchedValue` = the E.164
+   * value). One lookup for the whole batch rather than one per row.
+   * Idempotent — re-flagging an already-recorded pair just no-ops via the
+   * unique index.
    */
-  private async flagPhoneDuplicates(workspaceId: string, canonicalCustomerId: string, phone: string): Promise<void> {
-    const others = await this.database.client
-      .selectDistinct({ canonicalCustomerId: commerceCustomers.canonicalCustomerId })
+  private async flagPhoneDuplicates(workspaceId: string, rows: { canonicalCustomerId: string; phoneE164: string }[]): Promise<void> {
+    if (rows.length === 0) {
+      return;
+    }
+
+    const sharing = await this.database.client
+      .selectDistinct({ phoneE164: commerceCustomers.phoneE164, canonicalCustomerId: commerceCustomers.canonicalCustomerId })
       .from(commerceCustomers)
       .where(
         and(
           eq(commerceCustomers.workspaceId, workspaceId),
-          eq(commerceCustomers.phone, phone),
-          ne(commerceCustomers.canonicalCustomerId, canonicalCustomerId),
+          inArray(commerceCustomers.phoneE164, [...new Set(rows.map((row) => row.phoneE164))]),
+          isNotNull(commerceCustomers.canonicalCustomerId),
         ),
       );
 
-    const otherIds = [...new Set(others.map((o) => o.canonicalCustomerId).filter((id): id is string => id !== null))];
-    if (otherIds.length === 0) {
-      return;
+    const pairs = new Map<string, typeof canonicalCustomerDuplicates.$inferInsert>();
+    for (const row of rows) {
+      for (const other of sharing) {
+        if (other.phoneE164 !== row.phoneE164 || !other.canonicalCustomerId || other.canonicalCustomerId === row.canonicalCustomerId) {
+          continue;
+        }
+        const [a, b] = [row.canonicalCustomerId, other.canonicalCustomerId].sort();
+        pairs.set(`${a}:${b}`, { workspaceId, canonicalCustomerAId: a, canonicalCustomerBId: b, matchedSignal: 'phone', matchedValue: row.phoneE164 });
+      }
     }
 
-    await this.database.client
-      .insert(canonicalCustomerDuplicates)
-      .values(
-        otherIds.map((otherId) => {
-          const [a, b] = [canonicalCustomerId, otherId].sort();
-          return { workspaceId, canonicalCustomerAId: a, canonicalCustomerBId: b, matchedSignal: 'phone' as const, matchedValue: phone };
-        }),
-      )
-      .onConflictDoNothing();
+    // Chunked: one phone shared by many customers (e.g. a store's own number) can yield thousands of pairs, past Postgres' 65,535 bind-parameter limit in one insert.
+    const values = [...pairs.values()];
+    for (let i = 0; i < values.length; i += DUPLICATE_INSERT_CHUNK) {
+      await this.database.client
+        .insert(canonicalCustomerDuplicates)
+        .values(values.slice(i, i + DUPLICATE_INSERT_CHUNK))
+        .onConflictDoNothing();
+    }
   }
 }

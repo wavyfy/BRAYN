@@ -26,7 +26,12 @@ export const canonicalCustomerDuplicates = pgTable(
       .references(() => canonicalCustomers.id),
     /** The deterministic signal that flagged this pair (only "phone" today). */
     matchedSignal: text('matched_signal', { enum: ['phone'] }).notNull(),
-    /** The shared value itself (e.g. the phone number) — lets a reviewer see *why* without re-deriving it. */
+    /**
+     * The shared value itself — lets a reviewer see *why* without
+     * re-deriving it. For "phone", the E.164 value (`commerce_customers.
+     * phoneE164`); rows flagged before E.164 normalization keep the raw
+     * provider value they were recorded with.
+     */
     matchedValue: text('matched_value').notNull(),
     status: text('status', { enum: ['pending', 'dismissed'] })
       .notNull()

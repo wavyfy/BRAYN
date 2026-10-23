@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { index, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { id, timestamps, workspaceId } from './columns';
 import { integrations } from './integrations';
 import { canonicalCustomers } from './canonical-customers';
@@ -34,7 +34,15 @@ export const commerceCustomers = pgTable(
     email: text('email'),
     firstName: text('first_name'),
     lastName: text('last_name'),
+    /** Raw provider value, kept as sent (doc 09 — "Original source identifiers must be preserved"). */
     phone: text('phone'),
+    /**
+     * `phone` normalized to E.164 (`normalizePhoneE164()`), recomputed on
+     * every upsert; null when the raw value has no country code or isn't a
+     * phone number. The value IdentityResolutionService's phone duplicate
+     * detection matches on — never the raw `phone`.
+     */
+    phoneE164: text('phone_e164'),
     /** Provider's own last-modified timestamp — lets a re-import or webhook update tell "changed" from "already have this". */
     sourceUpdatedAt: timestamp('source_updated_at', { withTimezone: true }),
     /**
@@ -54,5 +62,6 @@ export const commerceCustomers = pgTable(
       table.provider,
       table.externalId,
     ),
+    index('commerce_customers_workspace_phone_e164_idx').on(table.workspaceId, table.phoneE164),
   ],
 );

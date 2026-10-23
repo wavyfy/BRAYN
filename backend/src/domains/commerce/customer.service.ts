@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { DatabaseService } from '../../database/database.service';
+import { normalizePhoneE164 } from '../../common/identity/phone';
 import type { IntegrationProvider } from '../integration/dto/connect-integration.schema';
 
 /** A provider's customer record, already mapped into BRAYN's shape (doc 06 — Normalization output). */
@@ -48,6 +49,7 @@ export class CustomerService {
           integrationId,
           provider,
           ...customer,
+          phoneE164: normalizePhoneE164(customer.phone),
         })),
       )
       .onConflictDoUpdate({
@@ -57,6 +59,7 @@ export class CustomerService {
           firstName: sql`excluded.first_name`,
           lastName: sql`excluded.last_name`,
           phone: sql`excluded.phone`,
+          phoneE164: sql`excluded.phone_e164`,
           sourceUpdatedAt: sql`excluded.source_updated_at`,
           sourceCreatedAt: sql`excluded.source_created_at`,
           updatedAt: new Date(),
