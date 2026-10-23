@@ -13,6 +13,11 @@ class ThrowingController {
     throw new NotFoundError('Widget not found.');
   }
 
+  @Get('app-error-details')
+  throwAppErrorWithDetails() {
+    throw new NotFoundError('Widget moved.', { movedTo: 'w_2' });
+  }
+
   @Get('http-error')
   throwHttpError() {
     throw new BadRequestException('Name is required.');
@@ -59,6 +64,14 @@ describe('AllExceptionsFilter (e2e)', () => {
     expect(body.error.code).toBe('NOT_FOUND');
     expect(body.error.message).toBe('Widget not found.');
     expect(typeof body.error.requestId).toBe('string');
+    expect(body.error).not.toHaveProperty('details');
+  });
+
+  it('includes an AppError’s details when it carries them', async () => {
+    const res = await app.inject({ method: 'GET', url: '/test/app-error-details' });
+
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error).toMatchObject({ code: 'NOT_FOUND', message: 'Widget moved.', details: { movedTo: 'w_2' } });
   });
 
   it('formats a Nest built-in HttpException via status mapping', async () => {

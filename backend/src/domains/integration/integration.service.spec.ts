@@ -11,6 +11,7 @@ import type { EventBus } from '../../common/events/event-bus.service';
 import { and, eq } from 'drizzle-orm';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
+import { identityMergeHistory } from '../../database/schema/identity-merge-history';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
 import { integrations } from '../../database/schema/integrations';
 import { commerceOrders } from '../../database/schema/commerce-orders';
@@ -968,6 +969,7 @@ describe('IntegrationService', () => {
         [{ id: 'cc_1', canonicalCustomerId: 'canon_1' }], // customerRow
         [], // orderRows — no orders for this customer
         [{ count: 0 }], // canonical orphan check — nothing else references it
+        [], // customers merged into it — none
         [], // conversationRows
       ]);
       const service = makeService(tx);
@@ -977,6 +979,27 @@ describe('IntegrationService', () => {
       expect(result).toEqual({ found: true, canonicalCustomerRemoved: true });
       expect(tx.deleteCalls).toContain(commerceCustomers);
       expect(tx.deleteCalls).toContain(canonicalCustomers);
+      expect(tx.deleteCalls).toContain(identityMergeHistory);
+    });
+
+    it('also erases customers merged into the orphaned one (same person), before the survivor itself', async () => {
+      const tx = makeTx([
+        [{ id: 'cc_1', canonicalCustomerId: 'canon_1' }], // customerRow
+        [], // orderRows
+        [{ count: 0 }], // survivor orphan check
+        [{ id: 'canon_merged' }], // customers merged into canon_1
+        [{ count: 0 }], // merged customer's own orphan check (it has no source rows after a merge)
+        [], // customers merged into canon_merged — none
+        [], // merged customer's conversationRows
+        [], // survivor's conversationRows
+      ]);
+      const service = makeService(tx);
+
+      const result = await service.purgeCommerceCustomer('ws_1', 'int_1', 'shopify_customer_1');
+
+      expect(result).toEqual({ found: true, canonicalCustomerRemoved: true });
+      expect(tx.deleteCalls.filter((table) => table === canonicalCustomers)).toHaveLength(2);
+      expect(tx.deleteCalls.filter((table) => table === identityMergeHistory)).toHaveLength(2);
     });
 
     it('does not touch the canonical-customer cascade when the commerce customer has no canonical link yet', async () => {

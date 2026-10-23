@@ -24,7 +24,7 @@ export interface RevenueOpportunityCreatedPayload {
 const WIN_BACK_THRESHOLD_DAYS = 120;
 const VIP_ORDER_THRESHOLD = 10;
 /** Terminal lifecycle statuses (doc10) — a new candidate is only skipped as a duplicate against a still-open one. */
-const TERMINAL_STATUSES = ['converted', 'expired', 'ignored'] as const;
+export const TERMINAL_STATUSES = ['converted', 'expired', 'ignored'] as const;
 
 /**
  * Approved thresholds for cross_sell/bundle/upsell (Phase 7 product-affinity

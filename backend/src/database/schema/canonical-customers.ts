@@ -1,4 +1,4 @@
-import { pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from 'drizzle-orm/pg-core';
 import { id, timestamps, workspaceId } from './columns';
 
 /**
@@ -20,6 +20,17 @@ export const canonicalCustomers = pgTable(
     workspaceId: workspaceId(),
     /** Trimmed + lowercased for case-insensitive matching; null when no source record has a deterministic email signal yet. */
     primaryEmail: text('primary_email'),
+    /**
+     * Set when an owner/admin merged this customer into another (doc 09
+     * "Safe merge") — the row is kept, never deleted, so its identifiers
+     * and history survive. Always points at a *surviving* customer (a
+     * later merge of that survivor re-points every row merged into it), so
+     * resolving through it is one hop. Resolution that lands on this row —
+     * e.g. its `primaryEmail` seen again on a new source record — follows
+     * it to the survivor instead of linking to (or re-creating) this one.
+     */
+    mergedIntoId: uuid('merged_into_id').references((): AnyPgColumn => canonicalCustomers.id),
+    mergedAt: timestamp('merged_at', { withTimezone: true }),
     ...timestamps(),
   },
   (table) => [

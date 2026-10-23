@@ -11,6 +11,8 @@ export abstract class AppError extends HttpException {
     public readonly code: ErrorCode,
     message: string,
     status: HttpStatus,
+    /** Optional non-sensitive, machine-readable context sent as `error.details` (e.g. `{ mergedIntoId }`). */
+    public readonly details?: Record<string, unknown>,
   ) {
     super(message, status);
   }
@@ -35,8 +37,8 @@ export class UnauthorizedError extends AppError {
 }
 
 export class NotFoundError extends AppError {
-  constructor(message = 'The requested resource was not found.') {
-    super(ErrorCode.NOT_FOUND, message, HttpStatus.NOT_FOUND);
+  constructor(message = 'The requested resource was not found.', details?: Record<string, unknown>) {
+    super(ErrorCode.NOT_FOUND, message, HttpStatus.NOT_FOUND, details);
   }
 }
 
