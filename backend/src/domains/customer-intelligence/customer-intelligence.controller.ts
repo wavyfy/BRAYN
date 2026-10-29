@@ -1,8 +1,16 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { ZodValidationPipe } from '../../common/api/zod-validation.pipe';
 import { WorkspaceMembershipGuard } from '../workspace/workspace-membership.guard';
 import { RequireWorkspaceRole } from '../workspace/require-workspace-role.decorator';
 import { LogsProtectedAccess } from '../../common/access-log/protected-data-access.decorator';
 import { CustomerIntelligenceService } from './customer-intelligence.service';
+import { CustomerMemoryService } from './customer-memory.service';
+import {
+  createMemoryEntrySchema,
+  updateMemoryEntrySchema,
+  type CreateMemoryEntryInput,
+  type UpdateMemoryEntryInput,
+} from './dto/memory-entry.schema';
 
 /**
  * Reuses the workspace domain's authorization boundary rather than
@@ -18,7 +26,10 @@ import { CustomerIntelligenceService } from './customer-intelligence.service';
 @UseGuards(WorkspaceMembershipGuard)
 @RequireWorkspaceRole('owner', 'admin')
 export class CustomerIntelligenceController {
-  constructor(private readonly customerIntelligenceService: CustomerIntelligenceService) {}
+  constructor(
+    private readonly customerIntelligenceService: CustomerIntelligenceService,
+    private readonly customerMemoryService: CustomerMemoryService,
+  ) {}
 
   @Get()
   @LogsProtectedAccess('customer')
@@ -45,5 +56,43 @@ export class CustomerIntelligenceController {
   @LogsProtectedAccess('customer_activity', 'canonicalCustomerId')
   async getActivity(@Param('workspaceId') workspaceId: string, @Param('canonicalCustomerId') canonicalCustomerId: string) {
     return this.customerIntelligenceService.getActivity(workspaceId, canonicalCustomerId);
+  }
+
+  @Get(':canonicalCustomerId/memory')
+  @LogsProtectedAccess('customer', 'canonicalCustomerId')
+  async listMemory(@Param('workspaceId') workspaceId: string, @Param('canonicalCustomerId') canonicalCustomerId: string) {
+    return this.customerMemoryService.list(workspaceId, canonicalCustomerId);
+  }
+
+  @Post(':canonicalCustomerId/memory')
+  @LogsProtectedAccess('customer', 'canonicalCustomerId')
+  async createMemory(
+    @Param('workspaceId') workspaceId: string,
+    @Param('canonicalCustomerId') canonicalCustomerId: string,
+    @Body(new ZodValidationPipe(createMemoryEntrySchema)) body: CreateMemoryEntryInput,
+  ) {
+    return this.customerMemoryService.create(workspaceId, canonicalCustomerId, body);
+  }
+
+  @Patch(':canonicalCustomerId/memory/:memoryEntryId')
+  @LogsProtectedAccess('customer', 'canonicalCustomerId')
+  async updateMemory(
+    @Param('workspaceId') workspaceId: string,
+    @Param('canonicalCustomerId') canonicalCustomerId: string,
+    @Param('memoryEntryId') memoryEntryId: string,
+    @Body(new ZodValidationPipe(updateMemoryEntrySchema)) body: UpdateMemoryEntryInput,
+  ) {
+    return this.customerMemoryService.update(workspaceId, canonicalCustomerId, memoryEntryId, body);
+  }
+
+  @Post(':canonicalCustomerId/memory/:memoryEntryId/archive')
+  @HttpCode(HttpStatus.OK)
+  @LogsProtectedAccess('customer', 'canonicalCustomerId')
+  async archiveMemory(
+    @Param('workspaceId') workspaceId: string,
+    @Param('canonicalCustomerId') canonicalCustomerId: string,
+    @Param('memoryEntryId') memoryEntryId: string,
+  ) {
+    return this.customerMemoryService.archive(workspaceId, canonicalCustomerId, memoryEntryId);
   }
 }

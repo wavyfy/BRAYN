@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { WorkspaceModule } from '../workspace/workspace.module';
 import { CustomerIntelligenceService } from './customer-intelligence.service';
 import { CustomerIntelligenceController } from './customer-intelligence.controller';
+import { CustomerMemoryService } from './customer-memory.service';
 
 /**
  * Owns the Unified Customer Intelligence Record: customer context, profile,
@@ -19,7 +20,8 @@ import { CustomerIntelligenceController } from './customer-intelligence.controll
 @Module({
   imports: [WorkspaceModule],
   controllers: [CustomerIntelligenceController],
-  providers: [CustomerIntelligenceService],
+  // CustomerMemoryService is deliberately not exported: nothing outside this domain (AI agents included) reads memory yet.
+  providers: [CustomerIntelligenceService, CustomerMemoryService],
   exports: [CustomerIntelligenceService],
 })
 export class CustomerIntelligenceModule {}

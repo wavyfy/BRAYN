@@ -20,6 +20,8 @@ export interface MergeSnapshotCustomer {
   createdAt: string;
   sourceRecords: MergeSnapshotSourceRecord[];
   websiteVisitorIds: string[];
+  /** `customer_memory_entries` ids this customer owned before the merge (the merged side's are re-pointed to the survivor). Absent on merges recorded before customer memory existed. */
+  memoryEntryIds?: string[];
 }
 
 export interface MergeSnapshot {
