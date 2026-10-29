@@ -13,6 +13,7 @@ import { AskBraynCard } from './ask-brayn-card';
 import { ActivityTimeline, type ActivityEntry } from './activity-timeline';
 import { RiskEngagement, type CustomerHealthState } from './risk-engagement';
 import { RevenueOpportunities, type RevenueOpportunity, type Recommendation } from './revenue-opportunities';
+import { CustomerMemory, type MemoryEntry } from './customer-memory';
 
 type CustomerRecord = {
   canonicalCustomerId: string;
@@ -94,14 +95,13 @@ export default async function CustomerDetailPage({
   }
 
   // Health is calculated on demand — "not yet calculated" (404) is an expected empty state, not a page-level error.
-  let health: CustomerHealthState | null = null;
-  try {
-    health = await apiFetch(`${base}/health`);
-  } catch (error) {
-    if (!(error instanceof ApiError && error.status === 404)) {
+  const [health, memoryResult] = await Promise.all([
+    apiFetch(`${base}/health`).catch((error: unknown): null => {
+      if (error instanceof ApiError && error.status === 404) return null;
       throw error;
-    }
-  }
+    }) as Promise<CustomerHealthState | null>,
+    fetchSection<MemoryEntry[]>(`${base}/memory`),
+  ]);
 
   const opportunities = opportunitiesResult.ok ? opportunitiesResult.data : [];
   const recommendations = recommendationsResult.ok ? recommendationsResult.data : [];
@@ -204,6 +204,17 @@ export default async function CustomerDetailPage({
             <SectionHeader title="Risk & engagement" action={<RecalculateHealthButton workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} />} />
             <div className="mt-3 rounded-xl border border-border bg-surface shadow-panel p-4">
               <RiskEngagement health={health} />
+            </div>
+          </section>
+
+          <section>
+            <SectionHeader title="Memory" count={memoryResult.ok && memoryResult.data.length > 0 ? memoryResult.data.length : undefined} />
+            <div className="mt-3">
+              {memoryResult.ok ? (
+                <CustomerMemory workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} entries={memoryResult.data} />
+              ) : (
+                <ErrorText className="rounded-xl border border-danger/20 bg-danger/[0.03] px-4 py-3">Memory could not be loaded: {memoryResult.message}</ErrorText>
+              )}
             </div>
           </section>
 

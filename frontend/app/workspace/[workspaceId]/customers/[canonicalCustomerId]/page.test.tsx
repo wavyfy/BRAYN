@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { describe, expect, it, vi, afterEach } from 'vitest';
+import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 
 const { apiFetch } = vi.hoisted(() => ({ apiFetch: vi.fn() }));
@@ -11,6 +11,11 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 import { ApiError } from '@/lib/api';
 import CustomerDetailPage from './page';
+
+// The memory section is fetched after the positional mocks each test queues; default it to "no notes".
+beforeEach(() => {
+  apiFetch.mockResolvedValue([]);
+});
 
 type TestCustomer = {
   canonicalCustomerId: string;
@@ -321,5 +326,39 @@ describe('CustomerDetailPage — Revenue opportunities & risk (Phase 6)', () => 
     expect(screen.getByText('82/100')).toBeTruthy();
     expect(screen.getByText('healthy')).toBeTruthy();
     expect(screen.queryByText(/Trend:/)).toBeNull();
+  });
+});
+
+describe('CustomerDetailPage — Customer memory (Slice 4.1)', () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it('fetches the memory endpoint and renders each note with its provenance', async () => {
+    const page = renderPage(baseCustomer);
+    apiFetch.mockResolvedValueOnce([
+      { id: 'm1', content: 'Prefers weekend delivery', provenance: 'merchant_provided', createdAt: '2026-01-05T10:00:00.000Z', updatedAt: '2026-01-05T10:00:00.000Z' },
+    ]);
+    render(await page);
+
+    expect(apiFetch).toHaveBeenCalledWith('/api/v1/workspaces/ws_1/customers/cust_1/memory');
+    expect(screen.getByText('Memory')).toBeTruthy();
+    expect(screen.getByText('Prefers weekend delivery')).toBeTruthy();
+    expect(screen.getByText(/Added by your team/)).toBeTruthy();
+  });
+
+  it('shows an empty state when the customer has no notes', async () => {
+    render(await renderPage(baseCustomer));
+    expect(screen.getByText('No notes yet.')).toBeTruthy();
+  });
+
+  it('keeps the rest of the page and shows an inline error when memory fails to load', async () => {
+    const page = renderPage(baseCustomer);
+    apiFetch.mockRejectedValueOnce(new ApiError(500, 'INTERNAL', 'Memory unavailable.'));
+    render(await page);
+
+    expect(screen.getByText('Memory could not be loaded: Memory unavailable.')).toBeTruthy();
+    expect(screen.getByText('Activity')).toBeTruthy();
   });
 });

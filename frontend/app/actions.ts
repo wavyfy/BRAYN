@@ -162,3 +162,23 @@ export async function approveAiActionRequest(workspaceId: string, requestId: str
 export async function denyAiActionRequest(workspaceId: string, requestId: string) {
   return apiFetch(`/api/v1/workspaces/${workspaceId}/ai-actions/${requestId}/deny`, { method: 'POST' });
 }
+
+export async function createCustomerMemory(workspaceId: string, canonicalCustomerId: string, content: string) {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/customers/${canonicalCustomerId}/memory`, {
+    method: 'POST',
+    body: JSON.stringify({ content }),
+  });
+}
+
+export async function updateCustomerMemory(workspaceId: string, canonicalCustomerId: string, memoryEntryId: string, content: string) {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/customers/${canonicalCustomerId}/memory/${memoryEntryId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ content }),
+  });
+}
+
+export async function archiveCustomerMemory(workspaceId: string, canonicalCustomerId: string, memoryEntryId: string) {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/customers/${canonicalCustomerId}/memory/${memoryEntryId}/archive`, {
+    method: 'POST',
+  });
+}

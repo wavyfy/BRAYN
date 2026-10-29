@@ -401,7 +401,8 @@ export class CustomerIntelligenceService {
     };
   }
 
-  private async requireCanonical(
+  /** Also used by `CustomerMemoryService`, so memory follows the same unknown/other-workspace/merged 404 rules. */
+  async requireCanonical(
     workspaceId: string,
     canonicalCustomerId: string,
   ): Promise<{ id: string; primaryEmail: string | null }> {
