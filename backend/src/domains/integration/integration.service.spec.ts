@@ -12,6 +12,8 @@ import { and, eq } from 'drizzle-orm';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { identityMergeHistory } from '../../database/schema/identity-merge-history';
+import { customerMemoryEntries } from '../../database/schema/customer-memory-entries';
+import { customerMemoryEntryHistory } from '../../database/schema/customer-memory-entry-history';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
 import { integrations } from '../../database/schema/integrations';
 import { commerceOrders } from '../../database/schema/commerce-orders';
@@ -971,6 +973,7 @@ describe('IntegrationService', () => {
         [{ count: 0 }], // canonical orphan check — nothing else references it
         [], // customers merged into it — none
         [], // conversationRows
+        [{ id: 'mem_1' }], // customer memory entries
       ]);
       const service = makeService(tx);
 
@@ -980,6 +983,10 @@ describe('IntegrationService', () => {
       expect(tx.deleteCalls).toContain(commerceCustomers);
       expect(tx.deleteCalls).toContain(canonicalCustomers);
       expect(tx.deleteCalls).toContain(identityMergeHistory);
+      // Memory history before memory, both before the canonical customer (FK order).
+      const order = [customerMemoryEntryHistory, customerMemoryEntries, canonicalCustomers].map((table) => tx.deleteCalls.indexOf(table));
+      expect(order.every((index) => index >= 0)).toBe(true);
+      expect(order).toEqual([...order].sort((a, b) => a - b));
     });
 
     it('also erases customers merged into the orphaned one (same person), before the survivor itself', async () => {
@@ -991,7 +998,9 @@ describe('IntegrationService', () => {
         [{ count: 0 }], // merged customer's own orphan check (it has no source rows after a merge)
         [], // customers merged into canon_merged — none
         [], // merged customer's conversationRows
+        [], // merged customer's memory entries
         [], // survivor's conversationRows
+        [], // survivor's memory entries
       ]);
       const service = makeService(tx);
 

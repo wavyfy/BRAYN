@@ -24,6 +24,8 @@ import { recommendations } from '../../database/schema/recommendations';
 import { customerHealthStates } from '../../database/schema/customer-health-states';
 import { customerHealthStateHistory } from '../../database/schema/customer-health-state-history';
 import { automationRuns } from '../../database/schema/automation-runs';
+import { customerMemoryEntries } from '../../database/schema/customer-memory-entries';
+import { customerMemoryEntryHistory } from '../../database/schema/customer-memory-entry-history';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
 import { ConflictError, NotFoundError, ProviderError, UnauthenticatedError } from '../../common/errors/app-error';
 import {
@@ -481,6 +483,17 @@ export class IntegrationService {
       await tx.delete(conversationMessages).where(and(eq(conversationMessages.workspaceId, workspaceId), inArray(conversationMessages.conversationId, conversationIds)));
     }
     await tx.delete(conversations).where(and(eq(conversations.workspaceId, workspaceId), eq(conversations.canonicalCustomerId, canonicalCustomerId)));
+
+    // Memory and its history are customer personal data — permanently erased, history first (FK).
+    const memoryRows = await tx
+      .select({ id: customerMemoryEntries.id })
+      .from(customerMemoryEntries)
+      .where(and(eq(customerMemoryEntries.workspaceId, workspaceId), eq(customerMemoryEntries.canonicalCustomerId, canonicalCustomerId)));
+    const memoryIds = memoryRows.map((row) => row.id);
+    if (memoryIds.length > 0) {
+      await tx.delete(customerMemoryEntryHistory).where(and(eq(customerMemoryEntryHistory.workspaceId, workspaceId), inArray(customerMemoryEntryHistory.memoryEntryId, memoryIds)));
+    }
+    await tx.delete(customerMemoryEntries).where(and(eq(customerMemoryEntries.workspaceId, workspaceId), eq(customerMemoryEntries.canonicalCustomerId, canonicalCustomerId)));
 
     await tx.delete(canonicalCustomers).where(and(eq(canonicalCustomers.workspaceId, workspaceId), eq(canonicalCustomers.id, canonicalCustomerId)));
     return true;

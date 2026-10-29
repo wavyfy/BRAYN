@@ -281,6 +281,13 @@
       "when": 1792764162852,
       "tag": "0039_same_puff_adder",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1793284933633,
+      "tag": "0040_adorable_blacklash",
+      "breakpoints": true
     }
   ]
 }

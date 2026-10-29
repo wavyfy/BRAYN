@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, inArray, isNotNull, notInArray, or } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, notInArray, or, sql } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { conversations } from '../../database/schema/conversations';
 import { customerHealthStates } from '../../database/schema/customer-health-states';
+import { customerMemoryEntries } from '../../database/schema/customer-memory-entries';
 import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
 import { recommendations } from '../../database/schema/recommendations';
 import { identityMergeHistory, type MergeSnapshotCustomer } from '../../database/schema/identity-merge-history';
@@ -261,6 +262,9 @@ export class IdentityResolutionService {
    *   current health state;
    * - re-points identity links (`commerce_customers`, `website_visitors`)
    *   and `conversations` (messages untouched) to the survivor;
+   * - re-points the merged customer's `customer_memory_entries` to the
+   *   survivor (id, content, provenance, creator, timestamps kept; their
+   *   ids are in the snapshot; entry history untouched);
    * - removes the merged customer's *current* health state — every
    *   recalculation also appended it to `customer_health_state_history`,
    *   which is kept, and it's in the snapshot; the survivor is NOT
@@ -333,12 +337,17 @@ export class IdentityResolutionService {
           .select({ id: websiteVisitors.id })
           .from(websiteVisitors)
           .where(and(eq(websiteVisitors.workspaceId, workspaceId), eq(websiteVisitors.canonicalCustomerId, customer.id)));
+        const memoryEntries = await tx
+          .select({ id: customerMemoryEntries.id })
+          .from(customerMemoryEntries)
+          .where(and(eq(customerMemoryEntries.workspaceId, workspaceId), eq(customerMemoryEntries.canonicalCustomerId, customer.id)));
         return {
           canonicalCustomerId: customer.id,
           primaryEmail: customer.primaryEmail,
           createdAt: customer.createdAt.toISOString(),
           sourceRecords,
           websiteVisitorIds: visitors.map((visitor) => visitor.id),
+          memoryEntryIds: memoryEntries.map((entry) => entry.id),
         };
       };
       const [mergedHealthState] = await tx
@@ -368,6 +377,11 @@ export class IdentityResolutionService {
       await tx.update(commerceCustomers).set({ canonicalCustomerId: surviving.id, updatedAt: now }).where(fromMerged(commerceCustomers));
       await tx.update(websiteVisitors).set({ canonicalCustomerId: surviving.id, updatedAt: now }).where(fromMerged(websiteVisitors));
       await tx.update(conversations).set({ canonicalCustomerId: surviving.id, updatedAt: now }).where(fromMerged(conversations));
+      // Memory moves as-is (all statuses): updatedAt is pinned so it keeps meaning "content last changed", not "merged".
+      await tx
+        .update(customerMemoryEntries)
+        .set({ canonicalCustomerId: surviving.id, updatedAt: sql`${customerMemoryEntries.updatedAt}` })
+        .where(fromMerged(customerMemoryEntries));
       await tx.delete(customerHealthStates).where(fromMerged(customerHealthStates));
       await tx
         .update(revenueOpportunities)
