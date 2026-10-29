@@ -1,0 +1,2 @@
+ALTER TABLE "commerce_customers" ADD COLUMN "phone_e164" text;--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "commerce_customers_workspace_phone_e164_idx" ON "commerce_customers" USING btree ("workspace_id","phone_e164");

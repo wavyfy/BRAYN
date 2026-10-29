@@ -267,6 +267,20 @@
       "when": 1792502036653,
       "tag": "0037_complete_silver_centurion",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1792763036186,
+      "tag": "0038_flaky_magdalene",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1792764162852,
+      "tag": "0039_same_puff_adder",
+      "breakpoints": true
     }
   ]
 }

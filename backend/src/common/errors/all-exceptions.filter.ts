@@ -64,7 +64,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
         requestId,
       });
       this.send(reply, exception.getStatus(), {
-        error: { code: exception.code, message: exception.message, requestId },
+        error: { code: exception.code, message: exception.message, requestId, ...(exception.details && { details: exception.details }) },
       });
       return;
     }

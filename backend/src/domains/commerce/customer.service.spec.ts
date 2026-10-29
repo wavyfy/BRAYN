@@ -50,7 +50,7 @@ describe('CustomerService', () => {
 
       expect(result).toBe(1);
       expect(insertChain.values).toHaveBeenCalledWith([
-        { workspaceId: 'ws_1', integrationId: 'int_1', provider: 'shopify', ...customer },
+        { workspaceId: 'ws_1', integrationId: 'int_1', provider: 'shopify', ...customer, phoneE164: null },
       ]);
       const conflictArg = (insertChain.onConflictDoUpdate as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
         target: unknown[];
@@ -58,8 +58,25 @@ describe('CustomerService', () => {
       };
       expect(conflictArg.target).toHaveLength(3);
       expect(Object.keys(conflictArg.set)).toEqual(
-        expect.arrayContaining(['email', 'firstName', 'lastName', 'phone', 'sourceUpdatedAt', 'updatedAt']),
+        expect.arrayContaining(['email', 'firstName', 'lastName', 'phone', 'phoneE164', 'sourceUpdatedAt', 'updatedAt']),
       );
+    });
+
+    it('stores the raw phone unchanged alongside its E.164 form, and null E.164 for a national-only number', async () => {
+      const insertChain = makeInsertChain();
+      const client = { insert: vi.fn(() => insertChain) };
+      const service = new CustomerService({ client } as unknown as DatabaseService);
+
+      await service.upsertMany('ws_1', 'int_1', 'woocommerce', [
+        { ...customer, externalId: '1', phone: '+91 98765-43210' },
+        { ...customer, externalId: '2', phone: '9876543210' },
+      ]);
+
+      const [rows] = (insertChain.values as ReturnType<typeof vi.fn>).mock.calls[0] as [{ phone: string; phoneE164: string | null }[]];
+      expect(rows.map(({ phone, phoneE164 }) => ({ phone, phoneE164 }))).toEqual([
+        { phone: '+91 98765-43210', phoneE164: '+919876543210' },
+        { phone: '9876543210', phoneE164: null },
+      ]);
     });
   });
 

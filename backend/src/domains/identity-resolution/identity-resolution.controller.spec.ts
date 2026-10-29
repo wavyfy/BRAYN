@@ -30,6 +30,8 @@ describe('IdentityResolutionController (e2e)', () => {
 
   const identityResolutionService = {
     listDuplicates: vi.fn(async () => [{ id: 'dup_1', matchedSignal: 'phone', matchedValue: '555-1234', status: 'pending' }]),
+    dismiss: vi.fn(async (_workspaceId: string, duplicateId: string) => ({ id: duplicateId, status: 'dismissed' })),
+    merge: vi.fn(async (_workspaceId: string, _duplicateId: string, _reason?: string) => ({ survivingCanonicalCustomerId: 'canon_1', mergedCanonicalCustomerId: 'canon_2', mergeHistoryId: 'h_1' })),
   };
   const userService = {
     findOrCreateByClerkId: vi.fn(async (clerkUserId: string) => ({ id: 'user_1', clerkUserId })),
@@ -75,6 +77,8 @@ describe('IdentityResolutionController (e2e)', () => {
 
   beforeEach(() => {
     identityResolutionService.listDuplicates.mockClear();
+    identityResolutionService.dismiss.mockClear();
+    identityResolutionService.merge.mockClear();
     accessLogInsert.mockClear();
     accessLogValues.mockClear();
   });
@@ -153,5 +157,60 @@ describe('IdentityResolutionController (e2e)', () => {
     expect(identityResolutionService.listDuplicates).toHaveBeenCalled();
     const recorded = accessLogValues.mock.calls[0][0];
     expect(JSON.stringify(recorded)).not.toContain('555-1234');
+  });
+
+  for (const action of ['dismiss', 'merge'] as const) {
+    for (const role of ['marketing', 'support', 'analyst']) {
+      it(`rejects ${action} by a ${role} member with 403 before the service executes`, async () => {
+        memberWithRole(role);
+
+        const res = await app.inject({
+          method: 'POST',
+          url: `/workspaces/ws_1/identity/duplicates/dup_1/${action}`,
+          headers: { authorization: 'Bearer valid-token' },
+        });
+
+        expect(res.statusCode).toBe(403);
+        expect(identityResolutionService[action]).not.toHaveBeenCalled();
+      });
+    }
+  }
+
+  it('lets an admin dismiss a candidate', async () => {
+    memberWithRole('admin');
+
+    const res = await app.inject({ method: 'POST', url: '/workspaces/ws_1/identity/duplicates/dup_1/dismiss', headers: { authorization: 'Bearer valid-token' } });
+
+    expect(res.statusCode).toBe(200);
+    expect(identityResolutionService.dismiss).toHaveBeenCalledWith('ws_1', 'dup_1');
+  });
+
+  it('lets an owner merge a candidate with a reason', async () => {
+    memberWithRole('owner');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/identity/duplicates/dup_1/merge',
+      headers: { authorization: 'Bearer valid-token' },
+      payload: { reason: 'Same shopper, confirmed by phone' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(identityResolutionService.merge).toHaveBeenCalledWith('ws_1', 'dup_1', 'Same shopper, confirmed by phone');
+    expect(res.json()).toMatchObject({ survivingCanonicalCustomerId: 'canon_1' });
+  });
+
+  it('rejects a non-string merge reason with 400', async () => {
+    memberWithRole('owner');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/identity/duplicates/dup_1/merge',
+      headers: { authorization: 'Bearer valid-token' },
+      payload: { reason: { nested: true } },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(identityResolutionService.merge).not.toHaveBeenCalled();
   });
 });

@@ -16,6 +16,7 @@ import { commerceCollections } from '../../database/schema/commerce-collections'
 import { commerceCollectionProducts } from '../../database/schema/commerce-collection-products';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { canonicalCustomerDuplicates } from '../../database/schema/canonical-customer-duplicates';
+import { identityMergeHistory } from '../../database/schema/identity-merge-history';
 import { conversations } from '../../database/schema/conversations';
 import { conversationMessages } from '../../database/schema/conversation-messages';
 import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
@@ -436,6 +437,26 @@ export class IntegrationService {
     if (Number(remaining?.count ?? 0) > 0) {
       return false;
     }
+
+    // Customers merged into this one are the same person (an owner/admin
+    // approved it) and hold no source rows of their own after the merge —
+    // erase them too, then the merge history whose snapshots carry both
+    // sides' identifiers, before the rows those reference.
+    const mergedIn = await tx
+      .select({ id: canonicalCustomers.id })
+      .from(canonicalCustomers)
+      .where(and(eq(canonicalCustomers.workspaceId, workspaceId), eq(canonicalCustomers.mergedIntoId, canonicalCustomerId)));
+    for (const merged of mergedIn) {
+      await this.purgeCanonicalCustomerIfOrphaned(tx, workspaceId, merged.id);
+    }
+    await tx
+      .delete(identityMergeHistory)
+      .where(
+        and(
+          eq(identityMergeHistory.workspaceId, workspaceId),
+          or(eq(identityMergeHistory.survivingCanonicalCustomerId, canonicalCustomerId), eq(identityMergeHistory.mergedCanonicalCustomerId, canonicalCustomerId)),
+        ),
+      );
 
     await tx.delete(recommendations).where(and(eq(recommendations.workspaceId, workspaceId), eq(recommendations.canonicalCustomerId, canonicalCustomerId)));
     await tx.delete(revenueOpportunities).where(and(eq(revenueOpportunities.workspaceId, workspaceId), eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId)));

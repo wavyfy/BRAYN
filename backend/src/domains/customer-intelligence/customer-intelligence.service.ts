@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, desc, eq, ilike, inArray, isNotNull, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { commerceOrders, orderPlacedAt } from '../../database/schema/commerce-orders';
@@ -164,6 +164,7 @@ export class CustomerIntelligenceService {
       .where(
         and(
           eq(canonicalCustomers.workspaceId, workspaceId),
+          isNull(canonicalCustomers.mergedIntoId),
           options.search ? ilike(canonicalCustomers.primaryEmail, `%${options.search}%`) : undefined,
         ),
       )
@@ -383,7 +384,7 @@ export class CustomerIntelligenceService {
     const [customerCount] = await this.database.client
       .select({ count: sql<number>`count(*)` })
       .from(canonicalCustomers)
-      .where(eq(canonicalCustomers.workspaceId, workspaceId));
+      .where(and(eq(canonicalCustomers.workspaceId, workspaceId), isNull(canonicalCustomers.mergedIntoId)));
 
     const [orderSummary] = await this.database.client
       .select({
@@ -405,7 +406,7 @@ export class CustomerIntelligenceService {
     canonicalCustomerId: string,
   ): Promise<{ id: string; primaryEmail: string | null }> {
     const [canonical] = await this.database.client
-      .select({ id: canonicalCustomers.id, primaryEmail: canonicalCustomers.primaryEmail })
+      .select({ id: canonicalCustomers.id, primaryEmail: canonicalCustomers.primaryEmail, mergedIntoId: canonicalCustomers.mergedIntoId })
       .from(canonicalCustomers)
       .where(and(eq(canonicalCustomers.workspaceId, workspaceId), eq(canonicalCustomers.id, canonicalCustomerId)))
       .limit(1);
@@ -413,8 +414,12 @@ export class CustomerIntelligenceService {
     if (!canonical) {
       throw new NotFoundError('No customer with that id exists in this workspace.');
     }
+    // A merged customer is kept for history/audit but is no longer an active customer (doc09 "Safe merge") — point the caller at the survivor.
+    if (canonical.mergedIntoId) {
+      throw new NotFoundError('This customer was merged into another customer.', { mergedIntoId: canonical.mergedIntoId });
+    }
 
-    return canonical;
+    return { id: canonical.id, primaryEmail: canonical.primaryEmail };
   }
 
   private async getSourceRows(workspaceId: string, canonicalCustomerId: string): Promise<SourceCustomerRow[]> {
