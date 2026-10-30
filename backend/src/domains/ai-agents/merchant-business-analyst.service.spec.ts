@@ -12,6 +12,7 @@ import { RECOMMENDATION_DISMISS_ACTION } from '../ai-action-control/actions.regi
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import { RequestContext } from '../../common/logging/request-context';
 import { DatabaseService } from '../../database/database.service';
+import { CustomerContextBuilder } from '../customer-intelligence/customer-context-builder.service';
 import { ApprovalRequiredError, NotFoundError, ProviderError, UnauthorizedError } from '../../common/errors/app-error';
 import type { AiGenerateResult, AiProvider, AiToolCall } from '../ai/ai-provider.interface';
 
@@ -140,6 +141,12 @@ function makeDatabase() {
   return { database: { client: { insert } } as unknown as DatabaseService, insert, values };
 }
 
+function makeCustomerContext(block: string | null = null): CustomerContextBuilder {
+  return {
+    build: vi.fn(async () => ({ block, preferences: block ? 1 : 0, memories: 0, omitted: 0 })),
+  } as unknown as CustomerContextBuilder;
+}
+
 function makeLogger(): StructuredLoggerService {
   return { event: vi.fn() } as unknown as StructuredLoggerService;
 }
@@ -155,6 +162,7 @@ interface Deps {
   writeTools: WriteToolsService;
   database: DatabaseService;
   logger: StructuredLoggerService;
+  customerContext: CustomerContextBuilder;
 }
 
 function makeDeps(overrides: Partial<Deps> = {}): Deps {
@@ -169,6 +177,7 @@ function makeDeps(overrides: Partial<Deps> = {}): Deps {
     writeTools: makeWriteTools(),
     database: makeDatabase().database,
     logger: makeLogger(),
+    customerContext: makeCustomerContext(),
     ...overrides,
   };
 }
@@ -185,6 +194,7 @@ function makeService(deps: Deps): MerchantBusinessAnalystService {
     deps.writeTools,
     deps.database,
     deps.logger,
+    deps.customerContext,
   );
 }
 
@@ -910,5 +920,53 @@ describe('MerchantBusinessAnalystService — controlled read tools (step 6)', ()
 
     expect(insert).toHaveBeenCalled();
     expect(values).toHaveBeenCalledWith(expect.objectContaining({ resourceType: 'customer', resourceId: CUSTOMER_ID }));
+  });
+});
+
+describe('MerchantBusinessAnalystService — merchant notes via Context Builder (Slice 4.3)', () => {
+  const NOTES = 'CATEGORY: Merchant notes about this customer — Preferences: - [communication] Prefers email';
+
+  it('builds notes for owner/admin with the question and adds them as their own block right after verified facts', async () => {
+    const deps = makeDeps({ customerContext: makeCustomerContext(NOTES) });
+    const service = makeService(deps);
+
+    await ownerContext(() => service.ask(WORKSPACE_ID, 'How should we contact them?', CUSTOMER_ID));
+
+    expect(deps.customerContext.build).toHaveBeenCalledWith(WORKSPACE_ID, CUSTOMER_ID, 'How should we contact them?');
+    const contents = (deps.gateway.generate as ReturnType<typeof vi.fn>).mock.calls[0][0].messages.map((m: { content: string }) => m.content);
+    const factsIndex = contents.findIndex((c: string) => c.includes('Verified customer facts'));
+    expect(contents[factsIndex + 1]).toBe(NOTES);
+    // Notes never merged into the verified-facts block.
+    expect(contents[factsIndex]).not.toContain('Prefers email');
+  });
+
+  it('adds no notes block when the builder has nothing to include (empty context)', async () => {
+    const deps = makeDeps();
+    const service = makeService(deps);
+
+    await ownerContext(() => service.ask(WORKSPACE_ID, 'question', CUSTOMER_ID));
+
+    const contents = (deps.gateway.generate as ReturnType<typeof vi.fn>).mock.calls[0][0].messages.map((m: { content: string }) => m.content);
+    expect(contents.some((c: string) => c.includes('Merchant notes'))).toBe(false);
+  });
+
+  it('never builds or sends notes for a non-owner/admin caller', async () => {
+    const deps = makeDeps({ customerContext: makeCustomerContext(NOTES) });
+    const service = makeService(deps);
+
+    await marketingContext(() => service.ask(WORKSPACE_ID, 'question', CUSTOMER_ID));
+
+    expect(deps.customerContext.build).not.toHaveBeenCalled();
+    const contents = (deps.gateway.generate as ReturnType<typeof vi.fn>).mock.calls[0][0].messages.map((m: { content: string }) => m.content);
+    expect(contents).not.toContain(NOTES);
+  });
+
+  it('never builds notes on the basic (no customer) path', async () => {
+    const deps = makeDeps({ customerContext: makeCustomerContext(NOTES) });
+    const service = makeService(deps);
+
+    await ownerContext(() => service.ask(WORKSPACE_ID, 'question'));
+
+    expect(deps.customerContext.build).not.toHaveBeenCalled();
   });
 });
