@@ -14,6 +14,7 @@ import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { identityMergeHistory } from '../../database/schema/identity-merge-history';
 import { customerMemoryEntries } from '../../database/schema/customer-memory-entries';
 import { customerMemoryEntryHistory } from '../../database/schema/customer-memory-entry-history';
+import { customerPreferenceHistory, customerPreferences } from '../../database/schema/customer-preferences';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
 import { integrations } from '../../database/schema/integrations';
 import { commerceOrders } from '../../database/schema/commerce-orders';
@@ -974,6 +975,7 @@ describe('IntegrationService', () => {
         [], // customers merged into it — none
         [], // conversationRows
         [{ id: 'mem_1' }], // customer memory entries
+        [{ id: 'pref_1' }], // customer preferences
       ]);
       const service = makeService(tx);
 
@@ -987,6 +989,10 @@ describe('IntegrationService', () => {
       const order = [customerMemoryEntryHistory, customerMemoryEntries, canonicalCustomers].map((table) => tx.deleteCalls.indexOf(table));
       expect(order.every((index) => index >= 0)).toBe(true);
       expect(order).toEqual([...order].sort((a, b) => a - b));
+      // Same for preferences.
+      const preferenceOrder = [customerPreferenceHistory, customerPreferences, canonicalCustomers].map((table) => tx.deleteCalls.indexOf(table));
+      expect(preferenceOrder.every((index) => index >= 0)).toBe(true);
+      expect(preferenceOrder).toEqual([...preferenceOrder].sort((a, b) => a - b));
     });
 
     it('also erases customers merged into the orphaned one (same person), before the survivor itself', async () => {
@@ -999,8 +1005,10 @@ describe('IntegrationService', () => {
         [], // customers merged into canon_merged — none
         [], // merged customer's conversationRows
         [], // merged customer's memory entries
+        [], // merged customer's preferences
         [], // survivor's conversationRows
         [], // survivor's memory entries
+        [], // survivor's preferences
       ]);
       const service = makeService(tx);
 

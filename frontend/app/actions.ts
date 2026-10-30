@@ -182,3 +182,23 @@ export async function archiveCustomerMemory(workspaceId: string, canonicalCustom
     method: 'POST',
   });
 }
+
+export async function createCustomerPreference(workspaceId: string, canonicalCustomerId: string, input: { category: string; content: string }) {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/customers/${canonicalCustomerId}/preferences`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateCustomerPreference(workspaceId: string, canonicalCustomerId: string, preferenceId: string, input: { category: string; content: string }) {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/customers/${canonicalCustomerId}/preferences/${preferenceId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function archiveCustomerPreference(workspaceId: string, canonicalCustomerId: string, preferenceId: string) {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/customers/${canonicalCustomerId}/preferences/${preferenceId}/archive`, {
+    method: 'POST',
+  });
+}

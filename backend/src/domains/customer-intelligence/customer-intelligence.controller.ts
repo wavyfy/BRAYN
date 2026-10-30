@@ -11,6 +11,13 @@ import {
   type CreateMemoryEntryInput,
   type UpdateMemoryEntryInput,
 } from './dto/memory-entry.schema';
+import { CustomerPreferenceService } from './customer-preference.service';
+import {
+  createPreferenceSchema,
+  updatePreferenceSchema,
+  type CreatePreferenceInput,
+  type UpdatePreferenceInput,
+} from './dto/preference.schema';
 
 /**
  * Reuses the workspace domain's authorization boundary rather than
@@ -29,6 +36,7 @@ export class CustomerIntelligenceController {
   constructor(
     private readonly customerIntelligenceService: CustomerIntelligenceService,
     private readonly customerMemoryService: CustomerMemoryService,
+    private readonly customerPreferenceService: CustomerPreferenceService,
   ) {}
 
   @Get()
@@ -94,5 +102,43 @@ export class CustomerIntelligenceController {
     @Param('memoryEntryId') memoryEntryId: string,
   ) {
     return this.customerMemoryService.archive(workspaceId, canonicalCustomerId, memoryEntryId);
+  }
+
+  @Get(':canonicalCustomerId/preferences')
+  @LogsProtectedAccess('customer', 'canonicalCustomerId')
+  async listPreferences(@Param('workspaceId') workspaceId: string, @Param('canonicalCustomerId') canonicalCustomerId: string) {
+    return this.customerPreferenceService.list(workspaceId, canonicalCustomerId);
+  }
+
+  @Post(':canonicalCustomerId/preferences')
+  @LogsProtectedAccess('customer', 'canonicalCustomerId')
+  async createPreference(
+    @Param('workspaceId') workspaceId: string,
+    @Param('canonicalCustomerId') canonicalCustomerId: string,
+    @Body(new ZodValidationPipe(createPreferenceSchema)) body: CreatePreferenceInput,
+  ) {
+    return this.customerPreferenceService.create(workspaceId, canonicalCustomerId, body);
+  }
+
+  @Patch(':canonicalCustomerId/preferences/:preferenceId')
+  @LogsProtectedAccess('customer', 'canonicalCustomerId')
+  async updatePreference(
+    @Param('workspaceId') workspaceId: string,
+    @Param('canonicalCustomerId') canonicalCustomerId: string,
+    @Param('preferenceId') preferenceId: string,
+    @Body(new ZodValidationPipe(updatePreferenceSchema)) body: UpdatePreferenceInput,
+  ) {
+    return this.customerPreferenceService.update(workspaceId, canonicalCustomerId, preferenceId, body);
+  }
+
+  @Post(':canonicalCustomerId/preferences/:preferenceId/archive')
+  @HttpCode(HttpStatus.OK)
+  @LogsProtectedAccess('customer', 'canonicalCustomerId')
+  async archivePreference(
+    @Param('workspaceId') workspaceId: string,
+    @Param('canonicalCustomerId') canonicalCustomerId: string,
+    @Param('preferenceId') preferenceId: string,
+  ) {
+    return this.customerPreferenceService.archive(workspaceId, canonicalCustomerId, preferenceId);
   }
 }

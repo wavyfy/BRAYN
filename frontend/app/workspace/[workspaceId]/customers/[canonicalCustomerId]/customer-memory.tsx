@@ -19,10 +19,10 @@ export type MemoryEntry = {
 /** Mirrors the backend content limit (memory-entry.schema.ts). */
 const MAX_CONTENT = 5000;
 
-const provenanceLabel: Record<string, string> = { merchant_provided: 'Added by your team' };
+export const provenanceLabel: Record<string, string> = { merchant_provided: 'Added by your team' };
 
 /** One mutation at a time per form/entry: pending flag, inline error, then refresh the server-rendered page. */
-function useMutation(errorMessage: string) {
+export function useMutation(errorMessage: string) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
