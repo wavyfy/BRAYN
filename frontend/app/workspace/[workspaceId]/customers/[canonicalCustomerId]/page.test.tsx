@@ -12,7 +12,7 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 import { ApiError } from '@/lib/api';
 import CustomerDetailPage from './page';
 
-// The memory section is fetched after the positional mocks each test queues; default it to "no notes".
+// The memory and preferences sections are fetched after the positional mocks each test queues; default them to empty.
 beforeEach(() => {
   apiFetch.mockResolvedValue([]);
 });
@@ -360,5 +360,42 @@ describe('CustomerDetailPage — Customer memory (Slice 4.1)', () => {
 
     expect(screen.getByText('Memory could not be loaded: Memory unavailable.')).toBeTruthy();
     expect(screen.getByText('Activity')).toBeTruthy();
+  });
+});
+
+describe('CustomerDetailPage — Customer preferences (Slice 4.2)', () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it('fetches the preferences endpoint and renders each preference with its category and provenance', async () => {
+    const page = renderPage(baseCustomer);
+    apiFetch.mockResolvedValueOnce([]); // memory
+    apiFetch.mockResolvedValueOnce([
+      { id: 'p1', category: 'communication', content: 'Prefers email over SMS', provenance: 'merchant_provided', createdAt: '2026-01-05T10:00:00.000Z', updatedAt: '2026-01-05T10:00:00.000Z' },
+    ]);
+    render(await page);
+
+    expect(apiFetch).toHaveBeenCalledWith('/api/v1/workspaces/ws_1/customers/cust_1/preferences');
+    expect(screen.getByText('Preferences')).toBeTruthy();
+    expect(screen.getByText('Prefers email over SMS')).toBeTruthy();
+    expect(screen.getByText('Communication', { selector: 'span' })).toBeTruthy();
+    expect(screen.getByText(/Added by your team/)).toBeTruthy();
+  });
+
+  it('shows an empty state when the customer has no preferences', async () => {
+    render(await renderPage(baseCustomer));
+    expect(screen.getByText('No preferences recorded yet.')).toBeTruthy();
+  });
+
+  it('keeps the rest of the page and shows an inline error when preferences fail to load', async () => {
+    const page = renderPage(baseCustomer);
+    apiFetch.mockResolvedValueOnce([]); // memory
+    apiFetch.mockRejectedValueOnce(new ApiError(500, 'INTERNAL', 'Preferences unavailable.'));
+    render(await page);
+
+    expect(screen.getByText('Preferences could not be loaded: Preferences unavailable.')).toBeTruthy();
+    expect(screen.getByText('No notes yet.')).toBeTruthy();
   });
 });

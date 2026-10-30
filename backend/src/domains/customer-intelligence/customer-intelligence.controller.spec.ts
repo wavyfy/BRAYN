@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { CustomerIntelligenceController } from './customer-intelligence.controller';
 import { CustomerIntelligenceService } from './customer-intelligence.service';
 import { CustomerMemoryService } from './customer-memory.service';
+import { CustomerPreferenceService } from './customer-preference.service';
 import { UserService } from '../workspace/user.service';
 import { WorkspaceMembershipService } from '../workspace/workspace-membership.service';
 import { WorkspaceMembershipGuard } from '../workspace/workspace-membership.guard';
@@ -48,6 +49,13 @@ describe('CustomerIntelligenceController (e2e)', () => {
     update: vi.fn(async () => memoryEntry),
     archive: vi.fn(async () => ({ ...memoryEntry, status: 'archived' })),
   };
+  const preference = { id: 'pref_1', canonicalCustomerId: 'canon_1', category: 'communication', content: 'SMS only', provenance: 'merchant_provided', status: 'active' };
+  const customerPreferenceService = {
+    list: vi.fn(async () => [preference]),
+    create: vi.fn(async () => preference),
+    update: vi.fn(async () => preference),
+    archive: vi.fn(async () => ({ ...preference, status: 'archived' })),
+  };
   const userService = {
     findOrCreateByClerkId: vi.fn(async (clerkUserId: string) => ({ id: 'user_1', clerkUserId })),
   };
@@ -69,6 +77,7 @@ describe('CustomerIntelligenceController (e2e)', () => {
       providers: [
         { provide: CustomerIntelligenceService, useValue: customerIntelligenceService },
         { provide: CustomerMemoryService, useValue: customerMemoryService },
+        { provide: CustomerPreferenceService, useValue: customerPreferenceService },
         { provide: UserService, useValue: userService },
         { provide: WorkspaceMembershipService, useValue: membershipService },
         { provide: DatabaseService, useValue: database },
@@ -96,6 +105,7 @@ describe('CustomerIntelligenceController (e2e)', () => {
     customerIntelligenceService.getCustomer.mockClear();
     customerIntelligenceService.getActivity.mockClear();
     Object.values(customerMemoryService).forEach((fn) => fn.mockClear());
+    Object.values(customerPreferenceService).forEach((fn) => fn.mockClear());
     accessLogInsert.mockClear();
     accessLogValues.mockClear();
   });
@@ -332,5 +342,93 @@ describe('CustomerIntelligenceController (e2e)', () => {
         expect(customerMemoryService.create).not.toHaveBeenCalled();
       });
     }
+  });
+
+  describe('customer preference routes', () => {
+    const auth = { authorization: 'Bearer valid-token' };
+    const base = '/workspaces/ws_1/customers/canon_1/preferences';
+    const routes = [
+      { method: 'GET' as const, url: base, handler: 'list' as const },
+      { method: 'POST' as const, url: base, payload: { category: 'product', content: 'Likes linen' }, handler: 'create' as const },
+      { method: 'PATCH' as const, url: `${base}/pref_1`, payload: { content: 'Likes linen' }, handler: 'update' as const },
+      { method: 'POST' as const, url: `${base}/pref_1/archive`, handler: 'archive' as const },
+    ];
+
+    for (const route of routes) {
+      for (const role of ['marketing', 'support', 'analyst']) {
+        it(`${route.method} ${route.handler}: rejects a ${role} member with 403 before the service executes`, async () => {
+          memberWithRole(role);
+          const res = await app.inject({ method: route.method, url: route.url, payload: route.payload, headers: auth });
+          expect(res.statusCode).toBe(403);
+          expect(customerPreferenceService[route.handler]).not.toHaveBeenCalled();
+          expect(accessLogInsert).not.toHaveBeenCalled();
+        });
+      }
+
+      it(`${route.method} ${route.handler}: rejects an unauthenticated request`, async () => {
+        const res = await app.inject({ method: route.method, url: route.url, payload: route.payload });
+        expect(res.statusCode).toBe(401);
+        expect(customerPreferenceService[route.handler]).not.toHaveBeenCalled();
+      });
+
+      for (const role of ['owner', 'admin']) {
+        it(`${route.method} ${route.handler}: allows ${role} and records a customer access`, async () => {
+          memberWithRole(role);
+          const res = await app.inject({ method: route.method, url: route.url, payload: route.payload, headers: auth });
+          expect(res.statusCode).toBe(route.handler === 'create' ? 201 : 200);
+          expect(customerPreferenceService[route.handler]).toHaveBeenCalledTimes(1);
+          expect(accessLogValues).toHaveBeenCalledWith(expect.objectContaining({ resourceType: 'customer', resourceId: 'canon_1', actorRole: role }));
+        });
+      }
+    }
+
+    it('passes the category and trimmed content to the service', async () => {
+      memberWithRole('owner');
+      await app.inject({ method: 'POST', url: base, payload: { category: 'communication', content: '  SMS only  ' }, headers: auth });
+      expect(customerPreferenceService.create).toHaveBeenCalledWith('ws_1', 'canon_1', { category: 'communication', content: 'SMS only' });
+    });
+
+    for (const category of ['communication', 'product', 'behavioural', 'interaction']) {
+      it(`accepts category "${category}"`, async () => {
+        memberWithRole('owner');
+        const res = await app.inject({ method: 'POST', url: base, payload: { category, content: 'x', provenance: 'merchant_provided' }, headers: auth });
+        expect(res.statusCode).toBe(201);
+      });
+    }
+
+    const invalidCreates: Record<string, unknown>[] = [
+      { content: 'x' },
+      { category: 'pricing', content: 'x' },
+      { category: 'Communication', content: 'x' },
+      { category: 'product', content: '   ' },
+      { category: 'product', content: 'x'.repeat(2001) },
+      { category: 'product', content: 'x', provenance: 'ai_generated' },
+      { category: 'product', content: 'x', provenance: 'source_backed' },
+      { category: 'product', content: 'x', tags: ['vip'] },
+    ];
+    for (const payload of invalidCreates) {
+      it(`rejects create ${JSON.stringify(payload).slice(0, 60)} with 400`, async () => {
+        memberWithRole('owner');
+        const res = await app.inject({ method: 'POST', url: base, payload, headers: auth });
+        expect(res.statusCode).toBe(400);
+        expect(customerPreferenceService.create).not.toHaveBeenCalled();
+      });
+    }
+
+    for (const payload of [{}, { category: 'pricing' }, { provenance: 'ai_generated', content: 'x' }]) {
+      it(`rejects edit ${JSON.stringify(payload)} with 400`, async () => {
+        memberWithRole('owner');
+        const res = await app.inject({ method: 'PATCH', url: `${base}/pref_1`, payload, headers: auth });
+        expect(res.statusCode).toBe(400);
+        expect(customerPreferenceService.update).not.toHaveBeenCalled();
+      });
+    }
+
+    it('accepts a category-only edit', async () => {
+      memberWithRole('owner');
+      const res = await app.inject({ method: 'PATCH', url: `${base}/pref_1`, payload: { category: 'interaction' }, headers: auth });
+      expect(res.statusCode).toBe(200);
+      expect(customerPreferenceService.update).toHaveBeenCalledWith('ws_1', 'canon_1', 'pref_1', { category: 'interaction' });
+    });
   });
 });

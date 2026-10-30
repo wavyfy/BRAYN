@@ -14,6 +14,7 @@ import { ActivityTimeline, type ActivityEntry } from './activity-timeline';
 import { RiskEngagement, type CustomerHealthState } from './risk-engagement';
 import { RevenueOpportunities, type RevenueOpportunity, type Recommendation } from './revenue-opportunities';
 import { CustomerMemory, type MemoryEntry } from './customer-memory';
+import { CustomerPreferences, type Preference } from './customer-preferences';
 
 type CustomerRecord = {
   canonicalCustomerId: string;
@@ -95,12 +96,13 @@ export default async function CustomerDetailPage({
   }
 
   // Health is calculated on demand — "not yet calculated" (404) is an expected empty state, not a page-level error.
-  const [health, memoryResult] = await Promise.all([
+  const [health, memoryResult, preferencesResult] = await Promise.all([
     apiFetch(`${base}/health`).catch((error: unknown): null => {
       if (error instanceof ApiError && error.status === 404) return null;
       throw error;
     }) as Promise<CustomerHealthState | null>,
     fetchSection<MemoryEntry[]>(`${base}/memory`),
+    fetchSection<Preference[]>(`${base}/preferences`),
   ]);
 
   const opportunities = opportunitiesResult.ok ? opportunitiesResult.data : [];
@@ -214,6 +216,17 @@ export default async function CustomerDetailPage({
                 <CustomerMemory workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} entries={memoryResult.data} />
               ) : (
                 <ErrorText className="rounded-xl border border-danger/20 bg-danger/[0.03] px-4 py-3">Memory could not be loaded: {memoryResult.message}</ErrorText>
+              )}
+            </div>
+          </section>
+
+          <section>
+            <SectionHeader title="Preferences" count={preferencesResult.ok && preferencesResult.data.length > 0 ? preferencesResult.data.length : undefined} />
+            <div className="mt-3">
+              {preferencesResult.ok ? (
+                <CustomerPreferences workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} preferences={preferencesResult.data} />
+              ) : (
+                <ErrorText className="rounded-xl border border-danger/20 bg-danger/[0.03] px-4 py-3">Preferences could not be loaded: {preferencesResult.message}</ErrorText>
               )}
             </div>
           </section>
