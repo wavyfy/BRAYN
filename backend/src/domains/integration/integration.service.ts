@@ -28,6 +28,9 @@ import { customerMemoryEntries } from '../../database/schema/customer-memory-ent
 import { customerMemoryEntryHistory } from '../../database/schema/customer-memory-entry-history';
 import { customerPreferenceHistory, customerPreferences } from '../../database/schema/customer-preferences';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
+import { websiteVisitors } from '../../database/schema/website-visitors';
+import { websiteSessions } from '../../database/schema/website-sessions';
+import { websiteEvents } from '../../database/schema/website-events';
 import { ConflictError, NotFoundError, ProviderError, UnauthenticatedError } from '../../common/errors/app-error';
 import {
   decryptCredential,
@@ -505,6 +508,17 @@ export class IntegrationService {
       await tx.delete(customerPreferenceHistory).where(and(eq(customerPreferenceHistory.workspaceId, workspaceId), inArray(customerPreferenceHistory.preferenceId, preferenceIds)));
     }
     await tx.delete(customerPreferences).where(and(eq(customerPreferences.workspaceId, workspaceId), eq(customerPreferences.canonicalCustomerId, canonicalCustomerId)));
+    // Linked website visitors are this person's data (identity_signal payloads hold their email) — deleted, not unlinked; events → sessions → visitors (FK).
+    const visitorRows = await tx
+      .select({ id: websiteVisitors.id })
+      .from(websiteVisitors)
+      .where(and(eq(websiteVisitors.workspaceId, workspaceId), eq(websiteVisitors.canonicalCustomerId, canonicalCustomerId)));
+    const visitorIds = visitorRows.map((row) => row.id);
+    if (visitorIds.length > 0) {
+      await tx.delete(websiteEvents).where(and(eq(websiteEvents.workspaceId, workspaceId), inArray(websiteEvents.visitorId, visitorIds)));
+      await tx.delete(websiteSessions).where(and(eq(websiteSessions.workspaceId, workspaceId), inArray(websiteSessions.visitorId, visitorIds)));
+      await tx.delete(websiteVisitors).where(and(eq(websiteVisitors.workspaceId, workspaceId), inArray(websiteVisitors.id, visitorIds)));
+    }
 
     await tx.delete(canonicalCustomers).where(and(eq(canonicalCustomers.workspaceId, workspaceId), eq(canonicalCustomers.id, canonicalCustomerId)));
     return true;
