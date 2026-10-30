@@ -15,6 +15,9 @@ import { identityMergeHistory } from '../../database/schema/identity-merge-histo
 import { customerMemoryEntries } from '../../database/schema/customer-memory-entries';
 import { customerMemoryEntryHistory } from '../../database/schema/customer-memory-entry-history';
 import { customerPreferenceHistory, customerPreferences } from '../../database/schema/customer-preferences';
+import { websiteVisitors } from '../../database/schema/website-visitors';
+import { websiteSessions } from '../../database/schema/website-sessions';
+import { websiteEvents } from '../../database/schema/website-events';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
 import { integrations } from '../../database/schema/integrations';
 import { commerceOrders } from '../../database/schema/commerce-orders';
@@ -976,6 +979,7 @@ describe('IntegrationService', () => {
         [], // conversationRows
         [{ id: 'mem_1' }], // customer memory entries
         [{ id: 'pref_1' }], // customer preferences
+        [{ id: 'visitor_1' }], // linked website visitors
       ]);
       const service = makeService(tx);
 
@@ -993,6 +997,10 @@ describe('IntegrationService', () => {
       const preferenceOrder = [customerPreferenceHistory, customerPreferences, canonicalCustomers].map((table) => tx.deleteCalls.indexOf(table));
       expect(preferenceOrder.every((index) => index >= 0)).toBe(true);
       expect(preferenceOrder).toEqual([...preferenceOrder].sort((a, b) => a - b));
+      // Linked website visitors are deleted, not unlinked: events → sessions → visitors, all before the canonical customer.
+      const websiteOrder = [websiteEvents, websiteSessions, websiteVisitors, canonicalCustomers].map((table) => tx.deleteCalls.indexOf(table));
+      expect(websiteOrder.every((index) => index >= 0)).toBe(true);
+      expect(websiteOrder).toEqual([...websiteOrder].sort((a, b) => a - b));
     });
 
     it('also erases customers merged into the orphaned one (same person), before the survivor itself', async () => {
@@ -1006,9 +1014,11 @@ describe('IntegrationService', () => {
         [], // merged customer's conversationRows
         [], // merged customer's memory entries
         [], // merged customer's preferences
+        [], // merged customer's linked website visitors
         [], // survivor's conversationRows
         [], // survivor's memory entries
         [], // survivor's preferences
+        [], // survivor's linked website visitors
       ]);
       const service = makeService(tx);
 
@@ -1017,6 +1027,8 @@ describe('IntegrationService', () => {
       expect(result).toEqual({ found: true, canonicalCustomerRemoved: true });
       expect(tx.deleteCalls.filter((table) => table === canonicalCustomers)).toHaveLength(2);
       expect(tx.deleteCalls.filter((table) => table === identityMergeHistory)).toHaveLength(2);
+      // No linked visitors → no website deletes at all.
+      expect(tx.deleteCalls).not.toContain(websiteVisitors);
     });
 
     it('does not touch the canonical-customer cascade when the commerce customer has no canonical link yet', async () => {
