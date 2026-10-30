@@ -10,6 +10,7 @@ function makeEnv(overrides: Partial<Env>): Env {
     FRONTEND_URL: 'http://localhost:3000',
     BACKEND_URL: 'http://localhost:3001',
     AI_MODEL: 'gpt-5.6-luna',
+    AI_CUSTOMER_CONTEXT_MAX_TOKENS: 1000,
     RATE_LIMIT_WINDOW_SECONDS: 60,
     RATE_LIMIT_DEFAULT_MAX: 120,
     RATE_LIMIT_AI_MAX: 10,
