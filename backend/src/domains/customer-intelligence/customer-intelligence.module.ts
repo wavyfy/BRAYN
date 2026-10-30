@@ -3,6 +3,7 @@ import { WorkspaceModule } from '../workspace/workspace.module';
 import { CustomerIntelligenceService } from './customer-intelligence.service';
 import { CustomerIntelligenceController } from './customer-intelligence.controller';
 import { CustomerMemoryService } from './customer-memory.service';
+import { CustomerPreferenceService } from './customer-preference.service';
 
 /**
  * Owns the Unified Customer Intelligence Record: customer context, profile,
@@ -20,8 +21,8 @@ import { CustomerMemoryService } from './customer-memory.service';
 @Module({
   imports: [WorkspaceModule],
   controllers: [CustomerIntelligenceController],
-  // CustomerMemoryService is deliberately not exported: nothing outside this domain (AI agents included) reads memory yet.
-  providers: [CustomerIntelligenceService, CustomerMemoryService],
+  // Memory/preference services are deliberately not exported: nothing outside this domain (AI agents included) reads them yet.
+  providers: [CustomerIntelligenceService, CustomerMemoryService, CustomerPreferenceService],
   exports: [CustomerIntelligenceService],
 })
 export class CustomerIntelligenceModule {}

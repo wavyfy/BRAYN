@@ -26,6 +26,7 @@ import { customerHealthStateHistory } from '../../database/schema/customer-healt
 import { automationRuns } from '../../database/schema/automation-runs';
 import { customerMemoryEntries } from '../../database/schema/customer-memory-entries';
 import { customerMemoryEntryHistory } from '../../database/schema/customer-memory-entry-history';
+import { customerPreferenceHistory, customerPreferences } from '../../database/schema/customer-preferences';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
 import { ConflictError, NotFoundError, ProviderError, UnauthenticatedError } from '../../common/errors/app-error';
 import {
@@ -494,6 +495,16 @@ export class IntegrationService {
       await tx.delete(customerMemoryEntryHistory).where(and(eq(customerMemoryEntryHistory.workspaceId, workspaceId), inArray(customerMemoryEntryHistory.memoryEntryId, memoryIds)));
     }
     await tx.delete(customerMemoryEntries).where(and(eq(customerMemoryEntries.workspaceId, workspaceId), eq(customerMemoryEntries.canonicalCustomerId, canonicalCustomerId)));
+    // Preferences + history: same rule as memory.
+    const preferenceRows = await tx
+      .select({ id: customerPreferences.id })
+      .from(customerPreferences)
+      .where(and(eq(customerPreferences.workspaceId, workspaceId), eq(customerPreferences.canonicalCustomerId, canonicalCustomerId)));
+    const preferenceIds = preferenceRows.map((row) => row.id);
+    if (preferenceIds.length > 0) {
+      await tx.delete(customerPreferenceHistory).where(and(eq(customerPreferenceHistory.workspaceId, workspaceId), inArray(customerPreferenceHistory.preferenceId, preferenceIds)));
+    }
+    await tx.delete(customerPreferences).where(and(eq(customerPreferences.workspaceId, workspaceId), eq(customerPreferences.canonicalCustomerId, canonicalCustomerId)));
 
     await tx.delete(canonicalCustomers).where(and(eq(canonicalCustomers.workspaceId, workspaceId), eq(canonicalCustomers.id, canonicalCustomerId)));
     return true;
