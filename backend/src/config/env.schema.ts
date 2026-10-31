@@ -68,6 +68,8 @@ export const envSchema = z.object({
   // Default model — doc 12 "Model/provider selection should be
   // configurable through the AI Gateway", never hard-coded in an adapter.
   AI_MODEL: z.string().min(1).default('gpt-5.6-luna'),
+  // Slice 4.3 — budget (estimated tokens, ~4 chars each) for the merchant-notes block (preferences + memory) in customer-scoped AI context.
+  AI_CUSTOMER_CONTEXT_MAX_TOKENS: z.coerce.number().int().positive().default(1000),
 
   // Rate limiting (doc19 Phase 17 hardening; doc29 §13 — Upstash Redis is
   // approved by name for "rate limiting"). Shared/durable counters via

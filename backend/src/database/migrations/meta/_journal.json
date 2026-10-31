@@ -295,6 +295,13 @@
       "when": 1793287777105,
       "tag": "0041_smiling_iron_man",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1793366245276,
+      "tag": "0042_hot_thunderbird",
+      "breakpoints": true
     }
   ]
 }

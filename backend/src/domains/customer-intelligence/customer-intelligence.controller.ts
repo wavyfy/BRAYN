@@ -3,6 +3,7 @@ import { ZodValidationPipe } from '../../common/api/zod-validation.pipe';
 import { WorkspaceMembershipGuard } from '../workspace/workspace-membership.guard';
 import { RequireWorkspaceRole } from '../workspace/require-workspace-role.decorator';
 import { LogsProtectedAccess } from '../../common/access-log/protected-data-access.decorator';
+import { RateLimitTier } from '../../common/rate-limit/rate-limit.decorator';
 import { CustomerIntelligenceService } from './customer-intelligence.service';
 import { CustomerMemoryService } from './customer-memory.service';
 import {
@@ -12,6 +13,7 @@ import {
   type UpdateMemoryEntryInput,
 } from './dto/memory-entry.schema';
 import { CustomerPreferenceService } from './customer-preference.service';
+import { CustomerSummaryService } from './customer-summary.service';
 import {
   createPreferenceSchema,
   updatePreferenceSchema,
@@ -37,6 +39,7 @@ export class CustomerIntelligenceController {
     private readonly customerIntelligenceService: CustomerIntelligenceService,
     private readonly customerMemoryService: CustomerMemoryService,
     private readonly customerPreferenceService: CustomerPreferenceService,
+    private readonly customerSummaryService: CustomerSummaryService,
   ) {}
 
   @Get()
@@ -140,5 +143,20 @@ export class CustomerIntelligenceController {
     @Param('preferenceId') preferenceId: string,
   ) {
     return this.customerPreferenceService.archive(workspaceId, canonicalCustomerId, preferenceId);
+  }
+
+  @Get(':canonicalCustomerId/summary')
+  @LogsProtectedAccess('customer', 'canonicalCustomerId')
+  async getSummary(@Param('workspaceId') workspaceId: string, @Param('canonicalCustomerId') canonicalCustomerId: string) {
+    return this.customerSummaryService.get(workspaceId, canonicalCustomerId);
+  }
+
+  /** Manual (re)generation only — one AI call, so it takes the `ai` rate-limit tier like Ask BRAYN. */
+  @Post(':canonicalCustomerId/summary')
+  @HttpCode(HttpStatus.OK)
+  @RateLimitTier('ai')
+  @LogsProtectedAccess('customer', 'canonicalCustomerId')
+  async generateSummary(@Param('workspaceId') workspaceId: string, @Param('canonicalCustomerId') canonicalCustomerId: string) {
+    return this.customerSummaryService.generate(workspaceId, canonicalCustomerId);
   }
 }

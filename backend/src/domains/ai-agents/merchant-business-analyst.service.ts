@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { AiGatewayService } from '../ai/ai-gateway.service';
 import type { AiMessage, AiToolCall, AiToolDefinition } from '../ai/ai-provider.interface';
 import { CustomerIntelligenceService, type CustomerRecord } from '../customer-intelligence/customer-intelligence.service';
+import { CustomerContextBuilder } from '../customer-intelligence/customer-context-builder.service';
 import { CustomerHealthService, type CustomerHealthState } from '../intelligence-engines/customer-health.service';
 import { RevenueOpportunityService } from '../intelligence-engines/revenue-opportunity.service';
 import { RecommendationService } from '../intelligence-engines/recommendation.service';
@@ -235,6 +236,7 @@ export class MerchantBusinessAnalystService {
     private readonly writeTools: WriteToolsService,
     private readonly database: DatabaseService,
     private readonly logger: StructuredLoggerService,
+    private readonly customerContext: CustomerContextBuilder,
   ) {}
 
   async ask(workspaceId: string, question: string, customerId?: string): Promise<{ answer: string }> {
@@ -259,8 +261,10 @@ export class MerchantBusinessAnalystService {
     const actorRole = RequestContext.get()?.actorRole;
     const canAccessCustomerFacts = actorRole === 'owner' || actorRole === 'admin';
 
-    const [customer, health, opportunities, recommendations] = await Promise.all([
+    // Merchant notes (Slice 4.3) share the customer-facts gate: owner/admin only, same as the memory/preference routes.
+    const [customer, notes, health, opportunities, recommendations] = await Promise.all([
       canAccessCustomerFacts ? this.customerIntelligence.getCustomer(workspaceId, customerId) : Promise.resolve(undefined),
+      canAccessCustomerFacts ? this.customerContext.build(workspaceId, customerId, question) : Promise.resolve(undefined),
       this.getHealthOrNull(workspaceId, customerId),
       this.revenueOpportunity.list(workspaceId, customerId),
       this.recommendation.list(workspaceId, customerId),
@@ -269,6 +273,7 @@ export class MerchantBusinessAnalystService {
     const messages: AiMessage[] = [
       { role: 'system', content: MERCHANT_BUSINESS_ANALYST_SYSTEM_PROMPT_V2 },
       ...(customer ? [{ role: 'system' as const, content: buildVerifiedCustomerFactsBlock(customer) }] : []),
+      ...(notes?.block ? [{ role: 'system' as const, content: notes.block }] : []),
       { role: 'system', content: buildDerivedIntelligenceBlock(health, opportunities) },
       { role: 'system', content: buildMerchantKnowledgeBlock(relevantKnowledge) },
       { role: 'system', content: buildMerchantPolicyBlock(policyEntries) },
