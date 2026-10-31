@@ -202,3 +202,9 @@ export async function archiveCustomerPreference(workspaceId: string, canonicalCu
     method: 'POST',
   });
 }
+
+export async function generateCustomerSummary(workspaceId: string, canonicalCustomerId: string) {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/customers/${canonicalCustomerId}/summary`, {
+    method: 'POST',
+  });
+}
