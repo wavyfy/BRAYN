@@ -7,6 +7,8 @@ import { CustomerIntelligenceController } from './customer-intelligence.controll
 import { CustomerIntelligenceService } from './customer-intelligence.service';
 import { CustomerMemoryService } from './customer-memory.service';
 import { CustomerPreferenceService } from './customer-preference.service';
+import { CustomerSummaryService } from './customer-summary.service';
+import { RATE_LIMIT_TIER_KEY } from '../../common/rate-limit/rate-limit.decorator';
 import { UserService } from '../workspace/user.service';
 import { WorkspaceMembershipService } from '../workspace/workspace-membership.service';
 import { WorkspaceMembershipGuard } from '../workspace/workspace-membership.guard';
@@ -56,6 +58,11 @@ describe('CustomerIntelligenceController (e2e)', () => {
     update: vi.fn(async () => preference),
     archive: vi.fn(async () => ({ ...preference, status: 'archived' })),
   };
+  const summaryView = { summary: { content: 'A loyal repeat buyer.', provenance: 'ai_generated', model: 'm', generatedAt: new Date(0), generatedByUserId: 'user_1' }, stale: false };
+  const customerSummaryService = {
+    get: vi.fn(async () => summaryView),
+    generate: vi.fn(async () => summaryView),
+  };
   const userService = {
     findOrCreateByClerkId: vi.fn(async (clerkUserId: string) => ({ id: 'user_1', clerkUserId })),
   };
@@ -78,6 +85,7 @@ describe('CustomerIntelligenceController (e2e)', () => {
         { provide: CustomerIntelligenceService, useValue: customerIntelligenceService },
         { provide: CustomerMemoryService, useValue: customerMemoryService },
         { provide: CustomerPreferenceService, useValue: customerPreferenceService },
+        { provide: CustomerSummaryService, useValue: customerSummaryService },
         { provide: UserService, useValue: userService },
         { provide: WorkspaceMembershipService, useValue: membershipService },
         { provide: DatabaseService, useValue: database },
@@ -106,6 +114,7 @@ describe('CustomerIntelligenceController (e2e)', () => {
     customerIntelligenceService.getActivity.mockClear();
     Object.values(customerMemoryService).forEach((fn) => fn.mockClear());
     Object.values(customerPreferenceService).forEach((fn) => fn.mockClear());
+    Object.values(customerSummaryService).forEach((fn) => fn.mockClear());
     accessLogInsert.mockClear();
     accessLogValues.mockClear();
   });
@@ -429,6 +438,49 @@ describe('CustomerIntelligenceController (e2e)', () => {
       const res = await app.inject({ method: 'PATCH', url: `${base}/pref_1`, payload: { category: 'interaction' }, headers: auth });
       expect(res.statusCode).toBe(200);
       expect(customerPreferenceService.update).toHaveBeenCalledWith('ws_1', 'canon_1', 'pref_1', { category: 'interaction' });
+    });
+  });
+
+  describe('customer summary routes (Slice 4.5)', () => {
+    const auth = { authorization: 'Bearer valid-token' };
+    const url = '/workspaces/ws_1/customers/canon_1/summary';
+    const routes = [
+      { method: 'GET' as const, handler: 'get' as const },
+      { method: 'POST' as const, handler: 'generate' as const },
+    ];
+
+    for (const route of routes) {
+      for (const role of ['marketing', 'support', 'analyst']) {
+        it(`${route.method} ${route.handler}: rejects a ${role} member with 403 before the service executes`, async () => {
+          memberWithRole(role);
+          const res = await app.inject({ method: route.method, url, headers: auth });
+          expect(res.statusCode).toBe(403);
+          expect(customerSummaryService[route.handler]).not.toHaveBeenCalled();
+          expect(accessLogInsert).not.toHaveBeenCalled();
+        });
+      }
+
+      it(`${route.method} ${route.handler}: rejects an unauthenticated request`, async () => {
+        const res = await app.inject({ method: route.method, url });
+        expect(res.statusCode).toBe(401);
+        expect(customerSummaryService[route.handler]).not.toHaveBeenCalled();
+      });
+
+      for (const role of ['owner', 'admin']) {
+        it(`${route.method} ${route.handler}: allows ${role}, returns the summary + stale flag, and records a customer access`, async () => {
+          memberWithRole(role);
+          const res = await app.inject({ method: route.method, url, headers: auth });
+          expect(res.statusCode).toBe(200);
+          expect(res.json()).toMatchObject({ summary: { content: 'A loyal repeat buyer.', provenance: 'ai_generated' }, stale: false });
+          expect(customerSummaryService[route.handler]).toHaveBeenCalledWith('ws_1', 'canon_1');
+          expect(accessLogValues).toHaveBeenCalledWith(expect.objectContaining({ resourceType: 'customer', resourceId: 'canon_1', actorRole: role }));
+        });
+      }
+    }
+
+    it('puts generation (an AI call) on the ai rate-limit tier, and leaves the read on the default tier', () => {
+      expect(Reflect.getMetadata(RATE_LIMIT_TIER_KEY, CustomerIntelligenceController.prototype.generateSummary)).toBe('ai');
+      expect(Reflect.getMetadata(RATE_LIMIT_TIER_KEY, CustomerIntelligenceController.prototype.getSummary)).toBeUndefined();
     });
   });
 });

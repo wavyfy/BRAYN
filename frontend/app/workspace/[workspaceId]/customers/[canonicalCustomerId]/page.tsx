@@ -15,6 +15,7 @@ import { RiskEngagement, type CustomerHealthState } from './risk-engagement';
 import { RevenueOpportunities, type RevenueOpportunity, type Recommendation } from './revenue-opportunities';
 import { CustomerMemory, type MemoryEntry } from './customer-memory';
 import { CustomerPreferences, type Preference } from './customer-preferences';
+import { CustomerSummary, RefreshSummaryButton, type CustomerSummaryView } from './customer-summary';
 
 type CustomerRecord = {
   canonicalCustomerId: string;
@@ -96,13 +97,14 @@ export default async function CustomerDetailPage({
   }
 
   // Health is calculated on demand — "not yet calculated" (404) is an expected empty state, not a page-level error.
-  const [health, memoryResult, preferencesResult] = await Promise.all([
+  const [health, memoryResult, preferencesResult, summaryResult] = await Promise.all([
     apiFetch(`${base}/health`).catch((error: unknown): null => {
       if (error instanceof ApiError && error.status === 404) return null;
       throw error;
     }) as Promise<CustomerHealthState | null>,
     fetchSection<MemoryEntry[]>(`${base}/memory`),
     fetchSection<Preference[]>(`${base}/preferences`),
+    fetchSection<CustomerSummaryView>(`${base}/summary`),
   ]);
 
   const opportunities = opportunitiesResult.ok ? opportunitiesResult.data : [];
@@ -202,6 +204,22 @@ export default async function CustomerDetailPage({
 
         {/* Context rail — the customer's current state, then the journey behind it. */}
         <aside className="min-w-0 space-y-8">
+          <section>
+            <SectionHeader
+              title="Summary"
+              action={<RefreshSummaryButton workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} hasSummary={summaryResult.ok && Boolean(summaryResult.data.summary)} />}
+            />
+            <div className="mt-3">
+              {summaryResult.ok ? (
+                <div className="rounded-xl border border-border bg-surface shadow-panel">
+                  <CustomerSummary view={summaryResult.data} />
+                </div>
+              ) : (
+                <ErrorText className="rounded-xl border border-danger/20 bg-danger/[0.03] px-4 py-3">Summary could not be loaded: {summaryResult.message}</ErrorText>
+              )}
+            </div>
+          </section>
+
           <section>
             <SectionHeader title="Risk & engagement" action={<RecalculateHealthButton workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} />} />
             <div className="mt-3 rounded-xl border border-border bg-surface shadow-panel p-4">

@@ -12,7 +12,7 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 import { ApiError } from '@/lib/api';
 import CustomerDetailPage from './page';
 
-// The memory and preferences sections are fetched after the positional mocks each test queues; default them to empty.
+// The memory, preferences and summary sections are fetched after the positional mocks each test queues; default them to empty.
 beforeEach(() => {
   apiFetch.mockResolvedValue([]);
 });
@@ -397,5 +397,55 @@ describe('CustomerDetailPage — Customer preferences (Slice 4.2)', () => {
 
     expect(screen.getByText('Preferences could not be loaded: Preferences unavailable.')).toBeTruthy();
     expect(screen.getByText('No notes yet.')).toBeTruthy();
+  });
+});
+
+describe('CustomerDetailPage — Customer summary (Slice 4.5)', () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  function queueSummary(page: ReturnType<typeof renderPage>, summary: unknown) {
+    apiFetch.mockResolvedValueOnce([]); // memory
+    apiFetch.mockResolvedValueOnce([]); // preferences
+    if (summary instanceof Error) apiFetch.mockRejectedValueOnce(summary);
+    else apiFetch.mockResolvedValueOnce(summary);
+    return page;
+  }
+
+  it('fetches the summary endpoint and renders the text with its AI-generated label', async () => {
+    const page = queueSummary(renderPage(baseCustomer), {
+      summary: { content: 'A loyal repeat buyer.', provenance: 'ai_generated', model: 'm', generatedAt: '2026-01-05T10:00:00.000Z', generatedByUserId: 'u1' },
+      stale: false,
+    });
+    render(await page);
+
+    expect(apiFetch).toHaveBeenCalledWith('/api/v1/workspaces/ws_1/customers/cust_1/summary');
+    expect(screen.getByText('A loyal repeat buyer.')).toBeTruthy();
+    expect(screen.getByText(/AI-generated · may be outdated/)).toBeTruthy();
+    expect(screen.queryByText('Data changed since this summary')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeTruthy();
+  });
+
+  it('shows the stale badge when the data changed since the summary', async () => {
+    const page = queueSummary(renderPage(baseCustomer), {
+      summary: { content: 'Old summary.', provenance: 'ai_generated', model: 'm', generatedAt: '2026-01-05T10:00:00.000Z', generatedByUserId: 'u1' },
+      stale: true,
+    });
+    render(await page);
+    expect(screen.getByText('Data changed since this summary')).toBeTruthy();
+  });
+
+  it('shows an empty state with a Generate button when there is no summary yet', async () => {
+    render(await queueSummary(renderPage(baseCustomer), { summary: null, stale: false }));
+    expect(screen.getByText(/No summary yet/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Generate' })).toBeTruthy();
+  });
+
+  it('keeps the rest of the page and shows an inline error when the summary fails to load', async () => {
+    render(await queueSummary(renderPage(baseCustomer), new ApiError(500, 'INTERNAL', 'Summary unavailable.')));
+    expect(screen.getByText('Summary could not be loaded: Summary unavailable.')).toBeTruthy();
+    expect(screen.getByText('Activity')).toBeTruthy();
   });
 });

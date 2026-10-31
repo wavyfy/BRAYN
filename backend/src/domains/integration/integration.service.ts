@@ -27,6 +27,7 @@ import { automationRuns } from '../../database/schema/automation-runs';
 import { customerMemoryEntries } from '../../database/schema/customer-memory-entries';
 import { customerMemoryEntryHistory } from '../../database/schema/customer-memory-entry-history';
 import { customerPreferenceHistory, customerPreferences } from '../../database/schema/customer-preferences';
+import { customerSummaries } from '../../database/schema/customer-summaries';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
 import { websiteVisitors } from '../../database/schema/website-visitors';
 import { websiteSessions } from '../../database/schema/website-sessions';
@@ -508,6 +509,7 @@ export class IntegrationService {
       await tx.delete(customerPreferenceHistory).where(and(eq(customerPreferenceHistory.workspaceId, workspaceId), inArray(customerPreferenceHistory.preferenceId, preferenceIds)));
     }
     await tx.delete(customerPreferences).where(and(eq(customerPreferences.workspaceId, workspaceId), eq(customerPreferences.canonicalCustomerId, canonicalCustomerId)));
+    await tx.delete(customerSummaries).where(and(eq(customerSummaries.workspaceId, workspaceId), eq(customerSummaries.canonicalCustomerId, canonicalCustomerId)));
     // Linked website visitors are this person's data (identity_signal payloads hold their email) — deleted, not unlinked; events → sessions → visitors (FK).
     const visitorRows = await tx
       .select({ id: websiteVisitors.id })

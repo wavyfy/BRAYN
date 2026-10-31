@@ -6,6 +6,7 @@ import { conversations } from '../../database/schema/conversations';
 import { customerHealthStates } from '../../database/schema/customer-health-states';
 import { customerMemoryEntries } from '../../database/schema/customer-memory-entries';
 import { customerPreferences } from '../../database/schema/customer-preferences';
+import { customerSummaries } from '../../database/schema/customer-summaries';
 import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
 import { recommendations } from '../../database/schema/recommendations';
 import { identityMergeHistory, type MergeSnapshotCustomer } from '../../database/schema/identity-merge-history';
@@ -273,6 +274,9 @@ export class IdentityResolutionService {
    *   recalculated here (the only recalculation path emits
    *   `customer_health.recalculated`, which runs automations — the
    *   existing on-demand recalculate endpoint covers it);
+   * - removes the merged customer's AI summary (`customer_summaries`,
+   *   derived, not snapshotted); the survivor's shows as stale until
+   *   regenerated;
    * - closes the merged customer's open opportunities (`expired`) and
    *   active recommendations (`dismissed`), reason `customer_merged` —
    *   kept, never deleted; no detection is re-run;
@@ -394,6 +398,8 @@ export class IdentityResolutionService {
         .set({ canonicalCustomerId: surviving.id, updatedAt: sql`${customerPreferences.updatedAt}` })
         .where(fromMerged(customerPreferences));
       await tx.delete(customerHealthStates).where(fromMerged(customerHealthStates));
+      // Derived and now describes a customer that no longer exists on its own; the survivor's summary turns stale by itself.
+      await tx.delete(customerSummaries).where(fromMerged(customerSummaries));
       await tx
         .update(revenueOpportunities)
         .set({ status: 'expired', closedAt: now, closedReason: MERGE_CLOSED_REASON, updatedAt: now })
