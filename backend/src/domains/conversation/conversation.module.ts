@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { WorkspaceModule } from '../workspace/workspace.module';
+import { CustomerIntelligenceModule } from '../customer-intelligence/customer-intelligence.module';
 import { ConversationService } from './conversation.service';
 import { ConversationController } from './conversation.controller';
 
@@ -16,10 +17,12 @@ import { ConversationController } from './conversation.controller';
  * Email is not part of BRAYN scope (removed — see doc 02, doc 29 §14).
  *
  * Imports WorkspaceModule for WorkspaceMembershipGuard rather than
- * duplicating the tenant-isolation/authorization boundary.
+ * duplicating the tenant-isolation/authorization boundary, and
+ * CustomerIntelligenceModule to resolve customers through the UCIR
+ * (doc08 "Canonical Customer Rule" — merged customers are rejected).
  */
 @Module({
-  imports: [WorkspaceModule],
+  imports: [WorkspaceModule, CustomerIntelligenceModule],
   controllers: [ConversationController],
   providers: [ConversationService],
   exports: [ConversationService],

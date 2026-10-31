@@ -10,6 +10,7 @@ import { WorkspaceMembershipService } from '../workspace/workspace-membership.se
 import { WorkspaceMembershipGuard } from '../workspace/workspace-membership.guard';
 import { AuthGuard } from '../../common/auth/auth.guard';
 import { AllExceptionsFilter } from '../../common/errors/all-exceptions.filter';
+import { NotFoundError } from '../../common/errors/app-error';
 import { registerHttpLogging } from '../../common/logging/http-logging.hook';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import { ProtectedDataAccessInterceptor } from '../../common/access-log/protected-data-access.interceptor';
@@ -165,6 +166,22 @@ describe('ConversationController (e2e)', () => {
       expect(res.statusCode).toBe(200);
       expect(conversationService.listConversations).toHaveBeenCalled();
       expect(accessLogValues).toHaveBeenCalledWith(expect.objectContaining({ actorRole: 'admin' }));
+    });
+
+    it('returns 404 with mergedIntoId for a merged customer', async () => {
+      memberWithRole('owner');
+      conversationService.listConversations.mockRejectedValueOnce(
+        new NotFoundError('This customer was merged into another customer.', { mergedIntoId: 'canon_survivor' }),
+      );
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/workspaces/ws_1/customers/canon_merged/conversations',
+        headers: { authorization: 'Bearer valid-token' },
+      });
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error).toMatchObject({ code: 'NOT_FOUND', details: { mergedIntoId: 'canon_survivor' } });
     });
   });
 
