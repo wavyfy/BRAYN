@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CustomerHealthService } from './customer-health.service';
+import { CustomerHealthService, categorize, computeTrend } from './customer-health.service';
 import type { DatabaseService } from '../../database/database.service';
 import type { DomainEvent } from '../../common/events/domain-event';
 import type { EventBus } from '../../common/events/event-bus.service';
@@ -50,11 +50,11 @@ function makeCustomerIntelligenceService(
 
 describe('CustomerHealthService', () => {
   describe('recalculate()', () => {
-    it('withholds score/healthCategory/trend — only 65% of the signal weight is available', async () => {
+    it('withholds score/healthCategory only when there is no purchase history and no website activity', async () => {
       const stateInsert = makeInsertChain();
       const historyInsert = { values: vi.fn(async () => undefined) };
       const insert = vi.fn().mockReturnValueOnce(stateInsert).mockReturnValueOnce(historyInsert);
-      const client = { insert };
+      const client = { insert, select: vi.fn(() => makeSelectChain([])) };
       const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: null, ordersLast90Days: 0 });
       const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
 
@@ -62,13 +62,14 @@ describe('CustomerHealthService', () => {
 
       expect(result.score).toBeNull();
       expect(result.healthCategory).toBeNull();
-      expect(result.trend).toBeNull();
+      expect(result.trend).toBe('unknown');
+      expect(result.coverage).toEqual({ availableWeight: 65, totalWeight: 100 });
       expect(result.reasonCodes.at(-1)).toContain('withheld');
     });
 
     it('computes a recency score of 0 and a reason code when there are no orders on record', async () => {
       const insert = vi.fn().mockReturnValue(makeInsertChain());
-      const client = { insert };
+      const client = { insert, select: vi.fn(() => makeSelectChain([])) };
       const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: null, ordersLast90Days: 0 });
       const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
 
@@ -80,7 +81,7 @@ describe('CustomerHealthService', () => {
 
     it('computes a decayed recency score based on days since the last order', async () => {
       const insert = vi.fn().mockReturnValue(makeInsertChain());
-      const client = { insert };
+      const client = { insert, select: vi.fn(() => makeSelectChain([])) };
       const fortyFiveDaysAgo = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000);
       const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: fortyFiveDaysAgo, ordersLast90Days: 0 });
       const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
@@ -94,7 +95,7 @@ describe('CustomerHealthService', () => {
 
     it('caps the frequency score at 100 once orders reach the target threshold', async () => {
       const insert = vi.fn().mockReturnValue(makeInsertChain());
-      const client = { insert };
+      const client = { insert, select: vi.fn(() => makeSelectChain([])) };
       const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: new Date(), ordersLast90Days: 10 });
       const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
 
@@ -107,7 +108,7 @@ describe('CustomerHealthService', () => {
 
     it('marks WhatsApp/email/customer-experience signals unavailable, each with a reason', async () => {
       const insert = vi.fn().mockReturnValue(makeInsertChain());
-      const client = { insert };
+      const client = { insert, select: vi.fn(() => makeSelectChain([])) };
       const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: null, ordersLast90Days: 0 });
       const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
 
@@ -122,7 +123,7 @@ describe('CustomerHealthService', () => {
 
     it('marks website engagement available with a score of 0 when no website activity exists', async () => {
       const insert = vi.fn().mockReturnValue(makeInsertChain());
-      const client = { insert };
+      const client = { insert, select: vi.fn(() => makeSelectChain([])) };
       const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: null, ordersLast90Days: 0 });
       const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
 
@@ -135,7 +136,7 @@ describe('CustomerHealthService', () => {
 
     it('computes a blended recency/frequency website engagement score when behavioural data exists', async () => {
       const insert = vi.fn().mockReturnValue(makeInsertChain());
-      const client = { insert };
+      const client = { insert, select: vi.fn(() => makeSelectChain([])) };
       const fifteenDaysAgo = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000);
       const customerIntelligenceService = makeCustomerIntelligenceService(
         { lastOrderAt: null, ordersLast90Days: 0 },
@@ -153,7 +154,7 @@ describe('CustomerHealthService', () => {
 
     it('caps the website frequency sub-score at 100 once events reach the target threshold', async () => {
       const insert = vi.fn().mockReturnValue(makeInsertChain());
-      const client = { insert };
+      const client = { insert, select: vi.fn(() => makeSelectChain([])) };
       const customerIntelligenceService = makeCustomerIntelligenceService(
         { lastOrderAt: null, ordersLast90Days: 0 },
         { eventsCount: 500, lastActivityAt: new Date() },
@@ -173,7 +174,7 @@ describe('CustomerHealthService', () => {
         { lastOrderAt: null, ordersLast90Days: 0 },
         { eventsCount: 500, lastActivityAt: new Date(Date.now() + 4 * 60 * 1000) },
       );
-      const service = new CustomerHealthService({ client: { insert } } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
+      const service = new CustomerHealthService({ client: { insert, select: vi.fn(() => makeSelectChain([])) } } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
 
       const result = await service.recalculate('ws_1', 'canon_1');
 
@@ -183,7 +184,7 @@ describe('CustomerHealthService', () => {
 
     it('scopes the website engagement signal to the requested workspace via getCustomer', async () => {
       const insert = vi.fn().mockReturnValue(makeInsertChain());
-      const client = { insert };
+      const client = { insert, select: vi.fn(() => makeSelectChain([])) };
       const customerIntelligenceService = makeCustomerIntelligenceService(
         { lastOrderAt: null, ordersLast90Days: 0 },
         { eventsCount: 5, lastActivityAt: new Date() },
@@ -202,7 +203,7 @@ describe('CustomerHealthService', () => {
       const stateInsert = makeInsertChain();
       const historyInsert = { values: vi.fn(async () => undefined) };
       const insert = vi.fn().mockReturnValueOnce(stateInsert).mockReturnValueOnce(historyInsert);
-      const client = { insert };
+      const client = { insert, select: vi.fn(() => makeSelectChain([])) };
       const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: null, ordersLast90Days: 0 });
       const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
 
@@ -215,7 +216,7 @@ describe('CustomerHealthService', () => {
 
     it('emits customer_health.recalculated after every recalculation', async () => {
       const insert = vi.fn().mockReturnValueOnce(makeInsertChain()).mockReturnValueOnce({ values: vi.fn(async () => undefined) });
-      const client = { insert };
+      const client = { insert, select: vi.fn(() => makeSelectChain([])) };
       const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: null, ordersLast90Days: 0 });
       const eventBus = makeEventBus();
       const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, eventBus, makeLogger());
@@ -248,7 +249,7 @@ describe('CustomerHealthService', () => {
 
     it('recalculates health for the event\'s workspace/canonical customer', async () => {
       const insert = vi.fn().mockReturnValue(makeInsertChain());
-      const client = { insert };
+      const client = { insert, select: vi.fn(() => makeSelectChain([])) };
       const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: null, ordersLast90Days: 0 });
       const service = new CustomerHealthService({ client } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
       const recalculateSpy = vi.spyOn(service, 'recalculate');
@@ -261,7 +262,7 @@ describe('CustomerHealthService', () => {
     it.each(['order.cancelled', 'refund.processed'])('recalculates on %s exactly like order.created', async (type) => {
       const insert = vi.fn().mockReturnValue(makeInsertChain());
       const customerIntelligenceService = makeCustomerIntelligenceService({ lastOrderAt: null, ordersLast90Days: 0 });
-      const service = new CustomerHealthService({ client: { insert } } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
+      const service = new CustomerHealthService({ client: { insert, select: vi.fn(() => makeSelectChain([])) } } as unknown as DatabaseService, customerIntelligenceService, makeEventBus(), makeLogger());
       const recalculateSpy = vi.spyOn(service, 'recalculate');
 
       await service.handleCommerceEvent(makeOrderCreatedEvent({ type }));
@@ -312,6 +313,98 @@ describe('CustomerHealthService', () => {
     });
   });
 
+  describe('recalculate() — Milestone #5 D1 scoring', () => {
+    function makeService(
+      commerce: { lastOrderAt: Date | null; ordersLast90Days: number; ordersCount?: number },
+      behaviour?: { eventsCount: number; lastActivityAt: Date | null },
+      previousRow: Record<string, unknown> | null = null,
+    ) {
+      const stateInsert = makeInsertChain();
+      const historyInsert = { values: vi.fn(async () => undefined) };
+      const client = {
+        insert: vi.fn().mockReturnValueOnce(stateInsert).mockReturnValueOnce(historyInsert),
+        select: vi.fn(() => makeSelectChain(previousRow ? [previousRow] : [])),
+      };
+      const service = new CustomerHealthService(
+        { client } as unknown as DatabaseService,
+        makeCustomerIntelligenceService(commerce as { lastOrderAt: Date | null; ordersLast90Days: number }, behaviour),
+        makeEventBus(),
+        makeLogger(),
+      );
+      return { service, stateInsert, historyInsert };
+    }
+    const DAY = 24 * 60 * 60 * 1000;
+
+    it('rescales the available signals to 100% and excludes unavailable ones (not counted as 0)', async () => {
+      // recency: 0 days → 100 (w30); frequency: 4 orders → 100 (w20); website: none → 0 (w15).
+      // Rescaled: (100·30 + 100·20 + 0·15) / 65 = 76.9 → 77. Counting the 35% unavailable weight as 0 would give 50.
+      const { service } = makeService({ lastOrderAt: new Date(), ordersLast90Days: 4, ordersCount: 4 });
+
+      const result = await service.recalculate('ws_1', 'canon_1');
+
+      expect(result.score).toBe(77);
+      expect(result.healthCategory).toBe('Healthy');
+      expect(result.coverage).toEqual({ availableWeight: 65, totalWeight: 100 });
+      expect(result.reasonCodes.at(-1)).toContain('rescaled to 100%');
+    });
+
+    it('scores a customer with website activity but no purchases (purchase signals count as 0, score not null)', async () => {
+      // website: recency 100·0.6 + frequency (20/20) 100·0.4 = 100 (w15); purchases 0 → 100·15/65 = 23.
+      const { service } = makeService({ lastOrderAt: null, ordersLast90Days: 0 }, { eventsCount: 20, lastActivityAt: new Date() });
+
+      const result = await service.recalculate('ws_1', 'canon_1');
+
+      expect(result.score).toBe(23);
+      expect(result.healthCategory).toBe('Critical');
+    });
+
+    it('persists the score, category and trend on the current state and the history row', async () => {
+      const { service, stateInsert, historyInsert } = makeService({ lastOrderAt: new Date(), ordersLast90Days: 4, ordersCount: 4 });
+
+      await service.recalculate('ws_1', 'canon_1');
+
+      const written = expect.objectContaining({ score: 77, healthCategory: 'Healthy', trend: 'unknown' });
+      expect(stateInsert.values).toHaveBeenCalledWith(written);
+      expect(historyInsert.values).toHaveBeenCalledWith(written);
+      expect(vi.mocked(stateInsert.values as ReturnType<typeof vi.fn>).mock.calls[0][0]).not.toHaveProperty('coverage');
+    });
+
+    it('trends against the previously persisted score', async () => {
+      const current = { lastOrderAt: new Date(), ordersLast90Days: 4, ordersCount: 4 }; // → 77
+      const trendFor = async (previousScore: number | null) =>
+        (await makeService(current, undefined, { score: previousScore, signals: {} }).service.recalculate('ws_1', 'canon_1')).trend;
+
+      expect(await trendFor(71)).toBe('improving'); // +6
+      expect(await trendFor(72)).toBe('stable'); // +5
+      expect(await trendFor(82)).toBe('stable'); // -5
+      expect(await trendFor(83)).toBe('declining'); // -6
+      expect(await trendFor(null)).toBe('unknown');
+    });
+
+    it('scores a customer quiet for 60 days with one recent-window order as Critical', async () => {
+      // recency: 60/90 → 33 (w30); frequency 1/4 → 25 (w20); website 0 → (33·30 + 25·20) / 65 = 22.9 → 23 → Critical.
+      const { service } = makeService({ lastOrderAt: new Date(Date.now() - 60 * DAY), ordersLast90Days: 1, ordersCount: 1 });
+
+      expect((await service.recalculate('ws_1', 'canon_1')).healthCategory).toBe('Critical');
+    });
+  });
+
+  describe('categorize() / computeTrend()', () => {
+    it('maps the D1 category boundaries', () => {
+      const cases: [number, string][] = [[0, 'Critical'], [24, 'Critical'], [25, 'At Risk'], [49, 'At Risk'], [50, 'Neutral'], [74, 'Neutral'], [75, 'Healthy'], [100, 'Healthy']];
+      for (const [score, category] of cases) expect(categorize(score)).toBe(category);
+    });
+
+    it('uses a strict ±5 threshold and unknown when either score is missing', () => {
+      expect(computeTrend(56, 50)).toBe('improving');
+      expect(computeTrend(55, 50)).toBe('stable');
+      expect(computeTrend(45, 50)).toBe('stable');
+      expect(computeTrend(44, 50)).toBe('declining');
+      expect(computeTrend(50, null)).toBe('unknown');
+      expect(computeTrend(null, 50)).toBe('unknown');
+    });
+  });
+
   describe('getCurrent()', () => {
     it('throws NotFoundError when no state has been calculated yet', async () => {
       const select = vi.fn(() => makeSelectChain([]));
@@ -329,7 +422,7 @@ describe('CustomerHealthService', () => {
 
       const result = await service.getCurrent('ws_1', 'canon_1');
 
-      expect(result).toEqual(row);
+      expect(result).toEqual({ ...row, coverage: { availableWeight: 0, totalWeight: 0 } });
     });
   });
 });

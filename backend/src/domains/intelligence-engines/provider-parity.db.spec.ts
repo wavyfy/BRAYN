@@ -10,6 +10,7 @@ import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { commerceOrders } from '../../database/schema/commerce-orders';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
+import { recommendations } from '../../database/schema/recommendations';
 import { customerHealthStates } from '../../database/schema/customer-health-states';
 import { customerHealthStateHistory } from '../../database/schema/customer-health-state-history';
 import { IntegrationService } from '../integration/integration.service';
@@ -129,6 +130,8 @@ describe('Provider parity — core intelligence (real DB)', () => {
 
   afterAll(async () => {
     if (!db) return;
+    // Automatic evaluation (Milestone #5) creates recommendations, which reference opportunities.
+    await db.client.delete(recommendations).where(eq(recommendations.workspaceId, workspaceId));
     await db.client.delete(revenueOpportunities).where(eq(revenueOpportunities.workspaceId, workspaceId));
     await db.client.delete(customerHealthStateHistory).where(eq(customerHealthStateHistory.workspaceId, workspaceId));
     await db.client.delete(customerHealthStates).where(eq(customerHealthStates.workspaceId, workspaceId));

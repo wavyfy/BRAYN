@@ -1,8 +1,11 @@
 import { Injectable } from '@nestjs/common';
+import { OnEvent } from '@nestjs/event-emitter';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { recommendations } from '../../database/schema/recommendations';
 import { DatabaseService } from '../../database/database.service';
 import { ConflictError, NotFoundError } from '../../common/errors/app-error';
+import type { DomainEvent } from '../../common/events/domain-event';
+import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import { RevenueOpportunityService } from './revenue-opportunity.service';
 
 export type RecommendationState = 'active' | 'dismissed' | 'completed';
@@ -11,16 +14,44 @@ export type RecommendationState = 'active' | 'dismissed' | 'completed';
  * Recommendations (doc10 7.3). See recommendations schema's doc comment
  * for why Phase 1 generates 1:1 from open Revenue Opportunities only.
  *
- * Generation is on-demand (`generate()`) — same reasoning as
- * CustomerHealthService/RevenueOpportunityService for why this isn't
- * event-driven/scheduled yet.
+ * Generated on demand (`generate()`) and automatically (Milestone #5 D5):
+ * every commerce event that changes a customer's history and every health
+ * recalculation re-runs opportunity detection, then recommendation
+ * generation, for that customer. Both steps skip what already exists, so a
+ * repeated or concurrent evaluation creates nothing twice. The daily
+ * scheduled run is Release 2.
  */
 @Injectable()
 export class RecommendationService {
   constructor(
     private readonly database: DatabaseService,
     private readonly revenueOpportunityService: RevenueOpportunityService,
+    private readonly logger: StructuredLoggerService,
   ) {}
+
+  /**
+   * In-process off the emitter (synchronous EventBus), so a failure is logged and never
+   * propagates to the commerce write or health recalculation that emitted the event —
+   * same fire-and-forget boundary as CustomerHealthService.handleCommerceEvent.
+   */
+  @OnEvent('order.created')
+  @OnEvent('order.cancelled')
+  @OnEvent('refund.processed')
+  @OnEvent('customer_health.recalculated')
+  async handleEvaluationTrigger(event: DomainEvent<{ canonicalCustomerId?: string | null }>): Promise<void> {
+    const { canonicalCustomerId } = event.payload;
+    if (!event.workspaceId || !canonicalCustomerId) return;
+
+    try {
+      await this.revenueOpportunityService.detect(event.workspaceId, canonicalCustomerId);
+      await this.generate(event.workspaceId, canonicalCustomerId);
+    } catch (error) {
+      this.logger.event('error', `Opportunity/recommendation evaluation on ${event.type} threw unexpectedly`, 'RecommendationService', {
+        canonicalCustomerId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   async generate(workspaceId: string, canonicalCustomerId: string) {
     const openOpportunities = await this.revenueOpportunityService.list(workspaceId, canonicalCustomerId);
@@ -47,7 +78,8 @@ export class RecommendationService {
       }));
 
     if (newRows.length > 0) {
-      await this.database.client.insert(recommendations).values(newRows);
+      // A concurrent evaluation may have inserted the same opportunity's recommendation; the unique index makes that a no-op.
+      await this.database.client.insert(recommendations).values(newRows).onConflictDoNothing();
     }
 
     return this.list(workspaceId, canonicalCustomerId);

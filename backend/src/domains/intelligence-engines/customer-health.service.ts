@@ -37,6 +37,17 @@ const WEBSITE_FREQUENCY_TARGET_EVENTS = 20;
 const WEBSITE_RECENCY_SUBWEIGHT = 0.6;
 const WEBSITE_FREQUENCY_SUBWEIGHT = 0.4;
 
+/** Milestone #5 D1 category bands (user decision, Oct 31, 2026) — lower bound inclusive. */
+const HEALTH_CATEGORIES = [
+  { min: 75, label: 'Healthy' },
+  { min: 50, label: 'Neutral' },
+  { min: 25, label: 'At Risk' },
+  { min: 0, label: 'Critical' },
+] as const;
+export type HealthCategory = (typeof HEALTH_CATEGORIES)[number]['label'];
+/** Score change vs the previous persisted score beyond which the trend is improving/declining (D1). */
+const TREND_THRESHOLD = 5;
+
 interface SignalResult {
   value: number | null;
   score: number;
@@ -52,6 +63,8 @@ export interface CustomerHealthState {
   reasonCodes: string[];
   trend: string | null;
   lastCalculatedAt: Date;
+  /** Share of doc10's total signal weight that was available — derived from `signals`, not stored separately. */
+  coverage: { availableWeight: number; totalWeight: number };
 }
 
 /**
@@ -75,13 +88,14 @@ export interface CustomerHealthState {
  * decay/target constants above are an explicit first-pass heuristic like
  * `RECENCY_DECAY_DAYS`/`FREQUENCY_TARGET_ORDERS`.
  *
- * Only 65% of the spec'd weight (recency + frequency + website engagement)
- * is available, so `score`/`healthCategory`/`trend` stay null rather than
- * emit a number computed from part of the locked formula — this was an
- * explicit choice, not a default (see this part's completion report).
- * `signals` and `reasonCodes` are always populated from what's actually
- * available, so the withheld score is still explainable (doc10's own
- * requirement).
+ * Milestone #5 D1 (user decision, Oct 31, 2026): the score is the
+ * weighted average of the *available* signals only (their weights rescaled
+ * to 100%), so a missing signal is excluded rather than counted as 0;
+ * `coverage` reports how much of doc10's weight that was. `score`/
+ * `healthCategory` stay null only when the customer has no purchase
+ * history and no website activity. `trend` compares against the previous
+ * persisted score. `signals` and `reasonCodes` are always populated, so
+ * every score is explainable (doc10).
  *
  * Recalculation is triggered two ways: manually via `recalculate()`
  * (merchant-triggered button, Phase 8), and automatically on the commerce
@@ -155,33 +169,41 @@ export class CustomerHealthService {
       customerExperience: { weight: 10, available: false, reason: 'No source defined yet.' },
     };
 
+    const coverage = computeCoverage(signals);
+    const hasActivity = customer.commerceContext.ordersCount > 0 || customer.behaviouralContext.eventsCount > 0;
+    const score = hasActivity ? computeScore(signals) : null;
+    const previous = await this.findCurrent(workspaceId, canonicalCustomerId);
+
     const reasonCodes = [
       recency.reasonCode,
       frequency.reasonCode,
       websiteEngagement.reasonCode,
-      'Overall score withheld — only 65% of doc10\'s signal weight is available (missing WhatsApp/customer-experience signals; email pending a product decision).',
+      score === null
+        ? 'No purchase history or website activity — overall score withheld.'
+        : `Overall score ${score}/100 from the available ${coverage.availableWeight}% of doc10's signal weight, rescaled to 100% (WhatsApp/customer-experience unavailable; email pending a product decision).`,
     ];
 
     const now = new Date();
-    const state: CustomerHealthState = {
+    const row = {
       workspaceId,
       canonicalCustomerId,
-      score: null,
-      healthCategory: null,
+      score,
+      healthCategory: score === null ? null : categorize(score),
       signals,
       reasonCodes,
-      trend: null,
+      trend: computeTrend(score, previous?.score ?? null),
       lastCalculatedAt: now,
     };
+    const state: CustomerHealthState = { ...row, coverage };
 
     await this.database.client
       .insert(customerHealthStates)
-      .values(state)
+      .values(row)
       .onConflictDoUpdate({
         target: [customerHealthStates.workspaceId, customerHealthStates.canonicalCustomerId],
         set: { score: state.score, healthCategory: state.healthCategory, signals, reasonCodes, trend: state.trend, lastCalculatedAt: now, updatedAt: now },
       });
-    await this.database.client.insert(customerHealthStateHistory).values({ ...state, calculatedAt: now });
+    await this.database.client.insert(customerHealthStateHistory).values({ ...row, calculatedAt: now });
 
     this.eventBus.emit(
       createEvent<CustomerHealthRecalculatedPayload>({
@@ -196,18 +218,52 @@ export class CustomerHealthService {
   }
 
   async getCurrent(workspaceId: string, canonicalCustomerId: string): Promise<CustomerHealthState> {
+    const state = await this.findCurrent(workspaceId, canonicalCustomerId);
+    if (!state) {
+      throw new NotFoundError('No health state has been calculated yet for this customer.');
+    }
+    return state;
+  }
+
+  /** The persisted state, or null when none has been calculated yet. */
+  async findCurrent(workspaceId: string, canonicalCustomerId: string): Promise<CustomerHealthState | null> {
     const [row] = await this.database.client
       .select()
       .from(customerHealthStates)
       .where(and(eq(customerHealthStates.workspaceId, workspaceId), eq(customerHealthStates.canonicalCustomerId, canonicalCustomerId)))
       .limit(1);
 
-    if (!row) {
-      throw new NotFoundError('No health state has been calculated yet for this customer.');
-    }
-
-    return row as unknown as CustomerHealthState;
+    if (!row) return null;
+    return { ...(row as unknown as CustomerHealthState), coverage: computeCoverage(row.signals as Record<string, unknown>) };
   }
+}
+
+type WeightedSignal = { weight: number; available: boolean; score?: number };
+
+function computeCoverage(signals: Record<string, unknown>): { availableWeight: number; totalWeight: number } {
+  const all = Object.values(signals) as WeightedSignal[];
+  const sum = (list: WeightedSignal[]) => list.reduce((total, signal) => total + signal.weight, 0);
+  return { availableWeight: sum(all.filter((signal) => signal.available)), totalWeight: sum(all) };
+}
+
+/** Weighted average over the available signals only — their weights rescaled to 100% (D1). */
+function computeScore(signals: Record<string, unknown>): number | null {
+  const available = (Object.values(signals) as WeightedSignal[]).filter((signal) => signal.available);
+  const weight = available.reduce((total, signal) => total + signal.weight, 0);
+  if (weight === 0) return null;
+  return Math.round(available.reduce((total, signal) => total + (signal.score ?? 0) * signal.weight, 0) / weight);
+}
+
+export function categorize(score: number): HealthCategory {
+  return HEALTH_CATEGORIES.find((category) => score >= category.min)!.label;
+}
+
+export function computeTrend(score: number | null, previousScore: number | null): 'improving' | 'declining' | 'stable' | 'unknown' {
+  if (score === null || previousScore === null) return 'unknown';
+  const delta = score - previousScore;
+  if (delta > TREND_THRESHOLD) return 'improving';
+  if (delta < -TREND_THRESHOLD) return 'declining';
+  return 'stable';
 }
 
 function computeRecencySignal(lastOrderAt: Date | null): SignalResult {

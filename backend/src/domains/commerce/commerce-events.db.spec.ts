@@ -17,6 +17,7 @@ import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { customerHealthStates } from '../../database/schema/customer-health-states';
 import { customerHealthStateHistory } from '../../database/schema/customer-health-state-history';
 import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
+import { recommendations } from '../../database/schema/recommendations';
 import { EventBus } from '../../common/events/event-bus.service';
 import type { DomainEvent } from '../../common/events/domain-event';
 import { IntegrationService } from '../integration/integration.service';
@@ -217,7 +218,7 @@ describe('Commerce domain events (real DB)', { timeout: 60_000 }, () => {
     canonicalCustomerId = row.canonicalCustomerId!;
 
     captureEmits();
-  }, 60_000);
+  }, 90_000);
 
   beforeEach(() => {
     emitted = [];
@@ -226,7 +227,22 @@ describe('Commerce domain events (real DB)', { timeout: 60_000 }, () => {
   afterAll(async () => {
     vi.restoreAllMocks();
     if (db?.isConfigured()) {
+      // Event handlers are fire-and-forget (health recalculation → automatic evaluation); let in-flight ones
+      // finish writing before teardown, or they insert rows that reference already-deleted customers.
+      const writtenCount = async () => {
+        let total = 0;
+        for (const table of [customerHealthStateHistory, revenueOpportunities, recommendations]) {
+          total += Number((await db.client.select({ n: sql<number>`count(*)` }).from(table).where(eq(table.workspaceId, workspaceId)))[0].n);
+        }
+        return total;
+      };
+      for (let previous = -1, current = await writtenCount(), i = 0; current !== previous && i < 15; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        [previous, current] = [current, await writtenCount()];
+      }
       const orderIds = (await db.client.select({ id: commerceOrders.id }).from(commerceOrders).where(eq(commerceOrders.workspaceId, workspaceId))).map((r) => r.id);
+      // Automatic evaluation (Milestone #5) creates recommendations, which reference opportunities.
+      await db.client.delete(recommendations).where(eq(recommendations.workspaceId, workspaceId));
       await db.client.delete(revenueOpportunities).where(eq(revenueOpportunities.workspaceId, workspaceId));
       await db.client.delete(customerHealthStateHistory).where(eq(customerHealthStateHistory.workspaceId, workspaceId));
       await db.client.delete(customerHealthStates).where(eq(customerHealthStates.workspaceId, workspaceId));
@@ -242,7 +258,7 @@ describe('Commerce domain events (real DB)', { timeout: 60_000 }, () => {
       await db.client.delete(workspaces).where(eq(workspaces.id, workspaceId));
     }
     await moduleRef?.close();
-  }, 60_000);
+  }, 90_000);
 
   it('emits order.created exactly once for a new order, with workspace/order/customer/source-time in the contract', async () => {
     await deliver('orders/create', { id: 100, updatedAt: '2026-03-01T10:00:00Z' });

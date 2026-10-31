@@ -7,21 +7,16 @@ import { canonicalCustomers } from './canonical-customers';
  * — "Maintains a continuously updated customer score representing
  * current relationship strength and business risk").
  *
- * doc10's Phase 1 weight table needs signals BRAYN doesn't have yet
- * (website/WhatsApp engagement — no Website Behaviour/Conversation
- * domain; email engagement — explicitly "PENDING PRODUCT DECISION" in
- * the doc itself; customer experience — no source). Rather than emit a
- * score computed from half the spec'd formula, `score`/`healthCategory`/
- * `trend` stay null until enough signal coverage exists — see
- * CustomerHealthService's doc comment. `signals` and `reasonCodes` are
- * always populated from whatever's actually available, so even a null
- * score is explainable (doc10 — "Every score must be explainable from
- * its underlying signals").
+ * `score` is computed from the available signals only, rescaled to 100%
+ * (Milestone #5 D1) — see CustomerHealthService's doc comment; null only
+ * when the customer has no purchase history and no website activity.
+ * `signals` and `reasonCodes` are always populated, so every score is
+ * explainable (doc10 — "Every score must be explainable from its
+ * underlying signals").
  *
- * `healthCategory` is deliberately untyped free text: doc10 says "Fixed
- * Phase 1 health categories" exist but never names them anywhere in the
- * documentation — do not invent category names; get them from an
- * explicit product decision before this column's first real write.
+ * `healthCategory`: 'Critical' | 'At Risk' | 'Neutral' | 'Healthy' (D1);
+ * `trend`: 'improving' | 'declining' | 'stable' | 'unknown'. Free text
+ * columns — no migration needed for these values.
  */
 export const customerHealthStates = pgTable(
   'customer_health_states',
@@ -31,7 +26,7 @@ export const customerHealthStates = pgTable(
     canonicalCustomerId: uuid('canonical_customer_id')
       .notNull()
       .references(() => canonicalCustomers.id),
-    /** 0-100, or null when signal coverage is insufficient to compute a score doc10's weight table would stand behind. */
+    /** 0-100, or null when the customer has no purchase history and no website activity. */
     score: integer('score'),
     healthCategory: text('health_category'),
     /** Every signal considered, available or not — e.g. `{ purchaseRecency: { value, weight, score }, websiteEngagement: { available: false, reason: "..." } }`. */

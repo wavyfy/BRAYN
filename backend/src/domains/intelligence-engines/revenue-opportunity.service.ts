@@ -10,6 +10,8 @@ import { DatabaseService } from '../../database/database.service';
 import { createEvent } from '../../common/events/domain-event';
 import { EventBus } from '../../common/events/event-bus.service';
 import { CustomerIntelligenceService, type CustomerRecord } from '../customer-intelligence/customer-intelligence.service';
+import { CustomerHealthService, type HealthCategory } from './customer-health.service';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 /** Doc10 opportunity lifecycle: "Merchant / System Notification" after detection (doc16 trigger: "Revenue opportunities"). */
 export interface RevenueOpportunityCreatedPayload {
@@ -118,6 +120,7 @@ export class RevenueOpportunityService {
     private readonly database: DatabaseService,
     private readonly customerIntelligenceService: CustomerIntelligenceService,
     private readonly eventBus: EventBus,
+    private readonly customerHealthService: CustomerHealthService,
   ) {}
 
   async detect(workspaceId: string, canonicalCustomerId: string) {
@@ -138,12 +141,18 @@ export class RevenueOpportunityService {
       upsellCandidate,
     ].filter((candidate): candidate is OpportunityCandidate => candidate !== null);
 
-    const existingOpenTypes = await this.getOpenTypes(workspaceId, canonicalCustomerId);
-    const newCandidates = candidates.filter((candidate) => !existingOpenTypes.has(candidate.type));
+    const healthCategory = (await this.customerHealthService.findCurrent(workspaceId, canonicalCustomerId))?.healthCategory ?? null;
+    const avgOrderValue = averageOrderValue(customer);
 
-    if (newCandidates.length > 0) {
-      const avgOrderValue = averageOrderValue(customer);
-      const created = await this.database.client
+    // Automatic evaluation (Milestone #5 D5) can run concurrently for one customer (order event + the
+    // health event it causes); a per-customer transaction lock makes the open-type check and insert atomic.
+    const created = await this.database.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`revenue_opportunity:${workspaceId}:${canonicalCustomerId}`}))`);
+      const existingOpenTypes = await this.getOpenTypes(workspaceId, canonicalCustomerId, tx);
+      const newCandidates = candidates.filter((candidate) => !existingOpenTypes.has(candidate.type));
+      if (newCandidates.length === 0) return [];
+
+      return tx
         .insert(revenueOpportunities)
         .values(
           newCandidates.map((candidate) => ({
@@ -151,7 +160,7 @@ export class RevenueOpportunityService {
             canonicalCustomerId,
             type: candidate.type,
             status: 'new' as const,
-            priority: computePriority(candidate.confidence, candidate.estimatedRevenue, avgOrderValue),
+            priority: computePriority(candidate.confidence, candidate.estimatedRevenue, avgOrderValue, candidate.type, healthCategory),
             estimatedRevenue: candidate.estimatedRevenue,
             confidence: candidate.confidence,
             reason: candidate.reason,
@@ -159,24 +168,25 @@ export class RevenueOpportunityService {
           })),
         )
         .returning();
+    });
 
-      for (const opportunity of created) {
-        this.eventBus.emit(
-          createEvent<RevenueOpportunityCreatedPayload>({
-            type: 'revenue_opportunity.created',
-            workspaceId,
-            entityId: opportunity.id,
-            payload: {
-              opportunityId: opportunity.id,
-              canonicalCustomerId,
-              type: opportunity.type as OpportunityType,
-              priority: opportunity.priority as OpportunityPriority,
-              estimatedRevenue: opportunity.estimatedRevenue,
-              confidence: opportunity.confidence,
-            },
-          }),
-        );
-      }
+    // Emitted after commit, so a handler never sees an opportunity that could still roll back.
+    for (const opportunity of created) {
+      this.eventBus.emit(
+        createEvent<RevenueOpportunityCreatedPayload>({
+          type: 'revenue_opportunity.created',
+          workspaceId,
+          entityId: opportunity.id,
+          payload: {
+            opportunityId: opportunity.id,
+            canonicalCustomerId,
+            type: opportunity.type as OpportunityType,
+            priority: opportunity.priority as OpportunityPriority,
+            estimatedRevenue: opportunity.estimatedRevenue,
+            confidence: opportunity.confidence,
+          },
+        }),
+      );
     }
 
     return this.list(workspaceId, canonicalCustomerId);
@@ -216,8 +226,8 @@ export class RevenueOpportunityService {
     return { total, byPriority };
   }
 
-  private async getOpenTypes(workspaceId: string, canonicalCustomerId: string): Promise<Set<OpportunityType>> {
-    const rows = await this.database.client
+  private async getOpenTypes(workspaceId: string, canonicalCustomerId: string, executor: NodePgDatabase): Promise<Set<OpportunityType>> {
+    const rows = await executor
       .select({ type: revenueOpportunities.type })
       .from(revenueOpportunities)
       .where(
@@ -591,14 +601,37 @@ function detectVipRecognition(customer: CustomerRecord): OpportunityCandidate | 
 }
 
 /** See RevenueOpportunityService's doc comment for why this isn't doc10's full 4-factor formula. */
-function computePriority(confidence: number, estimatedRevenue: string | null, avgOrderValue: number | null): OpportunityPriority {
+/** Bounded up/down step already used for the revenue factor below — reused for health so neither factor outweighs the other. */
+const PRIORITY_BOOST = 1.2;
+const PRIORITY_DAMPEN = 0.8;
+
+/**
+ * Customer Risk & Engagement State factor (doc10 priority formula; Milestone #5 Release 1 direction, user decision Oct 31, 2026):
+ * Critical/At Risk favor win-back, Critical dampens pure upsell, Healthy favors upsell/cross-sell and dampens win-back.
+ * Types and categories not listed (reorder, VIP, bundle; Neutral; no health state) get no adjustment.
+ */
+const HEALTH_PRIORITY_ADJUSTMENTS: Partial<Record<HealthCategory, Partial<Record<OpportunityType, number>>>> = {
+  Critical: { win_back: PRIORITY_BOOST, upsell: PRIORITY_DAMPEN },
+  'At Risk': { win_back: PRIORITY_BOOST },
+  Healthy: { upsell: PRIORITY_BOOST, cross_sell: PRIORITY_BOOST, win_back: PRIORITY_DAMPEN },
+};
+
+export function computePriority(
+  confidence: number,
+  estimatedRevenue: string | null,
+  avgOrderValue: number | null,
+  type: OpportunityType,
+  healthCategory: string | null,
+): OpportunityPriority {
   let score = confidence;
 
   const revenue = estimatedRevenue ? Number(estimatedRevenue) : null;
   if (revenue !== null && avgOrderValue !== null && avgOrderValue > 0) {
     const ratio = revenue / avgOrderValue;
-    score *= ratio >= 1.5 ? 1.2 : ratio < 0.5 ? 0.8 : 1;
+    score *= ratio >= 1.5 ? PRIORITY_BOOST : ratio < 0.5 ? PRIORITY_DAMPEN : 1;
   }
+
+  score *= HEALTH_PRIORITY_ADJUSTMENTS[healthCategory as HealthCategory]?.[type] ?? 1;
 
   if (score >= 90) return 'critical';
   if (score >= 70) return 'high';

@@ -42,6 +42,7 @@ const healthFixture: CustomerHealthState = {
   reasonCodes: ['Last order 5 day(s) ago — recency score 80/100.'],
   trend: null,
   lastCalculatedAt: new Date('2026-01-01T00:00:00Z'),
+  coverage: { availableWeight: 65, totalWeight: 100 },
 };
 
 function makeGateway(overrides: Partial<AiGatewayService> = {}): AiGatewayService {
