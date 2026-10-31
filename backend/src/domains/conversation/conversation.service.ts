@@ -2,8 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { conversations } from '../../database/schema/conversations';
 import { conversationMessages } from '../../database/schema/conversation-messages';
-import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { DatabaseService } from '../../database/database.service';
+import { CustomerIntelligenceService } from '../customer-intelligence/customer-intelligence.service';
 import { NotFoundError } from '../../common/errors/app-error';
 import type { StartConversationInput } from './dto/start-conversation.schema';
 
@@ -25,11 +25,14 @@ import type { StartConversationInput } from './dto/start-conversation.schema';
  */
 @Injectable()
 export class ConversationService {
-  constructor(private readonly database: DatabaseService) {}
+  constructor(
+    private readonly database: DatabaseService,
+    private readonly customerIntelligence: CustomerIntelligenceService,
+  ) {}
 
   /** Reuses the customer's own open conversation on this channel, if one exists — doc15's "conversation represents an ongoing communication context", not a new one per message. */
   async startConversation(workspaceId: string, canonicalCustomerId: string, input: StartConversationInput) {
-    await this.requireCanonicalCustomer(workspaceId, canonicalCustomerId);
+    await this.customerIntelligence.requireCanonical(workspaceId, canonicalCustomerId);
 
     const [existing] = await this.database.client
       .select()
@@ -57,7 +60,7 @@ export class ConversationService {
   }
 
   async listConversations(workspaceId: string, canonicalCustomerId: string) {
-    await this.requireCanonicalCustomer(workspaceId, canonicalCustomerId);
+    await this.customerIntelligence.requireCanonical(workspaceId, canonicalCustomerId);
 
     return this.database.client
       .select()
@@ -96,18 +99,6 @@ export class ConversationService {
     await this.database.client.update(conversations).set({ lastMessageAt: now, updatedAt: now }).where(eq(conversations.id, conversationId));
 
     return message;
-  }
-
-  private async requireCanonicalCustomer(workspaceId: string, canonicalCustomerId: string): Promise<void> {
-    const [canonical] = await this.database.client
-      .select({ id: canonicalCustomers.id })
-      .from(canonicalCustomers)
-      .where(and(eq(canonicalCustomers.workspaceId, workspaceId), eq(canonicalCustomers.id, canonicalCustomerId)))
-      .limit(1);
-
-    if (!canonical) {
-      throw new NotFoundError('No customer with that id exists in this workspace.');
-    }
   }
 
   private async requireConversation(workspaceId: string, canonicalCustomerId: string, conversationId: string): Promise<void> {
