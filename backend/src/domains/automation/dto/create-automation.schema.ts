@@ -2,7 +2,8 @@ import { z } from 'zod';
 
 /** Mirrors RevenueOpportunityService's `OpportunityPriority`/`OpportunityType` — the only condition inputs available today. */
 const opportunityPriorities = ['critical', 'high', 'medium', 'low'] as const;
-const opportunityTypes = ['reorder', 'win_back', 'vip_recognition'] as const;
+/** Every type the Revenue Opportunity Detector produces (`OpportunityType`). */
+export const opportunityTypes = ['reorder', 'win_back', 'vip_recognition', 'cross_sell', 'upsell', 'bundle'] as const;
 
 export const automationConditionsSchema = z
   .object({

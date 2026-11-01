@@ -80,6 +80,30 @@ describe('CreateAutomationForm', () => {
     );
   });
 
+  it('offers all six opportunity types as typeIn choices', () => {
+    render(<CreateAutomationForm workspaceId="ws_1" />);
+
+    for (const name of ['reorder', 'win back', 'vip recognition', 'cross sell', 'upsell', 'bundle']) {
+      expect(screen.getByRole('checkbox', { name })).toBeTruthy();
+    }
+  });
+
+  it('submits the canonical type values for the newly available types', async () => {
+    createAutomation.mockResolvedValueOnce(undefined);
+    render(<CreateAutomationForm workspaceId="ws_1" />);
+
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Recommend on product opportunities' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'cross sell' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'upsell' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'bundle' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add automation' }));
+    await screen.findByRole('button', { name: 'Add automation' });
+
+    expect(createAutomation).toHaveBeenCalledWith('ws_1', 'Recommend on product opportunities', 'revenue_opportunity.created', {
+      typeIn: ['cross_sell', 'upsell', 'bundle'],
+    });
+  });
+
   it('(7) shows an inline error and re-enables the button when submission fails, regardless of trigger type', async () => {
     createAutomation.mockRejectedValueOnce(new Error('network down'));
     render(<CreateAutomationForm workspaceId="ws_1" />);

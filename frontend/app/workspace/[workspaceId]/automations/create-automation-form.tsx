@@ -11,7 +11,8 @@ import { Select } from '@/components/ui/select';
 import { ErrorText } from '@/components/ui/alert';
 
 const PRIORITIES = ['critical', 'high', 'medium', 'low'] as const;
-const TYPES = ['reorder', 'win_back', 'vip_recognition'] as const;
+/** Every revenue opportunity type the backend detects and accepts in `typeIn` (createAutomationSchema). */
+const TYPES = ['reorder', 'win_back', 'vip_recognition', 'cross_sell', 'upsell', 'bundle'] as const;
 
 /** The only two trigger types wired on the backend today (createAutomationSchema). */
 const TRIGGER_TYPES = [

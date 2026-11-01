@@ -336,6 +336,31 @@ describe('AutomationService', () => {
       expect(aiActionControl.executeForAutomation).not.toHaveBeenCalled();
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ status: 'skipped' }));
     });
+
+    for (const type of ['cross_sell', 'upsell', 'bundle'] as const) {
+      it(`runs the action for a ${type} opportunity when typeIn includes ${type}, and skips it when typeIn does not`, async () => {
+        const runFor = async (typeIn: string[]) => {
+          const insertChain = makeInsertChain();
+          const aiActionControl = makeAiActionControl({ executeForAutomation: vi.fn(async () => []) });
+          const service = new AutomationService(
+            { client: { select: makeSelectQueue([[{ id: 'auto_1', conditions: { typeIn } }]]), insert: vi.fn(() => insertChain) } } as unknown as DatabaseService,
+            aiActionControl,
+            makeRegistry(),
+            makeLogger(),
+          );
+          await service.handleRevenueOpportunityCreated(makeEvent({ type }));
+          return { aiActionControl, insertChain };
+        };
+
+        const matched = await runFor(['reorder', type]);
+        expect(matched.aiActionControl.executeForAutomation).toHaveBeenCalledTimes(1);
+        expect(matched.insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ status: 'succeeded' }));
+
+        const skipped = await runFor(['reorder']);
+        expect(skipped.aiActionControl.executeForAutomation).not.toHaveBeenCalled();
+        expect(skipped.insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ status: 'skipped' }));
+      });
+    }
   });
 
   describe('handleCustomerHealthRecalculated()', () => {
