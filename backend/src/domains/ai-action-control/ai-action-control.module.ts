@@ -3,6 +3,8 @@ import { WorkspaceModule } from '../workspace/workspace.module';
 import { IntelligenceEnginesModule } from '../intelligence-engines/intelligence-engines.module';
 import { MerchantKnowledgeModule } from '../merchant-knowledge/merchant-knowledge.module';
 import { RecommendationService } from '../intelligence-engines/recommendation.service';
+import { CommerceModule } from '../commerce/commerce.module';
+import { OrderService } from '../commerce/order.service';
 import { AiActionControlService } from './ai-action-control.service';
 import { AiActionRequestController } from './ai-action-request.controller';
 import { ACTION_REGISTRY, buildActionRegistry } from './actions.registry';
@@ -26,13 +28,13 @@ export { ACTION_REGISTRY };
  * duplicating tenant isolation/authorization.
  */
 @Module({
-  imports: [WorkspaceModule, IntelligenceEnginesModule, MerchantKnowledgeModule],
+  imports: [WorkspaceModule, IntelligenceEnginesModule, MerchantKnowledgeModule, CommerceModule],
   controllers: [AiActionRequestController],
   providers: [
     {
       provide: ACTION_REGISTRY,
-      useFactory: (recommendationService: RecommendationService) => buildActionRegistry(recommendationService),
-      inject: [RecommendationService],
+      useFactory: (recommendationService: RecommendationService, orderService: OrderService) => buildActionRegistry(recommendationService, orderService),
+      inject: [RecommendationService, OrderService],
     },
     AiActionControlService,
   ],

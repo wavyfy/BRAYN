@@ -2,9 +2,9 @@ import { Inject, Injectable } from '@nestjs/common';
 import { AiActionControlService } from '../ai-action-control/ai-action-control.service';
 import { ACTION_REGISTRY } from '../ai-action-control/ai-action-control.module';
 import type { ActionRegistry } from '../ai-action-control/actions.registry';
-import { RECOMMENDATION_COMPLETE_ACTION, RECOMMENDATION_DISMISS_ACTION } from '../ai-action-control/actions.registry';
+import { ORDER_REFUND_REQUEST_ACTION, RECOMMENDATION_COMPLETE_ACTION, RECOMMENDATION_DISMISS_ACTION } from '../ai-action-control/actions.registry';
 import type { ActionExecutionContext } from '../ai-action-control/action-definition';
-import { ValidationError } from '../../common/errors/app-error';
+import { ApprovalRequiredError, ValidationError } from '../../common/errors/app-error';
 import type { WorkspaceRole } from '../workspace/dto/add-member.schema';
 import type { AiToolCall, AiToolDefinition } from '../ai/ai-provider.interface';
 
@@ -26,6 +26,19 @@ const COMPLETE_PARAMETERS = {
   required: ['recommendationId'],
   additionalProperties: false,
 };
+
+const REFUND_REQUEST_PARAMETERS = {
+  type: 'object',
+  properties: {
+    orderId: { type: 'string', description: "The id of the customer's order to request a full refund for." },
+    reason: { type: 'string', description: 'Why the refund is being requested (max 500 characters).' },
+  },
+  required: ['orderId', 'reason'],
+  additionalProperties: false,
+};
+
+/** What the AI is told after a refund request — every one enters approval, and nothing is refunded by submitting it (UC-07). */
+export const REFUND_REQUEST_SUBMITTED_MESSAGE = 'Refund request submitted for merchant approval — no refund has been issued.';
 
 /**
  * Doc19 Phase 12 step 7 — "Controlled write tools". Exposes the two
@@ -75,23 +88,37 @@ export class WriteToolsService {
     if (this.registry.complete.allowedRoles.includes(actorRole as WorkspaceRole)) {
       tools.push({ name: RECOMMENDATION_COMPLETE_ACTION, description: this.registry.complete.description, parameters: COMPLETE_PARAMETERS });
     }
+    if (this.registry.refundRequest.allowedRoles.includes(actorRole as WorkspaceRole)) {
+      tools.push({ name: ORDER_REFUND_REQUEST_ACTION, description: this.registry.refundRequest.description, parameters: REFUND_REQUEST_PARAMETERS });
+    }
     return tools;
   }
 
   /** Lets `MerchantBusinessAnalystService` route a tool call to this service vs. `ReadToolsService` without duplicating tool-name constants. */
   isWriteTool(name: string): boolean {
-    return name === RECOMMENDATION_DISMISS_ACTION || name === RECOMMENDATION_COMPLETE_ACTION;
+    return name === RECOMMENDATION_DISMISS_ACTION || name === RECOMMENDATION_COMPLETE_ACTION || name === ORDER_REFUND_REQUEST_ACTION;
   }
 
   /** Every write goes through `AiActionControlService.execute()` — never `RecommendationService` directly (doc03 rule 7 — one enforcement point). */
   async execute(call: AiToolCall, workspaceId: string, customerId: string): Promise<string> {
-    if (call.name !== RECOMMENDATION_DISMISS_ACTION && call.name !== RECOMMENDATION_COMPLETE_ACTION) {
+    if (!this.isWriteTool(call.name)) {
       throw new ValidationError(`Unknown tool "${call.name}".`);
     }
 
     const idempotencyKey = `ai-tool-call:${call.id}`;
     const context: ActionExecutionContext = { workspaceId, customerId };
     const rawInput = this.parseArguments(call);
+
+    if (call.name === ORDER_REFUND_REQUEST_ACTION) {
+      try {
+        await this.aiActionControl.execute(this.registry.refundRequest, rawInput, context, idempotencyKey);
+      } catch (error) {
+        if (error instanceof ApprovalRequiredError) return JSON.stringify({ status: 'pending_approval', message: REFUND_REQUEST_SUBMITTED_MESSAGE });
+        throw error;
+      }
+      // Unreachable while the action requires approval; never report a refund as done from here.
+      throw new ValidationError(`Action "${ORDER_REFUND_REQUEST_ACTION}" unexpectedly executed without approval.`);
+    }
 
     if (call.name === RECOMMENDATION_DISMISS_ACTION) {
       const result = await this.aiActionControl.execute(this.registry.dismiss, rawInput, context, idempotencyKey);

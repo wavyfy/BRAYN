@@ -6,10 +6,13 @@ import {
   RECOMMENDATION_DISMISS_ACTION,
   RECOMMENDATION_COMPLETE_ACTION,
   GENERATE_RECOMMENDATIONS_ACTION,
+  ORDER_REFUND_REQUEST_ACTION,
   type ActionRegistry,
 } from '../ai-action-control/actions.registry';
+import { REFUND_REQUEST_SUBMITTED_MESSAGE } from './write-tools.service';
 import type { RecommendationService } from '../intelligence-engines/recommendation.service';
-import { UnauthorizedError, ValidationError } from '../../common/errors/app-error';
+import type { OrderService } from '../commerce/order.service';
+import { ApprovalRequiredError, ConflictError, UnauthorizedError, ValidationError } from '../../common/errors/app-error';
 import type { AiToolCall } from '../ai/ai-provider.interface';
 
 const WORKSPACE_ID = 'ws_1';
@@ -25,7 +28,7 @@ const RECOMMENDATION_ID = '22222222-2222-4222-8222-222222222222';
  * `summarizeResult` are ever read directly by WriteToolsService.
  */
 function makeRegistry(): ActionRegistry {
-  return buildActionRegistry({} as RecommendationService);
+  return buildActionRegistry({} as RecommendationService, {} as OrderService);
 }
 
 function makeAiActionControl(overrides: { execute?: (...args: unknown[]) => Promise<unknown> } = {}): AiActionControlService {
@@ -52,18 +55,20 @@ const completeCall: AiToolCall = {
 
 describe('WriteToolsService', () => {
   describe('availableTools', () => {
-    it('offers both dismiss and complete to an owner with a bound customerId', () => {
+    it('offers dismiss, complete and the refund request to owner and admin with a bound customerId', () => {
       const service = makeService();
 
-      const tools = service.availableTools('owner', CUSTOMER_ID);
-
-      expect(tools.map((t) => t.name).sort()).toEqual([RECOMMENDATION_COMPLETE_ACTION, RECOMMENDATION_DISMISS_ACTION].sort());
+      for (const role of ['owner', 'admin']) {
+        expect(service.availableTools(role, CUSTOMER_ID).map((t) => t.name).sort()).toEqual(
+          [RECOMMENDATION_COMPLETE_ACTION, RECOMMENDATION_DISMISS_ACTION, ORDER_REFUND_REQUEST_ACTION].sort(),
+        );
+      }
     });
 
-    it('offers both tools to admin, marketing, and support — matching the registry\'s own allowedRoles for dismiss/complete', () => {
+    it('offers only dismiss and complete to marketing and support — the refund request is owner/admin only', () => {
       const service = makeService();
 
-      for (const role of ['admin', 'marketing', 'support']) {
+      for (const role of ['marketing', 'support']) {
         expect(service.availableTools(role, CUSTOMER_ID).map((t) => t.name).sort()).toEqual(
           [RECOMMENDATION_COMPLETE_ACTION, RECOMMENDATION_DISMISS_ACTION].sort(),
         );
@@ -297,6 +302,40 @@ describe('WriteToolsService', () => {
       const output = await service.execute(dismissCall, WORKSPACE_ID, CUSTOMER_ID);
 
       expect(JSON.parse(output)).toEqual({ recommendationId: otherRecommendationId, state: 'dismissed' });
+    });
+  });
+
+  describe('order.refund_request', () => {
+    const ORDER_ID = '33333333-3333-4333-8333-333333333333';
+    const refundCall: AiToolCall = { id: 'call_r', name: ORDER_REFUND_REQUEST_ACTION, arguments: JSON.stringify({ orderId: ORDER_ID, reason: 'Damaged item' }) };
+
+    it('routes through AI Action Control with context-bound workspace/customer and reports pending approval, never a refund', async () => {
+      const aiActionControl = makeAiActionControl({
+        execute: async () => {
+          throw new ApprovalRequiredError('needs approval');
+        },
+      });
+      const registry = makeRegistry();
+      const service = makeService({ registry, aiActionControl });
+
+      expect(service.isWriteTool(ORDER_REFUND_REQUEST_ACTION)).toBe(true);
+      const output = await service.execute(refundCall, WORKSPACE_ID, CUSTOMER_ID);
+
+      expect(aiActionControl.execute).toHaveBeenCalledWith(registry.refundRequest, { orderId: ORDER_ID, reason: 'Damaged item' }, { workspaceId: WORKSPACE_ID, customerId: CUSTOMER_ID }, 'ai-tool-call:call_r');
+      expect(JSON.parse(output)).toEqual({ status: 'pending_approval', message: REFUND_REQUEST_SUBMITTED_MESSAGE });
+      expect(REFUND_REQUEST_SUBMITTED_MESSAGE).toContain('no refund has been issued');
+    });
+
+    it('surfaces validation/conflict/permission errors unchanged', async () => {
+      for (const error of [new ValidationError('The order is cancelled.'), new ConflictError('already pending'), new UnauthorizedError('role')]) {
+        const service = makeService({ aiActionControl: makeAiActionControl({ execute: async () => { throw error; } }) });
+        await expect(service.execute(refundCall, WORKSPACE_ID, CUSTOMER_ID)).rejects.toBe(error);
+      }
+    });
+
+    it('never reports success if the action somehow returned without approval', async () => {
+      const service = makeService({ aiActionControl: makeAiActionControl({ execute: async () => ({ mode: 'simulated' }) }) });
+      await expect(service.execute(refundCall, WORKSPACE_ID, CUSTOMER_ID)).rejects.toThrow('unexpectedly executed without approval');
     });
   });
 });
