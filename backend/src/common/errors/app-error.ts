@@ -48,6 +48,9 @@ export class ConflictError extends AppError {
   }
 }
 
+/** A ConflictError raised only because the action's idempotency key was already used — lets callers tell a duplicate from an action that itself failed with a conflict. Same code, status and message as ConflictError. */
+export class DuplicateActionRequestError extends ConflictError {}
+
 export class ProviderError extends AppError {
   constructor(message = 'An upstream provider error occurred.') {
     super(ErrorCode.PROVIDER_ERROR, message, HttpStatus.BAD_GATEWAY);

@@ -4,7 +4,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { automationDefinitions } from '../../database/schema/automation-definitions';
 import { automationRuns } from '../../database/schema/automation-runs';
 import { DatabaseService } from '../../database/database.service';
-import { NotFoundError } from '../../common/errors/app-error';
+import { DuplicateActionRequestError, NotFoundError } from '../../common/errors/app-error';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import type { DomainEvent } from '../../common/events/domain-event';
 import { AiActionControlService } from '../ai-action-control/ai-action-control.service';
@@ -13,6 +13,9 @@ import type { RevenueOpportunityCreatedPayload } from '../intelligence-engines/r
 import type { CustomerHealthRecalculatedPayload } from '../intelligence-engines/customer-health.service';
 import type { CreateAutomationInput } from './dto/create-automation.schema';
 import type { UpdateAutomationInput } from './dto/update-automation.schema';
+
+/** Run reason when the same automation + trigger event was already processed. */
+export const DUPLICATE_TRIGGER_REASON = 'duplicate trigger';
 
 interface AutomationConditions {
   priorityIn?: string[];
@@ -233,13 +236,15 @@ export class AutomationService {
         result: { recommendationsCount: recommendations.length },
       });
     } catch (error) {
+      // Idempotency already processed this automation + trigger event: nothing ran, so it's skipped, not failed.
+      const duplicate = error instanceof DuplicateActionRequestError;
       await this.database.client.insert(automationRuns).values({
         workspaceId,
         automationId: definition.id,
         canonicalCustomerId,
         triggerEventId,
-        status: 'failed',
-        reason: error instanceof Error ? error.message : String(error),
+        status: duplicate ? 'skipped' : 'failed',
+        reason: duplicate ? DUPLICATE_TRIGGER_REASON : error instanceof Error ? error.message : String(error),
       });
     }
   }

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AutomationService } from './automation.service';
+import { AutomationService, DUPLICATE_TRIGGER_REASON } from './automation.service';
+import { ConflictError, DuplicateActionRequestError } from '../../common/errors/app-error';
 import type { DatabaseService } from '../../database/database.service';
 import type { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import type { AiActionControlService } from '../ai-action-control/ai-action-control.service';
@@ -335,6 +336,45 @@ describe('AutomationService', () => {
 
       expect(aiActionControl.executeForAutomation).not.toHaveBeenCalled();
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ status: 'skipped' }));
+    });
+
+    it('records a replayed trigger (idempotency duplicate) as skipped with reason "duplicate trigger", not failed', async () => {
+      const insertChain = makeInsertChain();
+      const aiActionControl = makeAiActionControl({
+        executeForAutomation: vi.fn(async () => {
+          throw new DuplicateActionRequestError('Action "generate_recommendations" was already requested with this idempotency key.');
+        }),
+      });
+      const service = new AutomationService(
+        { client: { select: makeSelectQueue([[{ id: 'auto_1', conditions: null }]]), insert: vi.fn(() => insertChain) } } as unknown as DatabaseService,
+        aiActionControl,
+        makeRegistry(),
+        makeLogger(),
+      );
+
+      await expect(service.handleRevenueOpportunityCreated(makeEvent())).resolves.toBeUndefined();
+
+      expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ status: 'skipped', reason: DUPLICATE_TRIGGER_REASON, automationId: 'auto_1', triggerEventId: 'evt_1' }));
+      expect(insertChain.values).not.toHaveBeenCalledWith(expect.objectContaining({ status: 'failed' }));
+    });
+
+    it('still records a failed run when the action itself fails with a plain ConflictError (not a duplicate)', async () => {
+      const insertChain = makeInsertChain();
+      const aiActionControl = makeAiActionControl({
+        executeForAutomation: vi.fn(async () => {
+          throw new ConflictError('Recommendation is already completed.');
+        }),
+      });
+      const service = new AutomationService(
+        { client: { select: makeSelectQueue([[{ id: 'auto_1', conditions: null }]]), insert: vi.fn(() => insertChain) } } as unknown as DatabaseService,
+        aiActionControl,
+        makeRegistry(),
+        makeLogger(),
+      );
+
+      await service.handleRevenueOpportunityCreated(makeEvent());
+
+      expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', reason: 'Recommendation is already completed.' }));
     });
 
     for (const type of ['cross_sell', 'upsell', 'bundle'] as const) {
