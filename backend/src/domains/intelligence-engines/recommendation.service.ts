@@ -51,6 +51,8 @@ export class RecommendationService {
     if (!event.workspaceId || !canonicalCustomerId) return;
 
     try {
+      // #8: a new order can convert an executed opportunity — checked before detection re-evaluates the customer.
+      if (event.type === 'order.created') await this.revenueOpportunityService.evaluateConversions(event.workspaceId, canonicalCustomerId);
       await this.revenueOpportunityService.detect(event.workspaceId, canonicalCustomerId);
       await this.generate(event.workspaceId, canonicalCustomerId);
     } catch (error) {

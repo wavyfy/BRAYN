@@ -214,7 +214,7 @@ describe('RecommendationService', () => {
 
   describe('handleEvaluationTrigger() — automatic evaluation (Milestone #5 D5)', () => {
     function makeEvaluation() {
-      const opportunities = { detect: vi.fn(async () => []), list: vi.fn(async () => []) } as unknown as RevenueOpportunityService;
+      const opportunities = { detect: vi.fn(async () => []), list: vi.fn(async () => []), evaluateConversions: vi.fn(async () => 0) } as unknown as RevenueOpportunityService;
       const client = { select: makeSelectQueue([[], []]), insert: vi.fn() };
       const logger = makeLogger();
       const service = new RecommendationService({ client } as unknown as DatabaseService, opportunities, logger);
@@ -231,6 +231,12 @@ describe('RecommendationService', () => {
         expect(opportunities.detect).toHaveBeenCalledWith('ws_1', 'canon_1');
         expect(generate).toHaveBeenCalledWith('ws_1', 'canon_1');
         expect(vi.mocked(opportunities.detect).mock.invocationCallOrder[0]).toBeLessThan(generate.mock.invocationCallOrder[0]);
+        if (type === 'order.created') {
+          expect(opportunities.evaluateConversions).toHaveBeenCalledWith('ws_1', 'canon_1');
+          expect(vi.mocked(opportunities.evaluateConversions).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(opportunities.detect).mock.invocationCallOrder[0]);
+        } else {
+          expect(opportunities.evaluateConversions).not.toHaveBeenCalled();
+        }
       });
     }
 

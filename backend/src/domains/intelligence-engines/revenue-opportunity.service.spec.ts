@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { RevenueOpportunityService, computePriority, isSuppressedByIgnored } from './revenue-opportunity.service';
+import { RevenueOpportunityService, computePriority, findConversion, isSuppressedByIgnored } from './revenue-opportunity.service';
 import type { CustomerHealthService } from './customer-health.service';
 import type { DatabaseService } from '../../database/database.service';
 import type { EventBus } from '../../common/events/event-bus.service';
@@ -588,5 +588,46 @@ describe('isSuppressedByIgnored() — #8 ignored recreation rule', () => {
 
   it('vip_recognition: always suppressed once ignored, even after new orders', () => {
     expect(isSuppressedByIgnored(candidate('vip_recognition'), [ignoredRow('vip_recognition')], after)).toBe(true);
+  });
+});
+
+describe('findConversion() — #8 converted rule', () => {
+  const executedAt = new Date('2026-10-01T00:00:00Z');
+  const at = (days: number) => new Date(executedAt.getTime() + days * DAY_MS);
+  const opp = (type: string, extra: Record<string, unknown> = {}) =>
+    ({ id: 'opp_1', type, evidenceAt: null, evidenceProductId: null, affinityOtherProductId: null, upsellTargetVariantId: null, executedAt, ...extra }) as never;
+  const order = (days: number, productIds: string[] = [], variantIds: string[] = []) => ({
+    orderId: `o${days}`,
+    placedAt: at(days),
+    productIds: new Set(productIds),
+    variantIds: new Set(variantIds),
+  });
+
+  it.each(['reorder', 'win_back', 'vip_recognition'])('%s: any order after execution within 7 days converts', (type) => {
+    expect(findConversion(opp(type), [order(2)])?.orderId).toBe('o2');
+    expect(findConversion(opp(type), [order(7)])?.orderId).toBe('o7');
+  });
+
+  it('ignores orders at/before execution and after the 7-day window; picks the earliest qualifying', () => {
+    expect(findConversion(opp('reorder'), [order(-1), order(0), order(7.01)])).toBeNull();
+    expect(findConversion(opp('reorder'), [order(5), order(1)])?.orderId).toBe('o1');
+  });
+
+  it('website cross_sell: needs its evidence product', () => {
+    const website = opp('cross_sell', { evidenceAt: executedAt, evidenceProductId: 'P', affinityOtherProductId: 'X' });
+    expect(findConversion(website, [order(1, ['X'])])).toBeNull();
+    expect(findConversion(website, [order(1, ['P'])])?.orderId).toBe('o1');
+  });
+
+  it.each(['cross_sell', 'bundle'])('commerce %s: needs the recommended other product; no stored pair never converts', (type) => {
+    expect(findConversion(opp(type, { affinityOtherProductId: 'B' }), [order(1, ['A'])])).toBeNull();
+    expect(findConversion(opp(type, { affinityOtherProductId: 'B' }), [order(1, ['A', 'B'])])?.orderId).toBe('o1');
+    expect(findConversion(opp(type), [order(1, ['A', 'B'])])).toBeNull();
+  });
+
+  it('upsell: needs exactly the target variant; no stored target never converts', () => {
+    expect(findConversion(opp('upsell', { upsellTargetVariantId: 'v2' }), [order(1, ['P'], ['v1'])])).toBeNull();
+    expect(findConversion(opp('upsell', { upsellTargetVariantId: 'v2' }), [order(1, ['P'], ['v2'])])?.orderId).toBe('o1');
+    expect(findConversion(opp('upsell'), [order(1, ['P'], ['v2'])])).toBeNull();
   });
 });

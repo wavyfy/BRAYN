@@ -2,6 +2,7 @@ import { integer, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { id, timestamps, workspaceId } from './columns';
 import { canonicalCustomers } from './canonical-customers';
 import { commerceProducts } from './commerce-products';
+import { commerceProductVariants } from './commerce-product-variants';
 
 /**
  * A detected revenue opportunity (doc10 — Revenue Opportunity Detector).
@@ -52,5 +53,7 @@ export const revenueOpportunities = pgTable('revenue_opportunities', {
   // dismissed one is recreated only for a different pair. Null on every other row; SET NULL for the same purge reason.
   affinityOwnedProductId: uuid('affinity_owned_product_id').references(() => commerceProducts.id, { onDelete: 'set null' }),
   affinityOtherProductId: uuid('affinity_other_product_id').references(() => commerceProducts.id, { onDelete: 'set null' }),
+  // Upsell only (#8 `converted` rule): the higher-tier variant recommended; buying exactly it converts the opportunity.
+  upsellTargetVariantId: uuid('upsell_target_variant_id').references(() => commerceProductVariants.id, { onDelete: 'set null' }),
   ...timestamps(),
 });

@@ -36,7 +36,7 @@ export function startOfUtcDay(date: Date): Date {
  *    the run's day (a same-day retry never writes a second history row or
  *    flattens the trend). Publishes `customer_health.recalculated` only on
  *    change (user decision, Nov 1, 2026).
- * 2. Opportunities, then 3. recommendations: always — eligibility is
+ * 2. Opportunities (conversions of executed ones first, #8), then 3. recommendations: always — eligibility is
  *    time-based (a reorder falls due with no new event), and both steps
  *    create nothing twice (advisory lock / unique index). Website-derived
  *    cross_sell is evaluated here only (`includeWebsite`, Release 3).
@@ -148,6 +148,7 @@ export class IntelligenceDailyRunService {
               await this.customerHealthService.recalculate(customer.workspaceId, customer.id, { emitOnlyOnChange: true });
               counts.healthRecalculated++;
             }
+            await this.revenueOpportunityService.evaluateConversions(customer.workspaceId, customer.id);
             await this.revenueOpportunityService.detect(customer.workspaceId, customer.id, { includeWebsite: true });
             await this.recommendationService.generate(customer.workspaceId, customer.id);
             consecutiveFailures = 0;

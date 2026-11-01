@@ -109,6 +109,56 @@ interface OpportunityCandidate {
   affinityOtherProductId?: string;
   /** Upsell only — when the purchase it was derived from was placed. */
   qualifyingPurchaseAt?: Date;
+  /** Upsell only — the recommended higher-tier variant (persisted for conversion matching). */
+  upsellTargetVariantId?: string;
+}
+
+export const CONVERSION_WINDOW_MS = 7 * DAY_MS;
+export const CONVERTED_CLOSED_REASON = 'converted_by_order';
+
+export type ExecutedOpportunity = Pick<
+  typeof revenueOpportunities.$inferSelect,
+  'id' | 'type' | 'evidenceAt' | 'evidenceProductId' | 'affinityOtherProductId' | 'upsellTargetVariantId'
+> & { executedAt: Date };
+
+export interface ConversionOrder {
+  orderId: string;
+  placedAt: Date;
+  productIds: Set<string>;
+  variantIds: Set<string>;
+}
+
+/**
+ * #8 `converted` rule (user decisions, Nov 1, 2026): the earliest non-cancelled order placed after execution (the
+ * completed recommendation's `closedAt`) and at most 7 days later. reorder/win_back/vip_recognition: any order. Website
+ * cross_sell: contains `evidenceProductId`. Commerce cross_sell/bundle: contains the recommended `affinityOtherProductId`.
+ * upsell: contains exactly `upsellTargetVariantId`. No stored product/variant (legacy rows) → never converts.
+ */
+export function findConversion(opportunity: ExecutedOpportunity, orders: ConversionOrder[]): ConversionOrder | null {
+  const start = opportunity.executedAt.getTime();
+  const matches = (order: ConversionOrder): boolean => {
+    switch (opportunity.type) {
+      case 'reorder':
+      case 'win_back':
+      case 'vip_recognition':
+        return true;
+      case 'cross_sell': {
+        const productId = opportunity.evidenceAt ? opportunity.evidenceProductId : opportunity.affinityOtherProductId;
+        return !!productId && order.productIds.has(productId);
+      }
+      case 'bundle':
+        return !!opportunity.affinityOtherProductId && order.productIds.has(opportunity.affinityOtherProductId);
+      case 'upsell':
+        return !!opportunity.upsellTargetVariantId && order.variantIds.has(opportunity.upsellTargetVariantId);
+    }
+  };
+
+  return (
+    orders
+      .filter((order) => order.placedAt.getTime() > start && order.placedAt.getTime() <= start + CONVERSION_WINDOW_MS)
+      .sort((a, b) => a.placedAt.getTime() - b.placedAt.getTime())
+      .find(matches) ?? null
+  );
 }
 
 type IgnoredCommerceRow = Pick<
@@ -285,6 +335,7 @@ export class RevenueOpportunityService {
             evidenceAt: candidate.evidenceAt ?? null,
             affinityOwnedProductId: candidate.affinityOwnedProductId ?? null,
             affinityOtherProductId: candidate.affinityOtherProductId ?? null,
+            upsellTargetVariantId: candidate.upsellTargetVariantId ?? null,
           })),
         )
         .returning();
@@ -442,6 +493,86 @@ export class RevenueOpportunityService {
       evidenceProductId: intent.productId,
       evidenceAt: qualification.evidenceAt,
     };
+  }
+
+  /**
+   * #8 `converted` outcome: moves this customer's executed opportunities to `converted` when findConversion finds a
+   * qualifying order. Run on `order.created` and by the daily run, before detect(). Only `executed` rows move, so a
+   * repeat or concurrent run converts nothing twice and an expiry that won the race is kept. Returns how many converted.
+   */
+  async evaluateConversions(workspaceId: string, canonicalCustomerId: string): Promise<number> {
+    const rows = await this.database.client
+      .select({
+        id: revenueOpportunities.id,
+        type: revenueOpportunities.type,
+        evidenceAt: revenueOpportunities.evidenceAt,
+        evidenceProductId: revenueOpportunities.evidenceProductId,
+        affinityOtherProductId: revenueOpportunities.affinityOtherProductId,
+        upsellTargetVariantId: revenueOpportunities.upsellTargetVariantId,
+        executedAt: recommendations.closedAt,
+      })
+      .from(revenueOpportunities)
+      .innerJoin(
+        recommendations,
+        and(eq(recommendations.sourceOpportunityId, revenueOpportunities.id), eq(recommendations.workspaceId, workspaceId), eq(recommendations.state, 'completed')),
+      )
+      .where(
+        and(
+          eq(revenueOpportunities.workspaceId, workspaceId),
+          eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId),
+          eq(revenueOpportunities.status, 'executed'),
+        ),
+      );
+    const executed = rows.filter((row): row is ExecutedOpportunity => row.executedAt !== null);
+    if (executed.length === 0) return 0;
+
+    const sourceCustomerIds = await this.getSourceCustomerIds(workspaceId, canonicalCustomerId);
+    if (sourceCustomerIds.length === 0) return 0;
+
+    const from = new Date(Math.min(...executed.map((row) => row.executedAt.getTime())));
+    const to = new Date(Math.max(...executed.map((row) => row.executedAt.getTime())) + CONVERSION_WINDOW_MS);
+    const lines = await this.database.client
+      .select({ orderId: commerceOrders.id, placedAt: orderPlacedAt(), productId: commerceProductVariants.productId, variantId: commerceProductVariants.id })
+      .from(commerceOrders)
+      .leftJoin(commerceOrderLineItems, eq(commerceOrderLineItems.orderId, commerceOrders.id))
+      .leftJoin(commerceProductVariants, eq(commerceOrderLineItems.variantId, commerceProductVariants.id))
+      .where(
+        and(
+          eq(commerceOrders.workspaceId, workspaceId),
+          inArray(commerceOrders.customerId, sourceCustomerIds),
+          isNull(commerceOrders.sourceCancelledAt),
+          sql`${orderPlacedAt()} > ${from.toISOString()}::timestamptz`,
+          sql`${orderPlacedAt()} <= ${to.toISOString()}::timestamptz`,
+        ),
+      );
+
+    const orders = new Map<string, ConversionOrder>();
+    for (const line of lines) {
+      const order = orders.get(line.orderId) ?? { orderId: line.orderId, placedAt: line.placedAt, productIds: new Set(), variantIds: new Set() };
+      if (line.productId) order.productIds.add(line.productId);
+      if (line.variantId) order.variantIds.add(line.variantId);
+      orders.set(line.orderId, order);
+    }
+
+    let converted = 0;
+    for (const opportunity of executed) {
+      if (!findConversion(opportunity, [...orders.values()])) continue;
+      const now = new Date();
+      const updated = await this.database.client
+        .update(revenueOpportunities)
+        .set({ status: 'converted', closedAt: now, closedReason: CONVERTED_CLOSED_REASON, updatedAt: now })
+        .where(
+          and(
+            eq(revenueOpportunities.workspaceId, workspaceId),
+            eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId),
+            eq(revenueOpportunities.id, opportunity.id),
+            eq(revenueOpportunities.status, 'executed'),
+          ),
+        )
+        .returning({ id: revenueOpportunities.id });
+      converted += updated.length;
+    }
+    return converted;
   }
 
   /** Ignored commerce-derived rows (website ones carry `evidenceAt` and follow their own rule) — input to isSuppressedByIgnored. */
@@ -618,6 +749,7 @@ export class RevenueOpportunityService {
         reason: `Customer purchased a ${purchasedPrice.toFixed(2)} variant; a ${nearest.price.toFixed(2)} variant of the same product is available and unpurchased.`,
         recommendedAction: 'Suggest the higher-tier variant to this customer.',
         qualifyingPurchaseAt: purchased.purchasedAt,
+        upsellTargetVariantId: nearest.id,
       };
     }
 

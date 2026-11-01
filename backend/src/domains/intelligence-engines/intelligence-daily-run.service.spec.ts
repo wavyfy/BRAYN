@@ -33,7 +33,7 @@ function setup(pages: { workspaceId: string; id: string }[][], findCurrent: (id:
     findCurrent: vi.fn(async (_ws: string, id: string) => findCurrent(id)),
     recalculate: vi.fn(async () => ({})),
   };
-  const opportunities = { detect: vi.fn(async () => []) };
+  const opportunities = { detect: vi.fn(async () => []), evaluateConversions: vi.fn(async () => 0) };
   const recommendations = { generate: vi.fn(async () => []) };
   const logger = { event: vi.fn() };
   const service = new IntelligenceDailyRunService(
@@ -57,6 +57,8 @@ describe('IntelligenceDailyRunService.execute()', () => {
     expect(t.health.recalculate).toHaveBeenCalledWith('ws_1', 'c1', { emitOnlyOnChange: true });
     expect(t.opportunities.detect).toHaveBeenCalledTimes(2);
     expect(t.opportunities.detect).toHaveBeenCalledWith('ws_1', 'c0', { includeWebsite: true });
+    expect(t.opportunities.evaluateConversions).toHaveBeenCalledWith('ws_1', 'c0');
+    expect(t.opportunities.evaluateConversions.mock.invocationCallOrder[0]).toBeLessThan(t.opportunities.detect.mock.invocationCallOrder[0]);
     expect(t.recommendations.generate).toHaveBeenCalledTimes(2);
     expect(t.final()).toMatchObject({ status: 'succeeded', error: null, customersProcessed: 2, healthRecalculated: 2, healthSkipped: 0, customersFailed: 0 });
     expect(t.final().completedAt).toBeInstanceOf(Date);

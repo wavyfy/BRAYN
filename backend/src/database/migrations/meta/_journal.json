@@ -330,6 +330,13 @@
       "when": 1793544008179,
       "tag": "0046_dark_the_initiative",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1793545490542,
+      "tag": "0047_right_deadpool",
+      "breakpoints": true
     }
   ]
 }
