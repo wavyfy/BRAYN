@@ -252,4 +252,24 @@ describe('AiActionsPage — order.refund_request (#8, Phase 1 simulation)', () =
     expect(screen.getByText('Execution failed')).toBeTruthy();
     expect(screen.getByText('The order is cancelled.')).toBeTruthy();
   });
+
+  it('confirms a refund approval as simulated-only; other actions keep the generic confirmation', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    apiFetch.mockResolvedValueOnce([
+      refund({ id: 'p', approvalState: 'pending', executionStatus: 'blocked_approval' }),
+      { ...pendingRequest, id: 'other' },
+    ]);
+
+    render(await AiActionsPage({ params: { workspaceId: 'ws_1' } }));
+    const [refundApprove, otherApprove] = screen.getAllByRole('button', { name: 'Approve' });
+
+    fireEvent.click(refundApprove!);
+    expect(confirm).toHaveBeenLastCalledWith(
+      'Approve this refund request? This only records a simulated refund — no refund will be processed with the store.',
+    );
+    fireEvent.click(otherApprove!);
+    expect(confirm).toHaveBeenLastCalledWith('Approve this action? It will execute immediately.');
+    expect(approveAiActionRequest).not.toHaveBeenCalled();
+    confirm.mockRestore();
+  });
 });

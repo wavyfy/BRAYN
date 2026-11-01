@@ -12,7 +12,18 @@ import { ErrorText } from '@/components/ui/alert';
  * Only rendered by the page for `approvalState === 'pending'` rows; the
  * backend re-checks owner/admin (doc28) regardless, this is UX only.
  */
-export function AiActionDecisionButtons({ workspaceId, requestId }: { workspaceId: string; requestId: string }) {
+export const DEFAULT_APPROVE_CONFIRMATION = 'Approve this action? It will execute immediately.';
+
+export function AiActionDecisionButtons({
+  workspaceId,
+  requestId,
+  confirmMessage = DEFAULT_APPROVE_CONFIRMATION,
+}: {
+  workspaceId: string;
+  requestId: string;
+  /** Action-specific approval wording, supplied by the page; defaults to the generic message. */
+  confirmMessage?: string;
+}) {
   const [pending, setPending] = useState<'approve' | 'deny' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
@@ -22,7 +33,7 @@ export function AiActionDecisionButtons({ workspaceId, requestId }: { workspaceI
     setError(null);
     try {
       if (decision === 'approve') {
-        if (!window.confirm('Approve this action? It will execute immediately.')) {
+        if (!window.confirm(confirmMessage)) {
           setPending(null);
           return;
         }

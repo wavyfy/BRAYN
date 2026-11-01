@@ -33,6 +33,13 @@ const riskTone: Record<AiActionRequest['riskLevel'], BadgeTone> = {
   high: 'danger',
 };
 
+/** Action-specific approval confirmations; any other action keeps the generic "It will execute immediately." */
+const APPROVE_CONFIRMATIONS: Record<string, string> = {
+  // Phase 1: approval runs a simulation only (#8 Decision A).
+  'order.refund_request':
+    'Approve this refund request? This only records a simulated refund — no refund will be processed with the store.',
+};
+
 /** A simulated execution (e.g. Phase 1 `order.refund_request`) changed nothing at the store — never show it as a plain success. */
 const isSimulated = (request: AiActionRequest) => request.executionStatus === 'executed' && request.resultSummary?.mode === 'simulated';
 
@@ -122,7 +129,7 @@ export default async function AiActionsPage({ params }: { params: { workspaceId:
                     <td className="px-4 py-3">
                       <span className="font-medium capitalize text-foreground">{request.action.replace(/[._]/g, ' ')}</span>
                       {request.failureReason && <p className="mt-0.5 max-w-md text-muted-foreground">{request.failureReason}</p>}
-                      {request.approvalState === 'pending' && <AiActionDecisionButtons workspaceId={workspaceId} requestId={request.id} />}
+                      {request.approvalState === 'pending' && <AiActionDecisionButtons workspaceId={workspaceId} requestId={request.id} confirmMessage={APPROVE_CONFIRMATIONS[request.action]} />}
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge tone={riskTone[request.riskLevel]} className="capitalize">

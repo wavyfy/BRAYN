@@ -10,7 +10,7 @@ const { refresh, approveAiActionRequest, denyAiActionRequest } = vi.hoisted(() =
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }));
 vi.mock('@/app/actions', () => ({ approveAiActionRequest, denyAiActionRequest }));
 
-import { AiActionDecisionButtons } from './ai-action-decision-buttons';
+import { AiActionDecisionButtons, DEFAULT_APPROVE_CONFIRMATION } from './ai-action-decision-buttons';
 
 describe('AiActionDecisionButtons', () => {
   beforeEach(() => {
@@ -62,5 +62,18 @@ describe('AiActionDecisionButtons', () => {
 
     expect(refresh).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Approve' }).hasAttribute('disabled')).toBe(false);
+  });
+
+  it('uses the generic confirmation by default and an action-specific one when given', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<AiActionDecisionButtons workspaceId="ws_1" requestId="req_1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    expect(window.confirm).toHaveBeenLastCalledWith(DEFAULT_APPROVE_CONFIRMATION);
+    cleanup();
+
+    render(<AiActionDecisionButtons workspaceId="ws_1" requestId="req_2" confirmMessage="Custom wording." />);
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    expect(window.confirm).toHaveBeenLastCalledWith('Custom wording.');
+    expect(approveAiActionRequest).not.toHaveBeenCalled();
   });
 });
