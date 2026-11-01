@@ -18,6 +18,7 @@ function makeEnv(overrides: Partial<Env>): Env {
     WEBSITE_EVENT_RATE_LIMIT_IP_MAX: 120,
     WEBSITE_EVENT_RATE_LIMIT_WORKSPACE_MAX: 6000,
     TRUST_PROXY_HOPS: 1,
+    BRAYN_INTERNAL_CRON_SECRET: 'c'.repeat(64),
     ...overrides,
   };
 }
@@ -111,6 +112,25 @@ describe('warnOnMissingProductionSecrets', () => {
     );
 
     expect(logger.event).toHaveBeenCalledWith('warn', expect.any(String), 'StartupChecks', expect.objectContaining({ missing: ['TRUST_PROXY_HOPS'] }));
+  });
+
+  it('warns about a missing internal cron secret — the daily intelligence run endpoint would refuse every call', () => {
+    const logger = makeLoggerSpy();
+
+    warnOnMissingProductionSecrets(
+      makeEnv({
+        NODE_ENV: 'production',
+        DATABASE_URL: 'postgres://user:pass@host/db',
+        CLERK_SECRET_KEY: 'sk_live_xxx',
+        BRAYN_CREDENTIAL_ENCRYPTION_KEY: 'a'.repeat(64),
+        UPSTASH_REDIS_REST_URL: 'https://example.upstash.io',
+        BRAYN_ENV: 'production',
+        BRAYN_INTERNAL_CRON_SECRET: undefined,
+      }),
+      logger,
+    );
+
+    expect(logger.event).toHaveBeenCalledWith('warn', expect.any(String), 'StartupChecks', expect.objectContaining({ missing: ['BRAYN_INTERNAL_CRON_SECRET'] }));
   });
 
   it('does not warn when production has all required secrets', () => {

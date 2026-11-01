@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { RecommendationService } from '../intelligence-engines/recommendation.service';
+import { OrderService } from '../commerce/order.service';
 import type { ActionDefinition } from './action-definition';
 
 /**
@@ -36,6 +37,12 @@ const completeInputSchema = z.object({
 /** No fields — `canonicalCustomerId` comes from `context.customerId`, same convention as dismiss/complete, never from caller-supplied input (doc03 rule 3). */
 const generateRecommendationsInputSchema = z.object({});
 
+const refundRequestInputSchema = z.object({
+  orderId: z.string().uuid(),
+  reason: z.string().min(1).max(500),
+});
+
+export const ORDER_REFUND_REQUEST_ACTION = 'order.refund_request';
 export const RECOMMENDATION_DISMISS_ACTION = 'recommendation.dismiss';
 export const RECOMMENDATION_COMPLETE_ACTION = 'recommendation.complete';
 export const GENERATE_RECOMMENDATIONS_ACTION = 'generate_recommendations';
@@ -48,7 +55,7 @@ export const GENERATE_RECOMMENDATIONS_ACTION = 'generate_recommendations';
  */
 export const ACTION_REGISTRY = Symbol('ACTION_REGISTRY');
 
-export function buildActionRegistry(recommendationService: RecommendationService) {
+export function buildActionRegistry(recommendationService: RecommendationService, orderService: OrderService) {
   const dismiss: ActionDefinition<z.infer<typeof dismissInputSchema>, Awaited<ReturnType<RecommendationService['dismiss']>>> = {
     name: RECOMMENDATION_DISMISS_ACTION,
     description: 'Dismiss an active recommendation for a customer.',
@@ -83,7 +90,34 @@ export function buildActionRegistry(recommendationService: RecommendationService
     summarizeResult: (result) => ({ recommendationsCount: result.length }),
   };
 
-  return { dismiss, complete, generateRecommendations };
+  /**
+   * #8 Decision A (Nov 1, 2026) — the first high-risk action: a full refund of one order's remaining refundable amount
+   * (computed by OrderService, never AI-supplied). Owner/admin request and approval only; every request enters approval;
+   * `validate` runs on request and again on approval. Phase 1 executes as a simulation only — no Shopify/provider
+   * mutation; `mode: 'simulated'` marks the result, which must never be presented as an actual refund. Not used by automation.
+   */
+  const refundRequest: ActionDefinition<z.infer<typeof refundRequestInputSchema>, { mode: 'simulated'; orderId: string; amount: string }> = {
+    name: ORDER_REFUND_REQUEST_ACTION,
+    description:
+      "Request a full refund of the remaining refundable amount of one of this customer's orders. Always requires merchant approval; submitting it issues no refund.",
+    riskLevel: 'high',
+    requiresApproval: true,
+    allowedRoles: ['owner', 'admin'],
+    inputSchema: refundRequestInputSchema,
+    validate: async (input, context) => {
+      const refundable = await orderService.findRefundableAmount(context.workspaceId, context.customerId!, input.orderId);
+      return 'reason' in refundable ? refundable.reason : null;
+    },
+    pendingScope: (input) => ({ orderId: input.orderId }),
+    execute: async (input, context) => {
+      const refundable = await orderService.findRefundableAmount(context.workspaceId, context.customerId!, input.orderId);
+      if ('reason' in refundable) throw new Error(refundable.reason);
+      return { mode: 'simulated', orderId: input.orderId, amount: refundable.amount };
+    },
+    summarizeResult: (result) => result,
+  };
+
+  return { dismiss, complete, generateRecommendations, refundRequest };
 }
 
 export type ActionRegistry = ReturnType<typeof buildActionRegistry>;

@@ -159,6 +159,35 @@ function buildVerifiedCustomerFactsBlock(customer: CustomerRecord): string {
 }
 
 /**
+ * #7 "Customer behavioural context → AI" — doc08 UCIR "Behavioural
+ * context" through the Context Builder (doc12 lists "Website behaviour" as
+ * a source). Exactly what `CustomerRecord.behaviouralContext` already
+ * carries — event count, last activity, up to 10 recent event types and
+ * times; no pages, products or payloads — labelled as observed activity so
+ * the model doesn't read it as a purchase decision. Same owner/admin gate
+ * and protected-access audit as the verified-facts block (it arrives on
+ * the same UCIR record, only for visitors linked to this customer).
+ */
+function buildBehaviouralContextBlock(behaviour: CustomerRecord['behaviouralContext']): string {
+  const header =
+    'CATEGORY: Observed website behaviour (doc08 Behavioural context). Events recorded by the merchant\'s BRAYN website ' +
+    'tracking for visitors linked to this customer — what they did, not why. Do not treat it as purchase intent or a ' +
+    'decision; anonymous browsing before linking is not included, so absence does not prove the customer never visited.';
+  if (behaviour.eventsCount === 0) {
+    return [header, '', '- No website activity recorded for this customer.'].join('\n');
+  }
+
+  const recent = behaviour.recentEvents.map((event) => `${event.eventType} at ${event.occurredAt.toISOString()}`).join('; ');
+  return [
+    header,
+    '',
+    `- Website events recorded: ${behaviour.eventsCount}`,
+    `- Last website activity: ${behaviour.lastActivityAt ? behaviour.lastActivityAt.toISOString() : 'unknown'}`,
+    `- Most recent events (newest first): ${recent}`,
+  ].join('\n');
+}
+
+/**
  * Doc19 Phase 12 step 3 — "Customer intelligence analysis": Customer
  * Risk & Engagement State + Revenue Opportunity Detector only (doc10) —
  * explicitly NOT Recommendations (doc19 step 5). Labeled a separate
@@ -274,6 +303,7 @@ export class MerchantBusinessAnalystService {
       { role: 'system', content: MERCHANT_BUSINESS_ANALYST_SYSTEM_PROMPT_V2 },
       ...(customer ? [{ role: 'system' as const, content: buildVerifiedCustomerFactsBlock(customer) }] : []),
       ...(notes?.block ? [{ role: 'system' as const, content: notes.block }] : []),
+      ...(customer ? [{ role: 'system' as const, content: buildBehaviouralContextBlock(customer.behaviouralContext) }] : []),
       { role: 'system', content: buildDerivedIntelligenceBlock(health, opportunities) },
       { role: 'system', content: buildMerchantKnowledgeBlock(relevantKnowledge) },
       { role: 'system', content: buildMerchantPolicyBlock(policyEntries) },

@@ -14,6 +14,7 @@ type AiActionRequest = {
   approvalState: 'not_required' | 'pending' | 'approved' | 'denied';
   executionStatus: 'blocked_validation' | 'blocked_permission' | 'blocked_approval' | 'duplicate' | 'executed' | 'failed';
   failureReason: string | null;
+  resultSummary?: { mode?: string } | null;
   createdAt: string;
 };
 
@@ -32,7 +33,25 @@ const riskTone: Record<AiActionRequest['riskLevel'], BadgeTone> = {
   high: 'danger',
 };
 
+/** Action-specific approval confirmations; any other action keeps the generic "It will execute immediately." */
+const APPROVE_CONFIRMATIONS: Record<string, string> = {
+  // Phase 1: approval runs a simulation only (#8 Decision A).
+  'order.refund_request':
+    'Approve this refund request? This only records a simulated refund — no refund will be processed with the store.',
+};
+
+/** A simulated execution (e.g. Phase 1 `order.refund_request`) changed nothing at the store — never show it as a plain success. */
+const isSimulated = (request: AiActionRequest) => request.executionStatus === 'executed' && request.resultSummary?.mode === 'simulated';
+
+function outcomeTone(request: AiActionRequest): BadgeTone {
+  if (request.approvalState === 'denied') return 'neutral';
+  if (isSimulated(request)) return 'info';
+  return statusTone[request.executionStatus];
+}
+
 function describeOutcome(request: AiActionRequest): string {
+  if (request.approvalState === 'denied') return 'Denied';
+  if (isSimulated(request)) return 'Approved — simulated, not processed with the store';
   switch (request.executionStatus) {
     case 'executed':
       return 'Executed';
@@ -110,7 +129,7 @@ export default async function AiActionsPage({ params }: { params: { workspaceId:
                     <td className="px-4 py-3">
                       <span className="font-medium capitalize text-foreground">{request.action.replace(/[._]/g, ' ')}</span>
                       {request.failureReason && <p className="mt-0.5 max-w-md text-muted-foreground">{request.failureReason}</p>}
-                      {request.approvalState === 'pending' && <AiActionDecisionButtons workspaceId={workspaceId} requestId={request.id} />}
+                      {request.approvalState === 'pending' && <AiActionDecisionButtons workspaceId={workspaceId} requestId={request.id} confirmMessage={APPROVE_CONFIRMATIONS[request.action]} />}
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge tone={riskTone[request.riskLevel]} className="capitalize">
@@ -118,7 +137,7 @@ export default async function AiActionsPage({ params }: { params: { workspaceId:
                       </StatusBadge>
                     </td>
                     <td className="px-4 py-3">
-                      <StatusBadge tone={statusTone[request.executionStatus]}>{describeOutcome(request)}</StatusBadge>
+                      <StatusBadge tone={outcomeTone(request)}>{describeOutcome(request)}</StatusBadge>
                     </td>
                     <td className="hidden whitespace-nowrap px-4 py-3 text-right text-muted-foreground md:table-cell">{formatDateTime(request.createdAt)}</td>
                   </tr>

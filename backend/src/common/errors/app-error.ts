@@ -75,3 +75,10 @@ export class RateLimitError extends AppError {
     super(ErrorCode.RATE_LIMITED, message, HttpStatus.TOO_MANY_REQUESTS);
   }
 }
+
+/** A route that depends on configuration this deployment doesn't have — fail closed rather than run unprotected. */
+export class ServiceUnavailableError extends AppError {
+  constructor(message = 'This service is not available.') {
+    super(ErrorCode.SERVICE_UNAVAILABLE, message, HttpStatus.SERVICE_UNAVAILABLE);
+  }
+}

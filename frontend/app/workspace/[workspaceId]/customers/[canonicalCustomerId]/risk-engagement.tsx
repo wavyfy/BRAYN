@@ -13,6 +13,51 @@ export type CustomerHealthState = {
   lastCalculatedAt: string;
 };
 
+/** One recalculation from GET …/health/history (newest first). */
+export type HealthHistoryEntry = { score: number | null; healthCategory: string | null; trend: string | null; calculatedAt: string };
+
+const HISTORY_ROWS = 5;
+
+/** Scores oldest → newest on a fixed 0–100 scale; withheld (null) scores are skipped, never drawn as 0. */
+function ScoreSparkline({ scores }: { scores: number[] }) {
+  const width = 240;
+  const height = 40;
+  const step = width / (scores.length - 1);
+  const points = scores.map((score, i) => `${(i * step).toFixed(1)},${(height - (score / 100) * height).toFixed(1)}`).join(' ');
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="mt-2 h-10 w-full" role="img" aria-label={`Score history: ${scores.join(', ')}`}>
+      <line x1="0" y1={height / 2} x2={width} y2={height / 2} className="stroke-border" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
+      <polyline points={points} fill="none" className="stroke-foreground/70" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
+/** doc10 "Historical states": how the score moved across recent recalculations. Hidden until there are two to compare. */
+function ScoreHistory({ history }: { history: HealthHistoryEntry[] }) {
+  if (history.length < 2) return null;
+  const scores = [...history].reverse().flatMap((entry) => (entry.score === null ? [] : [entry.score]));
+
+  return (
+    <div className="mt-5 border-t border-border pt-4">
+      <p className="text-[13px] font-medium text-foreground">Score history</p>
+      {scores.length >= 2 && <ScoreSparkline scores={scores} />}
+      <ul className="mt-2 divide-y divide-border">
+        {history.slice(0, HISTORY_ROWS).map((entry) => (
+          <li key={entry.calculatedAt} className="flex items-center justify-between gap-3 py-1.5 text-[13px]">
+            {/* Date and time — several recalculations can land on the same day. */}
+            <span className="text-muted-foreground">{formatDateTime(entry.calculatedAt)}</span>
+            <span className="flex items-center gap-2">
+              {entry.healthCategory && <span className="text-xs text-muted-foreground">{entry.healthCategory}</span>}
+              {entry.trend && <span className="text-xs text-muted-foreground">{entry.trend}</span>}
+              <span className="w-7 text-right font-medium tabular-nums text-foreground">{entry.score ?? '—'}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** Display names for the signal keys CustomerHealthService returns today; any other key falls back to its humanized name. */
 const signalLabels: Record<string, string> = {
   purchaseRecency: 'Purchase recency',
@@ -96,7 +141,7 @@ function SignalRow({ name, signal }: { name: string; signal: HealthSignal }) {
  * backend provides them. With no structured signals (older payload shape),
  * the backend's own reason codes are shown instead.
  */
-export function RiskEngagement({ health }: { health: CustomerHealthState | null }) {
+export function RiskEngagement({ health, history = [] }: { health: CustomerHealthState | null; history?: HealthHistoryEntry[] }) {
   if (!health) {
     return <p className="py-2 text-[13px] text-muted-foreground">Not yet calculated for this customer.</p>;
   }
@@ -161,6 +206,8 @@ export function RiskEngagement({ health }: { health: CustomerHealthState | null 
           </ul>
         )
       )}
+
+      <ScoreHistory history={history} />
 
       <p className="mt-3 text-xs text-muted-foreground/80" title={formatDateTime(health.lastCalculatedAt)}>
         Calculated {formatRelative(health.lastCalculatedAt)}

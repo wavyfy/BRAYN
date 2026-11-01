@@ -85,8 +85,10 @@ Do not automatically:
 - Start another implementation
 - Perform unrelated cleanup
 - Run Graphify maintenance
-- Commit or push changes
+- Push changes, create PRs, or deploy
 - Perform speculative work
+
+A verified part within user-approved scope is committed before stopping (see §24).
 
 Wait for the user's next instruction.
 
@@ -598,14 +600,14 @@ Follow the user's explicit Git workflow.
 
 Unless explicitly requested:
 
-- Do not commit.
+- Do not commit, except a verified slice within user-approved scope (§24).
 - Do not push.
 - Do not create pull requests.
 - Do not rewrite history.
 - Do not amend existing commits.
 - Do not reset/delete user work.
 
-Before a requested commit:
+Before any commit:
 
 - Confirm the intended scope.
 - Ensure unrelated changes are not included.
@@ -706,6 +708,8 @@ Test
 ↓
 Verify
 ↓
+Commit (approved scope only)
+↓
 Report
 ↓
 STOP
@@ -720,6 +724,36 @@ Supporting tools exist to make implementation faster and more reliable, not to b
 
 Use them when useful.
 Do not use them merely because they are available.
+
+---
+
+## 24. Fast, Risk-Based Execution
+
+Optimize implementation speed without compromising correctness, security, architecture, or required verification.
+
+- Execute scoped work decisively; avoid unnecessary pauses, re-analysis, or repeated confirmation.
+- Inspect existing context once, then implement when the scope is clear.
+- Do not re-audit decisions already documented and locked.
+- For small/isolated changes, run focused tests first. Do not automatically run the entire test suite.
+- Run the full suite at meaningful release boundaries or when changes affect shared/core infrastructure.
+- Keep all tests directly relevant to the changed behavior, security boundaries, data isolation, migrations, and regressions.
+- Do not test unchanged systems merely for reassurance.
+- Avoid unnecessary production pre-checks for changes that cannot affect production infrastructure/schema.
+- Batch closely related low-risk changes when their scope and dependencies are already clear.
+- Minimize documentation/reporting overhead; report only decisions, changes, failures, risks, and verification results that matter.
+- Commit verified slices promptly. Do not repeatedly stop between implementation, testing, and commit when the scope is already approved.
+- Never skip a verification step when it protects against a meaningful regression, security issue, data-loss risk, or architectural violation.
+- Never trade correctness for speed. Speed comes from reducing unnecessary work, not reducing engineering standards.
+
+Default workflow:
+
+```text
+Inspect → Plan briefly → Implement → Focused verification → Fix failures → Commit → STOP
+```
+
+Escalate to broader testing/review only when the change's risk or scope justifies it.
+
+Commit automatically only within user-approved scope. After committing, STOP before the next part (§3). Push, pull requests, merges, deploys, and production operations remain user-requested only.
 
 ````
 

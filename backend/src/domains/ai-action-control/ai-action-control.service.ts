@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { ApprovalRequiredError, ConflictError, NotFoundError, UnauthorizedError, ValidationError } from '../../common/errors/app-error';
 import { IdempotencyService } from '../../common/idempotency/idempotency.service';
 import { RequestContext } from '../../common/logging/request-context';
@@ -125,15 +125,39 @@ export class AiActionControlService {
     // this deliberately stops at "the boundary exists and is consulted," not a rule engine.
     await this.merchantKnowledge.list(context.workspaceId, 'policy');
 
-    if (definition.requiresApproval) {
+    const invalidReason = definition.validate ? await definition.validate(parsed.data, context) : null;
+    if (invalidReason) {
       await this.audit(context, {
+        action: definition.name,
+        riskLevel: definition.riskLevel,
+        permissionDecision: 'permitted',
+        approvalState: 'not_required',
+        executionStatus: 'blocked_validation',
+        inputSummary: parsed.data,
+        failureReason: invalidReason,
+      });
+      throw new ValidationError(invalidReason);
+    }
+
+    if (definition.requiresApproval) {
+      const pendingFields: AuditFields = {
         action: definition.name,
         riskLevel: definition.riskLevel,
         permissionDecision: 'permitted',
         approvalState: 'pending',
         executionStatus: 'blocked_approval',
         inputSummary: parsed.data,
-      });
+      };
+      if (definition.pendingScope) {
+        const recorded = await this.recordPendingOnce(context, definition.pendingScope(parsed.data), pendingFields);
+        if (!recorded) {
+          const reason = `A "${definition.name}" request for this is already pending approval.`;
+          await this.audit(context, { ...pendingFields, approvalState: 'not_required', executionStatus: 'blocked_validation', failureReason: reason });
+          throw new ConflictError(reason);
+        }
+      } else {
+        await this.audit(context, pendingFields);
+      }
       throw new ApprovalRequiredError(`Action "${definition.name}" requires merchant approval before it can execute.`);
     }
 
@@ -330,6 +354,17 @@ export class AiActionControlService {
     }
 
     const executionContext: ActionExecutionContext = { workspaceId: context.workspaceId, customerId: request.customerId ?? undefined };
+
+    // Re-validated after the claim (state may have changed since the request); a failure records `failed` and executes nothing.
+    const invalidReason = definition.validate ? await definition.validate(parsed.data, executionContext) : null;
+    if (invalidReason) {
+      await this.database.client
+        .update(aiActionRequests)
+        .set({ executionStatus: 'failed', resultSummary: null, failureReason: invalidReason })
+        .where(eq(aiActionRequests.id, requestId));
+      throw new ValidationError(invalidReason);
+    }
+
     const namespacedKey = `ai-action-approval:${requestId}`;
     const outcome = await this.runExecution(definition, parsed.data, executionContext, namespacedKey);
 
@@ -434,28 +469,70 @@ export class AiActionControlService {
     }
   }
 
-  private async audit(context: ActionExecutionContext, fields: AuditFields): Promise<void> {
+  /** The actor-attributed audit row for `fields`, or null without an authenticated actor in `RequestContext`. */
+  private auditRow(context: ActionExecutionContext, fields: AuditFields): typeof aiActionRequests.$inferInsert | null {
     const store = RequestContext.get();
     if (!store?.actorUserId || !store?.actorRole) {
+      return null;
+    }
+
+    return {
+      workspaceId: context.workspaceId,
+      customerId: context.customerId ?? null,
+      actorUserId: store.actorUserId,
+      actorRole: store.actorRole as 'owner' | 'admin' | 'marketing' | 'support' | 'analyst',
+      action: fields.action,
+      riskLevel: fields.riskLevel,
+      permissionDecision: fields.permissionDecision,
+      approvalState: fields.approvalState,
+      executionStatus: fields.executionStatus,
+      inputSummary: fields.inputSummary,
+      resultSummary: fields.resultSummary ?? null,
+      failureReason: fields.failureReason ?? null,
+      correlationId: store.correlationId,
+    };
+  }
+
+  /**
+   * `pendingScope` path: the duplicate-pending check and the pending insert run under one per-scope advisory lock, so
+   * two concurrent requests can't both become pending. Unlike `audit()`, a failed insert propagates — this row is the
+   * approval request itself. Returns false when a matching request is already pending.
+   */
+  private async recordPendingOnce(context: ActionExecutionContext, scope: Record<string, string>, fields: AuditFields): Promise<boolean> {
+    const row = this.auditRow(context, fields);
+    if (!row) {
+      throw new UnauthorizedError(`An authenticated actor is required to request the action "${fields.action}".`);
+    }
+    const scopeJson = JSON.stringify(scope);
+
+    return this.database.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`ai-action-pending:${context.workspaceId}:${fields.action}:${scopeJson}`}))`);
+      const [existing] = await tx
+        .select({ id: aiActionRequests.id })
+        .from(aiActionRequests)
+        .where(
+          and(
+            eq(aiActionRequests.workspaceId, context.workspaceId),
+            eq(aiActionRequests.action, fields.action),
+            eq(aiActionRequests.approvalState, 'pending'),
+            sql`${aiActionRequests.inputSummary} @> ${scopeJson}::jsonb`,
+          ),
+        )
+        .limit(1);
+      if (existing) return false;
+      await tx.insert(aiActionRequests).values(row);
+      return true;
+    });
+  }
+
+  private async audit(context: ActionExecutionContext, fields: AuditFields): Promise<void> {
+    const row = this.auditRow(context, fields);
+    if (!row) {
       return;
     }
 
     try {
-      await this.database.client.insert(aiActionRequests).values({
-        workspaceId: context.workspaceId,
-        customerId: context.customerId ?? null,
-        actorUserId: store.actorUserId,
-        actorRole: store.actorRole as 'owner' | 'admin' | 'marketing' | 'support' | 'analyst',
-        action: fields.action,
-        riskLevel: fields.riskLevel,
-        permissionDecision: fields.permissionDecision,
-        approvalState: fields.approvalState,
-        executionStatus: fields.executionStatus,
-        inputSummary: fields.inputSummary,
-        resultSummary: fields.resultSummary ?? null,
-        failureReason: fields.failureReason ?? null,
-        correlationId: store.correlationId,
-      });
+      await this.database.client.insert(aiActionRequests).values(row);
     } catch (error) {
       this.logger.event('error', 'Failed to record AI action audit', 'AiActionControlService', {
         errorType: error instanceof Error ? error.constructor.name : typeof error,

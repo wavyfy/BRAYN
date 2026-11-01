@@ -8,12 +8,11 @@ import { RecommendationService } from '../intelligence-engines/recommendation.se
 import { MerchantKnowledgeService } from '../merchant-knowledge/merchant-knowledge.service';
 import { ReadToolsService, GET_CUSTOMER_ACTIVITY_HISTORY_TOOL } from './read-tools.service';
 import { WriteToolsService } from './write-tools.service';
-import { RECOMMENDATION_DISMISS_ACTION } from '../ai-action-control/actions.registry';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import { RequestContext } from '../../common/logging/request-context';
 import { DatabaseService } from '../../database/database.service';
 import { CustomerContextBuilder } from '../customer-intelligence/customer-context-builder.service';
-import { ApprovalRequiredError, NotFoundError, ProviderError, UnauthorizedError } from '../../common/errors/app-error';
+import { NotFoundError, ProviderError, UnauthorizedError } from '../../common/errors/app-error';
 import type { AiGenerateResult, AiProvider, AiToolCall } from '../ai/ai-provider.interface';
 
 const WORKSPACE_ID = 'ws_1';
@@ -42,6 +41,7 @@ const healthFixture: CustomerHealthState = {
   reasonCodes: ['Last order 5 day(s) ago — recency score 80/100.'],
   trend: null,
   lastCalculatedAt: new Date('2026-01-01T00:00:00Z'),
+  coverage: { availableWeight: 65, totalWeight: 100 },
 };
 
 function makeGateway(overrides: Partial<AiGatewayService> = {}): AiGatewayService {
@@ -968,5 +968,51 @@ describe('MerchantBusinessAnalystService — merchant notes via Context Builder 
     await ownerContext(() => service.ask(WORKSPACE_ID, 'question'));
 
     expect(deps.customerContext.build).not.toHaveBeenCalled();
+  });
+});
+
+describe('MerchantBusinessAnalystService — customer behavioural context (#7)', () => {
+  const contentsOf = (deps: Deps) =>
+    (deps.gateway.generate as ReturnType<typeof vi.fn>).mock.calls[0][0].messages.map((m: { content: string }) => m.content) as string[];
+  const withBehaviour = (behaviouralContext: CustomerRecord['behaviouralContext']) =>
+    makeDeps({ customerIntelligence: makeCustomerIntelligence({ getCustomer: vi.fn(async () => ({ ...customerFixture, behaviouralContext })) }) });
+
+  it('sends UCIR behavioural context to owner/admin as its own labelled block — event types and times only', async () => {
+    const deps = withBehaviour({
+      eventsCount: 7,
+      lastActivityAt: new Date('2026-10-31T09:00:00Z'),
+      recentEvents: [
+        { eventType: 'cart', occurredAt: new Date('2026-10-31T09:00:00Z') },
+        { eventType: 'product_view', occurredAt: new Date('2026-10-30T18:30:00Z') },
+      ],
+    });
+
+    await ownerContext(() => makeService(deps).ask(WORKSPACE_ID, 'Is this customer engaged?', CUSTOMER_ID));
+
+    const contents = contentsOf(deps);
+    const block = contents.find((c) => c.includes('CATEGORY: Observed website behaviour'));
+    expect(block).toContain('- Website events recorded: 7');
+    expect(block).toContain('- Last website activity: 2026-10-31T09:00:00.000Z');
+    expect(block).toContain('cart at 2026-10-31T09:00:00.000Z; product_view at 2026-10-30T18:30:00.000Z');
+    expect(block).toContain('Do not treat it as purchase intent');
+    // Separate from verified facts, never merged into them.
+    expect(contents.find((c) => c.includes('Verified customer facts'))).not.toContain('Website events recorded');
+  });
+
+  it('says plainly when no website activity is recorded, rather than omitting the category', async () => {
+    const deps = makeDeps();
+
+    await ownerContext(() => makeService(deps).ask(WORKSPACE_ID, 'question', CUSTOMER_ID));
+
+    expect(contentsOf(deps).find((c) => c.includes('Observed website behaviour'))).toContain('- No website activity recorded for this customer.');
+  });
+
+  it('is withheld from roles without customer-fact access, exactly like verified facts', async () => {
+    const deps = withBehaviour({ eventsCount: 3, lastActivityAt: new Date(), recentEvents: [{ eventType: 'page_view', occurredAt: new Date() }] });
+
+    await marketingContext(() => makeService(deps).ask(WORKSPACE_ID, 'question', CUSTOMER_ID));
+
+    expect(deps.customerIntelligence.getCustomer).not.toHaveBeenCalled();
+    expect(contentsOf(deps).some((c) => c.includes('Observed website behaviour'))).toBe(false);
   });
 });

@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, desc, inArray, notInArray, sql } from 'drizzle-orm';
+import { and, eq, desc, inArray, isNotNull, isNull, lt, notInArray, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
+import { recommendations } from '../../database/schema/recommendations';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { commerceOrders, orderPlacedAt } from '../../database/schema/commerce-orders';
 import { commerceOrderLineItems } from '../../database/schema/commerce-order-line-items';
@@ -9,7 +10,9 @@ import { commerceProductVariants } from '../../database/schema/commerce-product-
 import { DatabaseService } from '../../database/database.service';
 import { createEvent } from '../../common/events/domain-event';
 import { EventBus } from '../../common/events/event-bus.service';
-import { CustomerIntelligenceService, type CustomerRecord } from '../customer-intelligence/customer-intelligence.service';
+import { CustomerIntelligenceService, type CustomerRecord, type WebsiteProductIntent } from '../customer-intelligence/customer-intelligence.service';
+import { CustomerHealthService, type HealthCategory } from './customer-health.service';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 /** Doc10 opportunity lifecycle: "Merchant / System Notification" after detection (doc16 trigger: "Revenue opportunities"). */
 export interface RevenueOpportunityCreatedPayload {
@@ -42,6 +45,53 @@ const MIN_WORKSPACE_ORDERS_FOR_AFFINITY = 20;
 const UPSELL_CONFIDENCE_SINGLE_CANDIDATE = 80;
 const UPSELL_CONFIDENCE_MULTIPLE_CANDIDATES = 60;
 
+// Website-derived cross_sell (Milestone #5 Release 3 — user decisions, Nov 1, 2026).
+const DAY_MS = 24 * 60 * 60 * 1000;
+export const WEBSITE_EVIDENCE_WINDOW_MS = 7 * DAY_MS;
+export const WEBSITE_VIEW_MIN_VIEWS = 3;
+export const WEBSITE_VIEW_MIN_SESSIONS = 2;
+export const WEBSITE_CART_WAIT_MS = DAY_MS;
+const WEBSITE_CONFIDENCE_VIEWS = 60; // medium evidence
+const WEBSITE_CONFIDENCE_CART = 80; // high evidence
+const WEBSITE_EXPIRED_REASON = 'Website evidence no longer fresh (7 days).';
+
+export interface WebsiteQualification {
+  kind: 'cart' | 'views';
+  quantity: number;
+  evidenceAt: Date;
+  viewCount: number;
+  sessionCount: number;
+}
+
+/**
+ * Applies the Release 3 rules to one product's evidence, counting only events after `evidenceAfter`
+ * (the earlier website opportunity's closure — so a closed one returns only on new evidence).
+ * Cart: added ≥24 h ago with no purchase since. Views: ≥3 views across ≥2 distinct sessions in the
+ * window. A product the customer ever bought never qualifies — cross_sell offers something new.
+ */
+export function qualifyWebsiteIntent(intent: WebsiteProductIntent, now: Date, evidenceAfter: Date | null): WebsiteQualification | null {
+  if (intent.lastPurchasedAt) return null;
+  const after = (at: Date) => !evidenceAfter || at > evidenceAfter;
+
+  const carts = intent.cartAdds.filter((cart) => after(cart.occurredAt) && now.getTime() - cart.occurredAt.getTime() >= WEBSITE_CART_WAIT_MS);
+  if (carts.length > 0) {
+    const latest = carts.reduce((a, b) => (b.occurredAt > a.occurredAt ? b : a));
+    return { kind: 'cart', quantity: latest.quantity, evidenceAt: latest.occurredAt, viewCount: 0, sessionCount: 0 };
+  }
+
+  const views = intent.views.filter((view) => after(view.occurredAt));
+  const sessionCount = new Set(views.map((view) => view.sessionId)).size;
+  if (views.length < WEBSITE_VIEW_MIN_VIEWS || sessionCount < WEBSITE_VIEW_MIN_SESSIONS) return null;
+  const evidenceAt = views.reduce((a, b) => (b.occurredAt > a.occurredAt ? b : a)).occurredAt;
+  return { kind: 'views', quantity: 1, evidenceAt, viewCount: views.length, sessionCount };
+}
+
+/** Cart beats views; then more sessions, more views, more recent. */
+function strongerQualification(a: WebsiteQualification, b: WebsiteQualification): number {
+  if (a.kind !== b.kind) return a.kind === 'cart' ? -1 : 1;
+  return b.sessionCount - a.sessionCount || b.viewCount - a.viewCount || b.evidenceAt.getTime() - a.evidenceAt.getTime();
+}
+
 export type OpportunityType = 'reorder' | 'win_back' | 'vip_recognition' | 'cross_sell' | 'bundle' | 'upsell';
 export type OpportunityPriority = 'critical' | 'high' | 'medium' | 'low';
 
@@ -51,6 +101,100 @@ interface OpportunityCandidate {
   estimatedRevenue: string | null;
   reason: string;
   recommendedAction: string;
+  /** Website-derived only. */
+  evidenceProductId?: string;
+  evidenceAt?: Date;
+  /** Commerce affinity cross_sell/bundle only — the recommended (owned, other) pair. */
+  affinityOwnedProductId?: string;
+  affinityOtherProductId?: string;
+  /** Upsell only — when the purchase it was derived from was placed. */
+  qualifyingPurchaseAt?: Date;
+  /** Upsell only — the recommended higher-tier variant (persisted for conversion matching). */
+  upsellTargetVariantId?: string;
+}
+
+export const CONVERSION_WINDOW_MS = 7 * DAY_MS;
+export const CONVERTED_CLOSED_REASON = 'converted_by_order';
+
+export type ExecutedOpportunity = Pick<
+  typeof revenueOpportunities.$inferSelect,
+  'id' | 'type' | 'evidenceAt' | 'evidenceProductId' | 'affinityOtherProductId' | 'upsellTargetVariantId'
+> & { executedAt: Date };
+
+export interface ConversionOrder {
+  orderId: string;
+  placedAt: Date;
+  productIds: Set<string>;
+  variantIds: Set<string>;
+}
+
+/**
+ * #8 `converted` rule (user decisions, Nov 1, 2026): the earliest non-cancelled order placed after execution (the
+ * completed recommendation's `closedAt`) and at most 7 days later. reorder/win_back/vip_recognition: any order. Website
+ * cross_sell: contains `evidenceProductId`. Commerce cross_sell/bundle: contains the recommended `affinityOtherProductId`.
+ * upsell: contains exactly `upsellTargetVariantId`. No stored product/variant (legacy rows) → never converts.
+ */
+export function findConversion(opportunity: ExecutedOpportunity, orders: ConversionOrder[]): ConversionOrder | null {
+  const start = opportunity.executedAt.getTime();
+  const matches = (order: ConversionOrder): boolean => {
+    switch (opportunity.type) {
+      case 'reorder':
+      case 'win_back':
+      case 'vip_recognition':
+        return true;
+      case 'cross_sell': {
+        const productId = opportunity.evidenceAt ? opportunity.evidenceProductId : opportunity.affinityOtherProductId;
+        return !!productId && order.productIds.has(productId);
+      }
+      case 'bundle':
+        return !!opportunity.affinityOtherProductId && order.productIds.has(opportunity.affinityOtherProductId);
+      case 'upsell':
+        return !!opportunity.upsellTargetVariantId && order.variantIds.has(opportunity.upsellTargetVariantId);
+    }
+  };
+
+  return (
+    orders
+      .filter((order) => order.placedAt.getTime() > start && order.placedAt.getTime() <= start + CONVERSION_WINDOW_MS)
+      .sort((a, b) => a.placedAt.getTime() - b.placedAt.getTime())
+      .find(matches) ?? null
+  );
+}
+
+type IgnoredCommerceRow = Pick<
+  typeof revenueOpportunities.$inferSelect,
+  'type' | 'closedAt' | 'updatedAt' | 'affinityOwnedProductId' | 'affinityOtherProductId'
+>;
+
+/**
+ * #8 `ignored` rule (user decisions, Nov 1, 2026): a dismissed commerce-derived opportunity returns only when its
+ * qualifying condition changed after the dismissal. reorder/win_back: an order placed after it. upsell: its qualifying
+ * purchase placed after it. cross_sell/bundle: a different recommended pair — a row with no stored pair (created before
+ * pairs were stored) blocks. vip_recognition: never (no second qualifying state). Website cross_sell keeps its own
+ * post-closure evidence rule (maintainWebsiteOpportunities).
+ */
+export function isSuppressedByIgnored(candidate: OpportunityCandidate, ignored: IgnoredCommerceRow[], lastOrderAt: Date | null): boolean {
+  const rows = ignored.filter((row) => row.type === candidate.type);
+  if (rows.length === 0) return false;
+  const latestClosure = new Date(Math.max(...rows.map((row) => (row.closedAt ?? row.updatedAt).getTime())));
+
+  switch (candidate.type) {
+    case 'reorder':
+    case 'win_back':
+      return !lastOrderAt || lastOrderAt <= latestClosure;
+    case 'upsell':
+      return !candidate.qualifyingPurchaseAt || candidate.qualifyingPurchaseAt <= latestClosure;
+    case 'cross_sell':
+    case 'bundle':
+      return rows.some(
+        (row) =>
+          !row.affinityOwnedProductId ||
+          !row.affinityOtherProductId ||
+          (row.affinityOwnedProductId === candidate.affinityOwnedProductId && row.affinityOtherProductId === candidate.affinityOtherProductId),
+      );
+    case 'vip_recognition':
+      return true;
+  }
 }
 
 /**
@@ -85,6 +229,19 @@ interface OpportunityCandidate {
  *   most-recently-purchased-product first, stopping at the first product
  *   with a qualifying candidate.
  *
+ * - website `cross_sell` (Milestone #5 Release 3) — only when the caller
+ *   passes `includeWebsite` (the scheduled daily run; no real-time
+ *   creation): a never-purchased product with cart intent (≥24 h, no
+ *   purchase) or repeated views (≥3 across ≥2 sessions in 7 days) — see
+ *   qualifyWebsiteIntent. Evidence comes normalized from
+ *   CustomerIntelligenceService.getWebsiteProductIntent. Carries
+ *   `evidenceProductId`/`evidenceAt`: an open one is refreshed while its
+ *   evidence stays fresh and expires 7 days after it goes stale (its
+ *   active recommendation dismissed, as on merge); a closed one returns
+ *   only when the rule qualifies again on events after its closure. A
+ *   commerce `cross_sell` candidate in the same evaluation wins (one open
+ *   opportunity per type).
+ *
  * Not produced: review_request/referral (no review or referral data
  * exists anywhere in BRAYN yet).
  *
@@ -118,10 +275,15 @@ export class RevenueOpportunityService {
     private readonly database: DatabaseService,
     private readonly customerIntelligenceService: CustomerIntelligenceService,
     private readonly eventBus: EventBus,
+    private readonly customerHealthService: CustomerHealthService,
   ) {}
 
-  async detect(workspaceId: string, canonicalCustomerId: string) {
+  async detect(workspaceId: string, canonicalCustomerId: string, options: { includeWebsite?: boolean } = {}) {
     const customer = await this.customerIntelligenceService.getCustomer(workspaceId, canonicalCustomerId);
+    const now = new Date();
+    const websiteIntents = options.includeWebsite
+      ? await this.customerIntelligenceService.getWebsiteProductIntent(workspaceId, canonicalCustomerId, new Date(now.getTime() - WEBSITE_EVIDENCE_WINDOW_MS), now)
+      : null;
 
     // A customer with zero commerce orders trivially owns zero products, so
     // affinity/upsell can only ever return null — skip the queries entirely
@@ -138,12 +300,25 @@ export class RevenueOpportunityService {
       upsellCandidate,
     ].filter((candidate): candidate is OpportunityCandidate => candidate !== null);
 
-    const existingOpenTypes = await this.getOpenTypes(workspaceId, canonicalCustomerId);
-    const newCandidates = candidates.filter((candidate) => !existingOpenTypes.has(candidate.type));
+    const healthCategory = (await this.customerHealthService.findCurrent(workspaceId, canonicalCustomerId))?.healthCategory ?? null;
+    const avgOrderValue = averageOrderValue(customer);
 
-    if (newCandidates.length > 0) {
-      const avgOrderValue = averageOrderValue(customer);
-      const created = await this.database.client
+    // Automatic evaluation (Milestone #5 D5) can run concurrently for one customer (order event + the
+    // health event it causes); a per-customer transaction lock makes the open-type check and insert atomic.
+    const created = await this.database.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`revenue_opportunity:${workspaceId}:${canonicalCustomerId}`}))`);
+      // Before the website step, so a suppressed commerce cross_sell doesn't hold back a qualifying website one.
+      const ignored = await this.getIgnoredCommerceRows(workspaceId, canonicalCustomerId, tx);
+      const eligible = candidates.filter((candidate) => !isSuppressedByIgnored(candidate, ignored, customer.commerceContext.lastOrderAt));
+      if (websiteIntents) {
+        const websiteCandidate = await this.maintainWebsiteOpportunities(tx, workspaceId, canonicalCustomerId, websiteIntents, now);
+        if (websiteCandidate && !eligible.some((candidate) => candidate.type === websiteCandidate.type)) eligible.push(websiteCandidate);
+      }
+      const existingOpenTypes = await this.getOpenTypes(workspaceId, canonicalCustomerId, tx);
+      const newCandidates = eligible.filter((candidate) => !existingOpenTypes.has(candidate.type));
+      if (newCandidates.length === 0) return [];
+
+      return tx
         .insert(revenueOpportunities)
         .values(
           newCandidates.map((candidate) => ({
@@ -151,32 +326,38 @@ export class RevenueOpportunityService {
             canonicalCustomerId,
             type: candidate.type,
             status: 'new' as const,
-            priority: computePriority(candidate.confidence, candidate.estimatedRevenue, avgOrderValue),
+            priority: computePriority(candidate.confidence, candidate.estimatedRevenue, avgOrderValue, candidate.type, healthCategory),
             estimatedRevenue: candidate.estimatedRevenue,
             confidence: candidate.confidence,
             reason: candidate.reason,
             recommendedAction: candidate.recommendedAction,
+            evidenceProductId: candidate.evidenceProductId ?? null,
+            evidenceAt: candidate.evidenceAt ?? null,
+            affinityOwnedProductId: candidate.affinityOwnedProductId ?? null,
+            affinityOtherProductId: candidate.affinityOtherProductId ?? null,
+            upsellTargetVariantId: candidate.upsellTargetVariantId ?? null,
           })),
         )
         .returning();
+    });
 
-      for (const opportunity of created) {
-        this.eventBus.emit(
-          createEvent<RevenueOpportunityCreatedPayload>({
-            type: 'revenue_opportunity.created',
-            workspaceId,
-            entityId: opportunity.id,
-            payload: {
-              opportunityId: opportunity.id,
-              canonicalCustomerId,
-              type: opportunity.type as OpportunityType,
-              priority: opportunity.priority as OpportunityPriority,
-              estimatedRevenue: opportunity.estimatedRevenue,
-              confidence: opportunity.confidence,
-            },
-          }),
-        );
-      }
+    // Emitted after commit, so a handler never sees an opportunity that could still roll back.
+    for (const opportunity of created) {
+      this.eventBus.emit(
+        createEvent<RevenueOpportunityCreatedPayload>({
+          type: 'revenue_opportunity.created',
+          workspaceId,
+          entityId: opportunity.id,
+          payload: {
+            opportunityId: opportunity.id,
+            canonicalCustomerId,
+            type: opportunity.type as OpportunityType,
+            priority: opportunity.priority as OpportunityPriority,
+            estimatedRevenue: opportunity.estimatedRevenue,
+            confidence: opportunity.confidence,
+          },
+        }),
+      );
     }
 
     return this.list(workspaceId, canonicalCustomerId);
@@ -216,8 +397,207 @@ export class RevenueOpportunityService {
     return { total, byPriority };
   }
 
-  private async getOpenTypes(workspaceId: string, canonicalCustomerId: string): Promise<Set<OpportunityType>> {
+  /**
+   * Inside detect()'s per-customer lock: refreshes open website opportunities whose evidence still
+   * qualifies, expires stale ones (dismissing their active recommendation), then returns the strongest
+   * new website candidate — applying the recreation rule per product. Null when nothing qualifies.
+   */
+  private async maintainWebsiteOpportunities(
+    tx: NodePgDatabase,
+    workspaceId: string,
+    canonicalCustomerId: string,
+    intents: WebsiteProductIntent[],
+    now: Date,
+  ): Promise<OpportunityCandidate | null> {
+    const websiteRows = await tx
+      .select({
+        id: revenueOpportunities.id,
+        status: revenueOpportunities.status,
+        evidenceProductId: revenueOpportunities.evidenceProductId,
+        evidenceAt: revenueOpportunities.evidenceAt,
+        closedAt: revenueOpportunities.closedAt,
+        updatedAt: revenueOpportunities.updatedAt,
+      })
+      .from(revenueOpportunities)
+      .where(
+        and(
+          eq(revenueOpportunities.workspaceId, workspaceId),
+          eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId),
+          isNotNull(revenueOpportunities.evidenceAt),
+        ),
+      );
+    const intentByProduct = new Map(intents.map((intent) => [intent.productId, intent]));
+    const isTerminal = (status: string) => (TERMINAL_STATUSES as readonly string[]).includes(status);
+
+    for (const row of websiteRows.filter((r) => !isTerminal(r.status) && r.evidenceProductId)) {
+      const intent = intentByProduct.get(row.evidenceProductId!);
+      const fresh = intent ? qualifyWebsiteIntent(intent, now, null) : null;
+      if (fresh && fresh.evidenceAt > row.evidenceAt!) {
+        await tx.update(revenueOpportunities).set({ evidenceAt: fresh.evidenceAt, updatedAt: now }).where(eq(revenueOpportunities.id, row.id));
+      }
+    }
+
+    const expired = await tx
+      .update(revenueOpportunities)
+      .set({ status: 'expired', closedAt: now, closedReason: WEBSITE_EXPIRED_REASON, updatedAt: now })
+      .where(
+        and(
+          eq(revenueOpportunities.workspaceId, workspaceId),
+          eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId),
+          lt(revenueOpportunities.evidenceAt, new Date(now.getTime() - WEBSITE_EVIDENCE_WINDOW_MS)),
+          notInArray(revenueOpportunities.status, [...TERMINAL_STATUSES]),
+        ),
+      )
+      .returning({ id: revenueOpportunities.id, evidenceProductId: revenueOpportunities.evidenceProductId });
+    if (expired.length > 0) {
+      await tx
+        .update(recommendations)
+        .set({ state: 'dismissed', closedAt: now, closedReason: WEBSITE_EXPIRED_REASON, updatedAt: now })
+        .where(
+          and(
+            eq(recommendations.workspaceId, workspaceId),
+            inArray(recommendations.sourceOpportunityId, expired.map((row) => row.id)),
+            eq(recommendations.state, 'active'),
+          ),
+        );
+    }
+
+    // Recreation rule: per product, only evidence after the latest closure of a website opportunity counts.
+    const closedAtByProduct = new Map<string, Date>();
+    const closures = [
+      ...websiteRows.filter((r) => isTerminal(r.status)).map((r) => ({ productId: r.evidenceProductId, at: r.closedAt ?? r.updatedAt })),
+      ...expired.map((r) => ({ productId: r.evidenceProductId, at: now })),
+    ];
+    for (const { productId, at } of closures) {
+      if (productId && at > (closedAtByProduct.get(productId) ?? new Date(0))) closedAtByProduct.set(productId, at);
+    }
+
+    let best: { intent: WebsiteProductIntent; qualification: WebsiteQualification } | null = null;
+    for (const intent of intents) {
+      const qualification = qualifyWebsiteIntent(intent, now, closedAtByProduct.get(intent.productId) ?? null);
+      if (qualification && (!best || strongerQualification(qualification, best.qualification) < 0)) best = { intent, qualification };
+    }
+    if (!best) return null;
+
+    const { intent, qualification } = best;
+    const price = await this.getLowestVariantPrice(workspaceId, intent.productId);
+    return {
+      type: 'cross_sell',
+      confidence: qualification.kind === 'cart' ? WEBSITE_CONFIDENCE_CART : WEBSITE_CONFIDENCE_VIEWS,
+      estimatedRevenue: price !== null ? (price * qualification.quantity).toFixed(2) : null,
+      reason:
+        qualification.kind === 'cart'
+          ? `Customer added "${intent.title}" to their cart (quantity ${qualification.quantity}) on the website and has not purchased it.`
+          : `Customer viewed "${intent.title}" ${qualification.viewCount} times across ${qualification.sessionCount} website sessions in the last 7 days and has not purchased it.`,
+      recommendedAction: `Recommend "${intent.title}" to the customer.`,
+      evidenceProductId: intent.productId,
+      evidenceAt: qualification.evidenceAt,
+    };
+  }
+
+  /**
+   * #8 `converted` outcome: moves this customer's executed opportunities to `converted` when findConversion finds a
+   * qualifying order. Run on `order.created` and by the daily run, before detect(). Only `executed` rows move, so a
+   * repeat or concurrent run converts nothing twice and an expiry that won the race is kept. Returns how many converted.
+   */
+  async evaluateConversions(workspaceId: string, canonicalCustomerId: string): Promise<number> {
     const rows = await this.database.client
+      .select({
+        id: revenueOpportunities.id,
+        type: revenueOpportunities.type,
+        evidenceAt: revenueOpportunities.evidenceAt,
+        evidenceProductId: revenueOpportunities.evidenceProductId,
+        affinityOtherProductId: revenueOpportunities.affinityOtherProductId,
+        upsellTargetVariantId: revenueOpportunities.upsellTargetVariantId,
+        executedAt: recommendations.closedAt,
+      })
+      .from(revenueOpportunities)
+      .innerJoin(
+        recommendations,
+        and(eq(recommendations.sourceOpportunityId, revenueOpportunities.id), eq(recommendations.workspaceId, workspaceId), eq(recommendations.state, 'completed')),
+      )
+      .where(
+        and(
+          eq(revenueOpportunities.workspaceId, workspaceId),
+          eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId),
+          eq(revenueOpportunities.status, 'executed'),
+        ),
+      );
+    const executed = rows.filter((row): row is ExecutedOpportunity => row.executedAt !== null);
+    if (executed.length === 0) return 0;
+
+    const sourceCustomerIds = await this.getSourceCustomerIds(workspaceId, canonicalCustomerId);
+    if (sourceCustomerIds.length === 0) return 0;
+
+    const from = new Date(Math.min(...executed.map((row) => row.executedAt.getTime())));
+    const to = new Date(Math.max(...executed.map((row) => row.executedAt.getTime())) + CONVERSION_WINDOW_MS);
+    const lines = await this.database.client
+      .select({ orderId: commerceOrders.id, placedAt: orderPlacedAt(), productId: commerceProductVariants.productId, variantId: commerceProductVariants.id })
+      .from(commerceOrders)
+      .leftJoin(commerceOrderLineItems, eq(commerceOrderLineItems.orderId, commerceOrders.id))
+      .leftJoin(commerceProductVariants, eq(commerceOrderLineItems.variantId, commerceProductVariants.id))
+      .where(
+        and(
+          eq(commerceOrders.workspaceId, workspaceId),
+          inArray(commerceOrders.customerId, sourceCustomerIds),
+          isNull(commerceOrders.sourceCancelledAt),
+          sql`${orderPlacedAt()} > ${from.toISOString()}::timestamptz`,
+          sql`${orderPlacedAt()} <= ${to.toISOString()}::timestamptz`,
+        ),
+      );
+
+    const orders = new Map<string, ConversionOrder>();
+    for (const line of lines) {
+      const order = orders.get(line.orderId) ?? { orderId: line.orderId, placedAt: line.placedAt, productIds: new Set(), variantIds: new Set() };
+      if (line.productId) order.productIds.add(line.productId);
+      if (line.variantId) order.variantIds.add(line.variantId);
+      orders.set(line.orderId, order);
+    }
+
+    let converted = 0;
+    for (const opportunity of executed) {
+      if (!findConversion(opportunity, [...orders.values()])) continue;
+      const now = new Date();
+      const updated = await this.database.client
+        .update(revenueOpportunities)
+        .set({ status: 'converted', closedAt: now, closedReason: CONVERTED_CLOSED_REASON, updatedAt: now })
+        .where(
+          and(
+            eq(revenueOpportunities.workspaceId, workspaceId),
+            eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId),
+            eq(revenueOpportunities.id, opportunity.id),
+            eq(revenueOpportunities.status, 'executed'),
+          ),
+        )
+        .returning({ id: revenueOpportunities.id });
+      converted += updated.length;
+    }
+    return converted;
+  }
+
+  /** Ignored commerce-derived rows (website ones carry `evidenceAt` and follow their own rule) — input to isSuppressedByIgnored. */
+  private async getIgnoredCommerceRows(workspaceId: string, canonicalCustomerId: string, executor: NodePgDatabase): Promise<IgnoredCommerceRow[]> {
+    return executor
+      .select({
+        type: revenueOpportunities.type,
+        closedAt: revenueOpportunities.closedAt,
+        updatedAt: revenueOpportunities.updatedAt,
+        affinityOwnedProductId: revenueOpportunities.affinityOwnedProductId,
+        affinityOtherProductId: revenueOpportunities.affinityOtherProductId,
+      })
+      .from(revenueOpportunities)
+      .where(
+        and(
+          eq(revenueOpportunities.workspaceId, workspaceId),
+          eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId),
+          eq(revenueOpportunities.status, 'ignored'),
+          isNull(revenueOpportunities.evidenceAt),
+        ),
+      );
+  }
+
+  private async getOpenTypes(workspaceId: string, canonicalCustomerId: string, executor: NodePgDatabase): Promise<Set<OpportunityType>> {
+    const rows = await executor
       .select({ type: revenueOpportunities.type })
       .from(revenueOpportunities)
       .where(
@@ -292,6 +672,8 @@ export class RevenueOpportunityService {
         estimatedRevenue: combined,
         reason: `These two products were purchased together in ${Math.round(bestBundle.ratio * 100)}% of the orders containing the customer's product.`,
         recommendedAction: 'Offer these products together as a bundle.',
+        affinityOwnedProductId: bestBundle.ownedProductId,
+        affinityOtherProductId: bestBundle.otherProductId,
       };
     }
 
@@ -304,6 +686,8 @@ export class RevenueOpportunityService {
         estimatedRevenue: otherPrice !== null ? otherPrice.toFixed(2) : null,
         reason: `Other customers who bought the same product also bought this one in ${Math.round(bestCrossSell.ratio * 100)}% of matching orders.`,
         recommendedAction: 'Recommend this product to the customer.',
+        affinityOwnedProductId: bestCrossSell.ownedProductId,
+        affinityOtherProductId: bestCrossSell.otherProductId,
       };
     }
 
@@ -364,6 +748,8 @@ export class RevenueOpportunityService {
         estimatedRevenue: revenueDelta.toFixed(2),
         reason: `Customer purchased a ${purchasedPrice.toFixed(2)} variant; a ${nearest.price.toFixed(2)} variant of the same product is available and unpurchased.`,
         recommendedAction: 'Suggest the higher-tier variant to this customer.',
+        qualifyingPurchaseAt: purchased.purchasedAt,
+        upsellTargetVariantId: nearest.id,
       };
     }
 
@@ -591,14 +977,37 @@ function detectVipRecognition(customer: CustomerRecord): OpportunityCandidate | 
 }
 
 /** See RevenueOpportunityService's doc comment for why this isn't doc10's full 4-factor formula. */
-function computePriority(confidence: number, estimatedRevenue: string | null, avgOrderValue: number | null): OpportunityPriority {
+/** Bounded up/down step already used for the revenue factor below — reused for health so neither factor outweighs the other. */
+const PRIORITY_BOOST = 1.2;
+const PRIORITY_DAMPEN = 0.8;
+
+/**
+ * Customer Risk & Engagement State factor (doc10 priority formula; Milestone #5 Release 1 direction, user decision Oct 31, 2026):
+ * Critical/At Risk favor win-back, Critical dampens pure upsell, Healthy favors upsell/cross-sell and dampens win-back.
+ * Types and categories not listed (reorder, VIP, bundle; Neutral; no health state) get no adjustment.
+ */
+const HEALTH_PRIORITY_ADJUSTMENTS: Partial<Record<HealthCategory, Partial<Record<OpportunityType, number>>>> = {
+  Critical: { win_back: PRIORITY_BOOST, upsell: PRIORITY_DAMPEN },
+  'At Risk': { win_back: PRIORITY_BOOST },
+  Healthy: { upsell: PRIORITY_BOOST, cross_sell: PRIORITY_BOOST, win_back: PRIORITY_DAMPEN },
+};
+
+export function computePriority(
+  confidence: number,
+  estimatedRevenue: string | null,
+  avgOrderValue: number | null,
+  type: OpportunityType,
+  healthCategory: string | null,
+): OpportunityPriority {
   let score = confidence;
 
   const revenue = estimatedRevenue ? Number(estimatedRevenue) : null;
   if (revenue !== null && avgOrderValue !== null && avgOrderValue > 0) {
     const ratio = revenue / avgOrderValue;
-    score *= ratio >= 1.5 ? 1.2 : ratio < 0.5 ? 0.8 : 1;
+    score *= ratio >= 1.5 ? PRIORITY_BOOST : ratio < 0.5 ? PRIORITY_DAMPEN : 1;
   }
+
+  score *= HEALTH_PRIORITY_ADJUSTMENTS[healthCategory as HealthCategory]?.[type] ?? 1;
 
   if (score >= 90) return 'critical';
   if (score >= 70) return 'high';

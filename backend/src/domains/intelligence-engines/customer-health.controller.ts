@@ -19,7 +19,13 @@ export class CustomerHealthController {
     return this.customerHealthService.getCurrent(workspaceId, canonicalCustomerId);
   }
 
-  /** On-demand recalculation — see CustomerHealthService's doc comment for why this isn't event-driven/scheduled yet. */
+  /** Most recent recalculations, newest first — empty before the first calculation. */
+  @Get('history')
+  async history(@Param('workspaceId') workspaceId: string, @Param('canonicalCustomerId') canonicalCustomerId: string) {
+    return this.customerHealthService.getHistory(workspaceId, canonicalCustomerId);
+  }
+
+  /** On-demand recalculation — also event-driven and daily (see CustomerHealthService's doc comment). */
   @Post('recalculate')
   @HttpCode(HttpStatus.OK)
   async recalculate(@Param('workspaceId') workspaceId: string, @Param('canonicalCustomerId') canonicalCustomerId: string) {

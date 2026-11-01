@@ -702,6 +702,36 @@ export class OrderService {
     return refundRows;
   }
 
+  /**
+   * #8 `order.refund_request` (Decision A): the full remaining refundable amount of one order of this canonical
+   * customer — `totalPrice` minus recorded refunds, in SQL numeric so the provider-native/raw representation is kept
+   * (no currency semantics). Returns a reason instead when the order isn't found for this workspace/customer, is
+   * cancelled, or has nothing left to refund.
+   */
+  async findRefundableAmount(workspaceId: string, canonicalCustomerId: string, orderId: string): Promise<{ amount: string } | { reason: string }> {
+    const [row] = await this.database.client
+      .select({
+        cancelledAt: commerceOrders.sourceCancelledAt,
+        remaining: sql<string | null>`(${commerceOrders.totalPrice}::numeric - coalesce((select sum(${commerceRefunds.totalRefunded}::numeric) from ${commerceRefunds} where ${commerceRefunds.workspaceId} = ${workspaceId} and ${commerceRefunds.orderId} = ${commerceOrders.id}), 0))::text`,
+      })
+      .from(commerceOrders)
+      .innerJoin(commerceCustomers, eq(commerceCustomers.id, commerceOrders.customerId))
+      .where(
+        and(
+          eq(commerceOrders.workspaceId, workspaceId),
+          eq(commerceOrders.id, orderId),
+          eq(commerceCustomers.workspaceId, workspaceId),
+          eq(commerceCustomers.canonicalCustomerId, canonicalCustomerId),
+        ),
+      )
+      .limit(1);
+
+    if (!row) return { reason: 'No order with that id exists for this customer.' };
+    if (row.cancelledAt) return { reason: 'The order is cancelled.' };
+    if (row.remaining === null || !(Number(row.remaining) > 0)) return { reason: 'The order has no refundable amount remaining.' };
+    return { amount: row.remaining };
+  }
+
   /** This workspace/provider's current `sourceUpdatedAt` for each existing order externalId (doc 06/20 — Reconciliation: detect missing/changed records before repairing; line-item-level drift isn't tracked separately). Absent from the map means no such row exists yet. */
   async findExistingUpdatedAt(
     workspaceId: string,

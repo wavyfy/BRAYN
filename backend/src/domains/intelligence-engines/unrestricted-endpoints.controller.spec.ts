@@ -42,7 +42,7 @@ describe('Unrestricted customer-adjacent endpoints (e2e regression)', () => {
   let app: NestFastifyApplication;
 
   const dashboardService = { getSummary: vi.fn(async () => ({ customersCount: 1 })) };
-  const customerHealthService = { getCurrent: vi.fn(async () => ({ score: null })) };
+  const customerHealthService = { getCurrent: vi.fn(async () => ({ score: null })), getHistory: vi.fn(async () => []) };
   const revenueOpportunityService = { list: vi.fn(async () => []) };
   const recommendationService = { list: vi.fn(async () => []) };
   const userService = {
@@ -116,6 +116,28 @@ describe('Unrestricted customer-adjacent endpoints (e2e regression)', () => {
     expect(res.statusCode).toBe(200);
     expect(customerHealthService.getCurrent).toHaveBeenCalledWith('ws_1', 'canon_1');
     expect(accessLogInsert).not.toHaveBeenCalled();
+  });
+
+  it('a support member can read customer health history (no PII), and it creates no protected-data access record', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/workspaces/ws_1/customers/canon_1/health/history',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(customerHealthService.getHistory).toHaveBeenCalledWith('ws_1', 'canon_1');
+    expect(accessLogInsert).not.toHaveBeenCalled();
+  });
+
+  it('health history is behind workspace membership — a non-member is refused', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/workspaces/ws_other/customers/canon_1/health/history',
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.statusCode).toBe(403);
   });
 
   it('a support member can still read revenue opportunities, and it creates no protected-data access record', async () => {

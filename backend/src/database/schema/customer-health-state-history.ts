@@ -1,4 +1,4 @@
-import { integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { id, timestamps, workspaceId } from './columns';
 import { canonicalCustomers } from './canonical-customers';
 
@@ -22,4 +22,7 @@ export const customerHealthStateHistory = pgTable('customer_health_state_history
   trend: text('trend'),
   calculatedAt: timestamp('calculated_at', { withTimezone: true }).notNull(),
   ...timestamps(),
-});
+}, (table) => [
+  // Per-customer history read, newest first (CustomerHealthService.getHistory).
+  index('customer_health_state_history_customer_calculated_idx').on(table.workspaceId, table.canonicalCustomerId, table.calculatedAt),
+]);

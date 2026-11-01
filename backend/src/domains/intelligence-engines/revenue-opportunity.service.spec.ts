@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { RevenueOpportunityService } from './revenue-opportunity.service';
+import { RevenueOpportunityService, computePriority, findConversion, isSuppressedByIgnored } from './revenue-opportunity.service';
+import type { CustomerHealthService } from './customer-health.service';
 import type { DatabaseService } from '../../database/database.service';
 import type { EventBus } from '../../common/events/event-bus.service';
 import type { CustomerIntelligenceService, CustomerRecord } from '../customer-intelligence/customer-intelligence.service';
@@ -34,6 +35,17 @@ function makeEventBus() {
   return { emit: vi.fn() } as unknown as EventBus;
 }
 
+/** `transaction(fn)` runs `fn` against the same mocked client, plus `execute` for the advisory lock. */
+function makeDb(client: Record<string, unknown>) {
+  const execute = vi.fn(async () => undefined);
+  const transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn({ ...client, execute }));
+  return { client, transaction, execute } as unknown as DatabaseService & { execute: typeof execute };
+}
+
+function makeHealth(healthCategory: string | null = null) {
+  return { findCurrent: vi.fn(async () => (healthCategory ? { healthCategory } : null)) } as unknown as CustomerHealthService;
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function makeCustomer(commerceContext: Partial<CustomerRecord['commerceContext']>): CustomerIntelligenceService {
@@ -51,9 +63,9 @@ describe('RevenueOpportunityService', () => {
   describe('detect()', () => {
     it('creates no candidates for a customer with no orders', async () => {
       const insert = vi.fn();
-      const select = makeSelectQueue([[], []]); // getOpenTypes, then list()
+      const select = makeSelectQueue([[], [], []]); // getIgnoredCommerceRows, getOpenTypes, then list()
       const client = { select, insert };
-      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, makeCustomer({}), makeEventBus());
+      const service = new RevenueOpportunityService(makeDb(client), makeCustomer({}), makeEventBus(), makeHealth());
 
       const result = await service.detect('ws_1', 'canon_1');
 
@@ -81,7 +93,7 @@ describe('RevenueOpportunityService', () => {
       // [] = getOpenTypes; [] = list()
       const select = makeSelectQueue([[{ count: 0 }], [], [], []]);
       const client = { select, selectDistinct: makeSelectDistinctQueue([]), insert };
-      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, customer, makeEventBus());
+      const service = new RevenueOpportunityService(makeDb(client), customer, makeEventBus(), makeHealth());
 
       await service.detect('ws_1', 'canon_1');
 
@@ -93,7 +105,7 @@ describe('RevenueOpportunityService', () => {
       const insert = vi.fn();
       const select = makeSelectQueue([[{ count: 0 }], [], [], []]);
       const client = { select, selectDistinct: makeSelectDistinctQueue([]), insert };
-      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, customer, makeEventBus());
+      const service = new RevenueOpportunityService(makeDb(client), customer, makeEventBus(), makeHealth());
 
       await service.detect('ws_1', 'canon_1');
 
@@ -107,7 +119,7 @@ describe('RevenueOpportunityService', () => {
       const insert = vi.fn(() => insertChain);
       const select = makeSelectQueue([[{ count: 0 }], [], [], []]);
       const client = { select, selectDistinct: makeSelectDistinctQueue([]), insert };
-      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, customer, makeEventBus());
+      const service = new RevenueOpportunityService(makeDb(client), customer, makeEventBus(), makeHealth());
 
       await service.detect('ws_1', 'canon_1');
 
@@ -120,7 +132,7 @@ describe('RevenueOpportunityService', () => {
       const insert = vi.fn(() => insertChain);
       const select = makeSelectQueue([[{ count: 0 }], [], [], []]);
       const client = { select, selectDistinct: makeSelectDistinctQueue([]), insert };
-      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, customer, makeEventBus());
+      const service = new RevenueOpportunityService(makeDb(client), customer, makeEventBus(), makeHealth());
 
       await service.detect('ws_1', 'canon_1');
 
@@ -132,9 +144,9 @@ describe('RevenueOpportunityService', () => {
     it('skips a candidate whose type already has an open opportunity for this customer', async () => {
       const customer = makeCustomer({ ordersCount: 10 });
       const insert = vi.fn();
-      const select = makeSelectQueue([[{ count: 0 }], [], [{ type: 'vip_recognition' }], []]); // getOpenTypes already has it, then list()
+      const select = makeSelectQueue([[{ count: 0 }], [], [], [{ type: 'vip_recognition' }], []]); // no ignored rows, getOpenTypes already has it, then list()
       const client = { select, selectDistinct: makeSelectDistinctQueue([]), insert };
-      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, customer, makeEventBus());
+      const service = new RevenueOpportunityService(makeDb(client), customer, makeEventBus(), makeHealth());
 
       await service.detect('ws_1', 'canon_1');
 
@@ -148,7 +160,7 @@ describe('RevenueOpportunityService', () => {
       const select = makeSelectQueue([[{ count: 0 }], [], [], []]);
       const client = { select, selectDistinct: makeSelectDistinctQueue([]), insert };
       const eventBus = makeEventBus();
-      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, customer, eventBus);
+      const service = new RevenueOpportunityService(makeDb(client), customer, eventBus, makeHealth());
 
       await service.detect('ws_1', 'canon_1');
 
@@ -184,7 +196,7 @@ describe('RevenueOpportunityService', () => {
         ]);
         const selectDistinct = makeSelectDistinctQueue([[{ productId: 'prod_A' }]]);
         const client = { select, selectDistinct, insert };
-        const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, makeAffinityCustomer(), makeEventBus());
+        const service = new RevenueOpportunityService(makeDb(client), makeAffinityCustomer(), makeEventBus(), makeHealth());
 
         await service.detect('ws_1', 'canon_1');
 
@@ -204,7 +216,7 @@ describe('RevenueOpportunityService', () => {
         ]);
         const selectDistinct = makeSelectDistinctQueue([[{ productId: 'prod_A' }]]);
         const client = { select, selectDistinct, insert };
-        const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, makeAffinityCustomer(), makeEventBus());
+        const service = new RevenueOpportunityService(makeDb(client), makeAffinityCustomer(), makeEventBus(), makeHealth());
 
         await service.detect('ws_1', 'canon_1');
 
@@ -222,7 +234,7 @@ describe('RevenueOpportunityService', () => {
         ]);
         const selectDistinct = makeSelectDistinctQueue([[{ productId: 'prod_A' }]]);
         const client = { select, selectDistinct, insert };
-        const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, makeAffinityCustomer(), makeEventBus());
+        const service = new RevenueOpportunityService(makeDb(client), makeAffinityCustomer(), makeEventBus(), makeHealth());
 
         await service.detect('ws_1', 'canon_1');
 
@@ -235,7 +247,7 @@ describe('RevenueOpportunityService', () => {
         // must stop after getWorkspaceOrderCount and never touch getPurchasedProductIds/getProductAffinity.
         const select = makeSelectQueue([[{ count: 19 }], [], [], []]);
         const client = { select, selectDistinct: makeSelectDistinctQueue([]), insert };
-        const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, makeAffinityCustomer(), makeEventBus());
+        const service = new RevenueOpportunityService(makeDb(client), makeAffinityCustomer(), makeEventBus(), makeHealth());
 
         await service.detect('ws_1', 'canon_1');
 
@@ -256,7 +268,7 @@ describe('RevenueOpportunityService', () => {
         ]);
         const selectDistinct = makeSelectDistinctQueue([[{ productId: 'prod_A' }]]);
         const client = { select, selectDistinct, insert };
-        const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, makeAffinityCustomer(), makeEventBus());
+        const service = new RevenueOpportunityService(makeDb(client), makeAffinityCustomer(), makeEventBus(), makeHealth());
 
         await service.detect('ws_1', 'canon_1');
 
@@ -275,12 +287,13 @@ describe('RevenueOpportunityService', () => {
           [{ productId: 'prod_A', orderCount: 10 }],
           [{ price: '25.00' }],
           [], // getSourceCustomerIds (upsell, empty)
+          [], // getIgnoredCommerceRows
           [{ type: 'cross_sell' }], // getOpenTypes — already open
           [],
         ]);
         const selectDistinct = makeSelectDistinctQueue([[{ productId: 'prod_A' }]]);
         const client = { select, selectDistinct, insert };
-        const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, makeAffinityCustomer(), makeEventBus());
+        const service = new RevenueOpportunityService(makeDb(client), makeAffinityCustomer(), makeEventBus(), makeHealth());
 
         await service.detect('ws_1', 'canon_1');
 
@@ -312,7 +325,7 @@ describe('RevenueOpportunityService', () => {
           [], // list()
         ]);
         const client = { select, selectDistinct: makeSelectDistinctQueue([]), insert };
-        const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, makeUpsellCustomer(), makeEventBus());
+        const service = new RevenueOpportunityService(makeDb(client), makeUpsellCustomer(), makeEventBus(), makeHealth());
 
         await service.detect('ws_1', 'canon_1');
 
@@ -338,7 +351,7 @@ describe('RevenueOpportunityService', () => {
           [],
         ]);
         const client = { select, selectDistinct: makeSelectDistinctQueue([]), insert };
-        const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, makeUpsellCustomer(), makeEventBus());
+        const service = new RevenueOpportunityService(makeDb(client), makeUpsellCustomer(), makeEventBus(), makeHealth());
 
         await service.detect('ws_1', 'canon_1');
 
@@ -364,7 +377,7 @@ describe('RevenueOpportunityService', () => {
           [],
         ]);
         const client = { select, selectDistinct: makeSelectDistinctQueue([]), insert };
-        const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, makeUpsellCustomer(), makeEventBus());
+        const service = new RevenueOpportunityService(makeDb(client), makeUpsellCustomer(), makeEventBus(), makeHealth());
 
         await service.detect('ws_1', 'canon_1');
 
@@ -387,7 +400,7 @@ describe('RevenueOpportunityService', () => {
           [],
         ]);
         const client = { select, selectDistinct: makeSelectDistinctQueue([]), insert };
-        const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, makeUpsellCustomer(), makeEventBus());
+        const service = new RevenueOpportunityService(makeDb(client), makeUpsellCustomer(), makeEventBus(), makeHealth());
 
         await service.detect('ws_1', 'canon_1');
 
@@ -411,7 +424,7 @@ describe('RevenueOpportunityService', () => {
           [],
         ]);
         const client = { select, selectDistinct: makeSelectDistinctQueue([]), insert };
-        const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, makeUpsellCustomer(), makeEventBus());
+        const service = new RevenueOpportunityService(makeDb(client), makeUpsellCustomer(), makeEventBus(), makeHealth());
 
         await service.detect('ws_1', 'canon_1');
 
@@ -425,7 +438,7 @@ describe('RevenueOpportunityService', () => {
       const rows = [{ id: 'opp_1', type: 'vip_recognition', status: 'new' }];
       const select = vi.fn(() => makeSelectChain(rows));
       const client = { select };
-      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, {} as CustomerIntelligenceService, makeEventBus());
+      const service = new RevenueOpportunityService(makeDb(client), {} as CustomerIntelligenceService, makeEventBus(), makeHealth());
 
       const result = await service.list('ws_1', 'canon_1');
 
@@ -445,11 +458,176 @@ describe('RevenueOpportunityService', () => {
         return chain;
       });
       const client = { select };
-      const service = new RevenueOpportunityService({ client } as unknown as DatabaseService, {} as CustomerIntelligenceService, makeEventBus());
+      const service = new RevenueOpportunityService(makeDb(client), {} as CustomerIntelligenceService, makeEventBus(), makeHealth());
 
       const result = await service.countOpenByWorkspace('ws_1');
 
       expect(result).toEqual({ total: 4, byPriority: { critical: 0, high: 3, medium: 0, low: 1 } });
     });
+  });
+
+  describe('computePriority() — health-aware adjustment (Milestone #5 Release 1)', () => {
+    // confidence 75, no revenue factor: unadjusted = 75 → high; ×1.2 = 90 → critical; ×0.8 = 60 → medium.
+    const priority = (type: Parameters<typeof computePriority>[3], health: string | null) => computePriority(75, null, null, type, health);
+
+    it('Critical favors win-back and dampens pure upsell', () => {
+      expect(priority('win_back', 'Critical')).toBe('critical');
+      expect(priority('upsell', 'Critical')).toBe('medium');
+    });
+
+    it('At Risk favors win-back and leaves upsell unchanged', () => {
+      expect(priority('win_back', 'At Risk')).toBe('critical');
+      expect(priority('upsell', 'At Risk')).toBe('high');
+    });
+
+    it('Neutral adjusts nothing', () => {
+      for (const type of ['win_back', 'upsell', 'cross_sell'] as const) expect(priority(type, 'Neutral')).toBe('high');
+    });
+
+    it('Healthy favors upsell/cross-sell and dampens win-back', () => {
+      expect(priority('upsell', 'Healthy')).toBe('critical');
+      expect(priority('cross_sell', 'Healthy')).toBe('critical');
+      expect(priority('win_back', 'Healthy')).toBe('medium');
+    });
+
+    it('unknown health (no state / null score) adjusts nothing', () => {
+      for (const type of ['win_back', 'upsell', 'cross_sell', 'reorder'] as const) expect(priority(type, null)).toBe('high');
+    });
+
+    it('leaves reorder, VIP and bundle unadjusted in every category', () => {
+      for (const health of ['Critical', 'At Risk', 'Healthy'])
+        for (const type of ['reorder', 'vip_recognition', 'bundle'] as const) expect(priority(type, health)).toBe('high');
+    });
+
+    it('stacks with — never replaces — the revenue/confidence factor', () => {
+      // confidence 60, revenue 2× avg order (×1.2) = 72 → high; Healthy upsell ×1.2 = 86.4 → still high; Critical upsell ×0.8 = 57.6 → medium.
+      expect(computePriority(60, '40.00', 20, 'upsell', null)).toBe('high');
+      expect(computePriority(60, '40.00', 20, 'upsell', 'Healthy')).toBe('high');
+      expect(computePriority(60, '40.00', 20, 'upsell', 'Critical')).toBe('medium');
+    });
+  });
+
+  describe('detect() — health input and concurrency (Milestone #5 Release 1)', () => {
+    const quietCustomer = () => {
+      const lastOrderAt = new Date(Date.now() - 150 * DAY_MS);
+      return makeCustomer({ ordersCount: 1, lastOrderAt, recentOrders: [{ provider: 'shopify', externalId: '1', totalPrice: '20', createdAt: lastOrderAt }] });
+    };
+
+    it("reads the customer's persisted health category into the priority", async () => {
+      const prioritiesFor = async (health: string | null) => {
+        const insertChain = makeInsertChain();
+        const client = { select: makeSelectQueue([[{ count: 0 }], [], [], []]), selectDistinct: makeSelectDistinctQueue([]), insert: vi.fn(() => insertChain) };
+        const healthService = makeHealth(health);
+        await new RevenueOpportunityService(makeDb(client), quietCustomer(), makeEventBus(), healthService).detect('ws_1', 'canon_1');
+        expect(healthService.findCurrent).toHaveBeenCalledWith('ws_1', 'canon_1');
+        return (insertChain.values.mock.calls[0] as unknown as [{ priority: string }[]])[0][0].priority;
+      };
+
+      const unknown = await prioritiesFor(null);
+      const healthy = await prioritiesFor('Healthy');
+      const critical = await prioritiesFor('Critical');
+      const order = ['low', 'medium', 'high', 'critical'];
+      expect(order.indexOf(healthy)).toBeLessThanOrEqual(order.indexOf(unknown));
+      expect(order.indexOf(critical)).toBeGreaterThanOrEqual(order.indexOf(unknown));
+      expect(order.indexOf(critical)).toBeGreaterThan(order.indexOf(healthy));
+    });
+
+    it('takes a per-customer advisory lock inside the transaction before the open-type check and insert', async () => {
+      const insertChain = makeInsertChain();
+      const insert = vi.fn(() => insertChain);
+      const select = makeSelectQueue([[{ count: 0 }], [], [], []]);
+      const db = makeDb({ select, selectDistinct: makeSelectDistinctQueue([]), insert });
+
+      await new RevenueOpportunityService(db, quietCustomer(), makeEventBus(), makeHealth()).detect('ws_1', 'canon_1');
+
+      expect(vi.mocked(db.transaction)).toHaveBeenCalledTimes(1);
+      expect(db.execute).toHaveBeenCalledTimes(1);
+      // getWorkspaceOrderCount, getSourceCustomerIds run outside; getOpenTypes (3rd select) and insert run after the lock.
+      expect(db.execute.mock.invocationCallOrder[0]).toBeLessThan(select.mock.invocationCallOrder[2]);
+      expect(db.execute.mock.invocationCallOrder[0]).toBeLessThan(insert.mock.invocationCallOrder[0]);
+    });
+  });
+});
+
+describe('isSuppressedByIgnored() — #8 ignored recreation rule', () => {
+  const dismissedAt = new Date('2026-10-01T00:00:00Z');
+  const before = new Date('2026-09-01T00:00:00Z');
+  const after = new Date('2026-10-15T00:00:00Z');
+  const ignoredRow = (type: string, pair: [string | null, string | null] = [null, null]) => ({
+    type: type as never,
+    closedAt: dismissedAt,
+    updatedAt: dismissedAt,
+    affinityOwnedProductId: pair[0],
+    affinityOtherProductId: pair[1],
+  });
+  const candidate = (type: string, extra: Record<string, unknown> = {}) =>
+    ({ type, confidence: 50, estimatedRevenue: null, reason: 'r', recommendedAction: 'a', ...extra }) as never;
+
+  it('never suppresses without an ignored row of the same type', () => {
+    expect(isSuppressedByIgnored(candidate('reorder'), [ignoredRow('win_back')], before)).toBe(false);
+  });
+
+  it.each(['reorder', 'win_back'])('%s: suppressed until an order is placed after the dismissal', (type) => {
+    expect(isSuppressedByIgnored(candidate(type), [ignoredRow(type)], before)).toBe(true);
+    expect(isSuppressedByIgnored(candidate(type), [ignoredRow(type)], dismissedAt)).toBe(true);
+    expect(isSuppressedByIgnored(candidate(type), [ignoredRow(type)], after)).toBe(false);
+  });
+
+  it('upsell: suppressed until its qualifying purchase is after the dismissal', () => {
+    expect(isSuppressedByIgnored(candidate('upsell', { qualifyingPurchaseAt: before }), [ignoredRow('upsell')], after)).toBe(true);
+    expect(isSuppressedByIgnored(candidate('upsell', { qualifyingPurchaseAt: after }), [ignoredRow('upsell')], after)).toBe(false);
+  });
+
+  it.each(['cross_sell', 'bundle'])('%s: same pair suppressed, different pair allowed, legacy row without a pair blocks', (type) => {
+    const ab = candidate(type, { affinityOwnedProductId: 'A', affinityOtherProductId: 'B' });
+    expect(isSuppressedByIgnored(ab, [ignoredRow(type, ['A', 'B'])], after)).toBe(true);
+    expect(isSuppressedByIgnored(ab, [ignoredRow(type, ['A', 'C'])], after)).toBe(false);
+    expect(isSuppressedByIgnored(ab, [ignoredRow(type, ['A', 'C']), ignoredRow(type, ['A', 'B'])], after)).toBe(true);
+    expect(isSuppressedByIgnored(ab, [ignoredRow(type)], after)).toBe(true);
+  });
+
+  it('vip_recognition: always suppressed once ignored, even after new orders', () => {
+    expect(isSuppressedByIgnored(candidate('vip_recognition'), [ignoredRow('vip_recognition')], after)).toBe(true);
+  });
+});
+
+describe('findConversion() — #8 converted rule', () => {
+  const executedAt = new Date('2026-10-01T00:00:00Z');
+  const at = (days: number) => new Date(executedAt.getTime() + days * DAY_MS);
+  const opp = (type: string, extra: Record<string, unknown> = {}) =>
+    ({ id: 'opp_1', type, evidenceAt: null, evidenceProductId: null, affinityOtherProductId: null, upsellTargetVariantId: null, executedAt, ...extra }) as never;
+  const order = (days: number, productIds: string[] = [], variantIds: string[] = []) => ({
+    orderId: `o${days}`,
+    placedAt: at(days),
+    productIds: new Set(productIds),
+    variantIds: new Set(variantIds),
+  });
+
+  it.each(['reorder', 'win_back', 'vip_recognition'])('%s: any order after execution within 7 days converts', (type) => {
+    expect(findConversion(opp(type), [order(2)])?.orderId).toBe('o2');
+    expect(findConversion(opp(type), [order(7)])?.orderId).toBe('o7');
+  });
+
+  it('ignores orders at/before execution and after the 7-day window; picks the earliest qualifying', () => {
+    expect(findConversion(opp('reorder'), [order(-1), order(0), order(7.01)])).toBeNull();
+    expect(findConversion(opp('reorder'), [order(5), order(1)])?.orderId).toBe('o1');
+  });
+
+  it('website cross_sell: needs its evidence product', () => {
+    const website = opp('cross_sell', { evidenceAt: executedAt, evidenceProductId: 'P', affinityOtherProductId: 'X' });
+    expect(findConversion(website, [order(1, ['X'])])).toBeNull();
+    expect(findConversion(website, [order(1, ['P'])])?.orderId).toBe('o1');
+  });
+
+  it.each(['cross_sell', 'bundle'])('commerce %s: needs the recommended other product; no stored pair never converts', (type) => {
+    expect(findConversion(opp(type, { affinityOtherProductId: 'B' }), [order(1, ['A'])])).toBeNull();
+    expect(findConversion(opp(type, { affinityOtherProductId: 'B' }), [order(1, ['A', 'B'])])?.orderId).toBe('o1');
+    expect(findConversion(opp(type), [order(1, ['A', 'B'])])).toBeNull();
+  });
+
+  it('upsell: needs exactly the target variant; no stored target never converts', () => {
+    expect(findConversion(opp('upsell', { upsellTargetVariantId: 'v2' }), [order(1, ['P'], ['v1'])])).toBeNull();
+    expect(findConversion(opp('upsell', { upsellTargetVariantId: 'v2' }), [order(1, ['P'], ['v2'])])?.orderId).toBe('o1');
+    expect(findConversion(opp('upsell'), [order(1, ['P'], ['v2'])])).toBeNull();
   });
 });

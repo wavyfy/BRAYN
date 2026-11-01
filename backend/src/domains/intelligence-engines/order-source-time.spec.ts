@@ -10,6 +10,7 @@ import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { commerceOrders } from '../../database/schema/commerce-orders';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
+import { recommendations } from '../../database/schema/recommendations';
 import { IntegrationService } from '../integration/integration.service';
 import { CustomerService, type NormalizedCustomer } from '../commerce/customer.service';
 import { OrderService, type NormalizedOrder } from '../commerce/order.service';
@@ -99,6 +100,8 @@ describe('Order source time — batch import (real DB)', { timeout: 30_000 }, ()
 
   afterAll(async () => {
     if (!db) return;
+    // Automatic evaluation (Milestone #5) creates recommendations, which reference opportunities.
+    await db.client.delete(recommendations).where(eq(recommendations.workspaceId, workspaceId));
     await db.client.delete(revenueOpportunities).where(eq(revenueOpportunities.workspaceId, workspaceId));
     await db.client.delete(commerceOrders).where(eq(commerceOrders.workspaceId, workspaceId));
     await db.client.delete(commerceCustomers).where(eq(commerceCustomers.workspaceId, workspaceId));

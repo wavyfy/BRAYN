@@ -26,6 +26,10 @@ export interface ActionDefinition<TInput, TResult> {
   /** Doc28 Permission Matrix — which workspace roles may invoke this action at all (checked before risk/approval, per the canonical lifecycle order). */
   allowedRoles: readonly WorkspaceRole[];
   inputSchema: ZodType<TInput>;
+  /** Domain-state check beyond the input schema, run on request and again on approval (doc14 Execution validation). Returns a failure reason, or null when valid. */
+  validate?: (input: TInput, context: ActionExecutionContext) => Promise<string | null>;
+  /** Approval-required actions only: at most one `pending` request per workspace with an `inputSummary` containing this subset (e.g. `{ orderId }`). */
+  pendingScope?: (input: TInput) => Record<string, string>;
   execute: (input: TInput, context: ActionExecutionContext) => Promise<TResult>;
   /** Reduces a successful result to a small, non-sensitive audit summary (doc18 Logging — never raw customer content). Omit when the result itself is already safe/small enough, or nothing needs recording. */
   summarizeResult?: (result: TResult) => Record<string, unknown> | null;
