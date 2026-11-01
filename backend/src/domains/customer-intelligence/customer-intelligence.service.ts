@@ -379,6 +379,28 @@ export class CustomerIntelligenceService {
     return entries.sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime()).slice(0, ACTIVITY_LIMIT);
   }
 
+  /**
+   * One page of non-merged canonical customers across every workspace, keyset-ordered by
+   * (workspaceId, id) — for the system-level daily intelligence run only (Milestone #5 D2),
+   * which then works on each customer inside that customer's own workspace. Keys only, no PII.
+   */
+  async listActiveCustomerKeys(
+    after: { workspaceId: string; id: string } | null,
+    limit: number,
+  ): Promise<{ workspaceId: string; id: string }[]> {
+    return this.database.client
+      .select({ workspaceId: canonicalCustomers.workspaceId, id: canonicalCustomers.id })
+      .from(canonicalCustomers)
+      .where(
+        and(
+          isNull(canonicalCustomers.mergedIntoId),
+          after ? sql`(${canonicalCustomers.workspaceId}, ${canonicalCustomers.id}) > (${after.workspaceId}, ${after.id})` : undefined,
+        ),
+      )
+      .orderBy(canonicalCustomers.workspaceId, canonicalCustomers.id)
+      .limit(limit);
+  }
+
   /** Workspace-wide commerce totals (doc11 Merchant Dashboard — "Customer activity", not per-customer). */
   async getWorkspaceSummary(workspaceId: string): Promise<WorkspaceCommerceSummary> {
     const [customerCount] = await this.database.client

@@ -105,13 +105,14 @@ export interface CustomerHealthState {
  * genuinely new state change — see commerce-events.ts). `order.updated`
  * is deliberately not a trigger: it fires on any source edit, and the
  * Phase 1 signals (recency/frequency/website) read nothing an edit
- * changes. "daily recalculation" (a scheduler) remains real
- * additional scope, deliberately deferred rather than built speculatively
- * (doc18 — "Do not introduce... Schedulers... speculatively"). Every
- * completed recalculation, however triggered, emits
+ * changes. The daily run (IntelligenceDailyRunService, Milestone #5 D2)
+ * is the third trigger. Every manual/event-driven recalculation emits
  * `customer_health.recalculated` (doc10 — "Health changes should publish
  * events for dependent intelligence and automation"), which
- * `AutomationService` already consumes (Phase 15) — unchanged by this.
+ * `AutomationService` already consumes (Phase 15). The daily run passes
+ * `emitOnlyOnChange` so it publishes only when score, category or trend
+ * changed — otherwise every enabled health automation would fire for
+ * every customer every run (user decision, Nov 1, 2026).
  */
 @Injectable()
 export class CustomerHealthService {
@@ -150,7 +151,11 @@ export class CustomerHealthService {
     }
   }
 
-  async recalculate(workspaceId: string, canonicalCustomerId: string): Promise<CustomerHealthState> {
+  async recalculate(
+    workspaceId: string,
+    canonicalCustomerId: string,
+    options: { emitOnlyOnChange?: boolean } = {},
+  ): Promise<CustomerHealthState> {
     const customer = await this.customerIntelligenceService.getCustomer(workspaceId, canonicalCustomerId);
     const recency = computeRecencySignal(customer.commerceContext.lastOrderAt);
     const frequency = computeFrequencySignal(customer.commerceContext.ordersLast90Days);
@@ -204,6 +209,10 @@ export class CustomerHealthService {
         set: { score: state.score, healthCategory: state.healthCategory, signals, reasonCodes, trend: state.trend, lastCalculatedAt: now, updatedAt: now },
       });
     await this.database.client.insert(customerHealthStateHistory).values({ ...row, calculatedAt: now });
+
+    const changed =
+      !previous || previous.score !== state.score || previous.healthCategory !== state.healthCategory || previous.trend !== state.trend;
+    if (options.emitOnlyOnChange && !changed) return state;
 
     this.eventBus.emit(
       createEvent<CustomerHealthRecalculatedPayload>({

@@ -25,6 +25,9 @@ const REQUIRED_IN_PRODUCTION: ReadonlyArray<keyof Env> = [
   // 0 (the default) behind Render's proxy means every IP-keyed rate limit
   // shares the proxy's IP — see the env schema's own comment.
   'TRUST_PROXY_HOPS',
+  // Milestone #5 D2 — without this the daily intelligence run endpoint
+  // refuses every call (fails closed), so daily recalculation never runs.
+  'BRAYN_INTERNAL_CRON_SECRET',
 ];
 
 export function warnOnMissingProductionSecrets(env: Env, logger: StructuredLoggerService): void {

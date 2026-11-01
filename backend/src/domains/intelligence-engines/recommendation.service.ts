@@ -19,7 +19,8 @@ export type RecommendationState = 'active' | 'dismissed' | 'completed';
  * recalculation re-runs opportunity detection, then recommendation
  * generation, for that customer. Both steps skip what already exists, so a
  * repeated or concurrent evaluation creates nothing twice. The daily
- * scheduled run is Release 2.
+ * scheduled run (IntelligenceDailyRunService) calls detect() then
+ * generate() for every customer.
  */
 @Injectable()
 export class RecommendationService {

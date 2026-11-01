@@ -108,6 +108,11 @@ export const envSchema = z.object({
   // treats a missing value the same as missing Redis config (fails open)
   // rather than guessing a namespace — see RateLimitGuard's own doc comment.
   BRAYN_ENV: z.enum(['development', 'production']).optional(),
+
+  // Bearer secret the scheduled job (Render Cron Job) sends to the internal
+  // daily intelligence run endpoint (Milestone #5 D2). Unset → that endpoint
+  // fails closed (503). e.g. `openssl rand -hex 32`, distinct per environment.
+  BRAYN_INTERNAL_CRON_SECRET: z.string().min(32).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

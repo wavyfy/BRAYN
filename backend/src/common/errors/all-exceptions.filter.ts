@@ -26,6 +26,7 @@ const STATUS_TO_CODE: Partial<Record<number, ErrorCode>> = {
   [HttpStatus.CONFLICT]: ErrorCode.CONFLICT,
   [HttpStatus.BAD_GATEWAY]: ErrorCode.PROVIDER_ERROR,
   [HttpStatus.TOO_MANY_REQUESTS]: ErrorCode.RATE_LIMITED,
+  [HttpStatus.SERVICE_UNAVAILABLE]: ErrorCode.SERVICE_UNAVAILABLE,
 };
 
 interface ErrorResponseBody {

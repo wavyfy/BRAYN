@@ -325,13 +325,14 @@ describe('CustomerHealthService', () => {
         insert: vi.fn().mockReturnValueOnce(stateInsert).mockReturnValueOnce(historyInsert),
         select: vi.fn(() => makeSelectChain(previousRow ? [previousRow] : [])),
       };
+      const eventBus = makeEventBus();
       const service = new CustomerHealthService(
         { client } as unknown as DatabaseService,
         makeCustomerIntelligenceService(commerce as { lastOrderAt: Date | null; ordersLast90Days: number }, behaviour),
-        makeEventBus(),
+        eventBus,
         makeLogger(),
       );
-      return { service, stateInsert, historyInsert };
+      return { service, stateInsert, historyInsert, eventBus };
     }
     const DAY = 24 * 60 * 60 * 1000;
 
@@ -386,6 +387,43 @@ describe('CustomerHealthService', () => {
       const { service } = makeService({ lastOrderAt: new Date(Date.now() - 60 * DAY), ordersLast90Days: 1, ordersCount: 1 });
 
       expect((await service.recalculate('ws_1', 'canon_1')).healthCategory).toBe('Critical');
+    });
+
+    describe('emitOnlyOnChange (daily run, Milestone #5 Release 2)', () => {
+      const current = { lastOrderAt: new Date(), ordersLast90Days: 4, ordersCount: 4 }; // → 77, Healthy, stable vs 77
+
+      it('persists but does not emit when score, category and trend are unchanged', async () => {
+        const { service, historyInsert, eventBus } = makeService(current, undefined, { score: 77, healthCategory: 'Healthy', trend: 'stable', signals: {} });
+
+        await service.recalculate('ws_1', 'canon_1', { emitOnlyOnChange: true });
+
+        expect(historyInsert.values).toHaveBeenCalled();
+        expect(eventBus.emit).not.toHaveBeenCalled();
+      });
+
+      it('emits when the trend changed even though score and category did not', async () => {
+        const { service, eventBus } = makeService(current, undefined, { score: 77, healthCategory: 'Healthy', trend: 'improving', signals: {} });
+
+        await service.recalculate('ws_1', 'canon_1', { emitOnlyOnChange: true });
+
+        expect(eventBus.emit).toHaveBeenCalledWith(expect.objectContaining({ type: 'customer_health.recalculated' }));
+      });
+
+      it('emits on a first-ever calculation (no previous state)', async () => {
+        const { service, eventBus } = makeService(current);
+
+        await service.recalculate('ws_1', 'canon_1', { emitOnlyOnChange: true });
+
+        expect(eventBus.emit).toHaveBeenCalledTimes(1);
+      });
+
+      it('still emits an unchanged recalculation without the option (Release 1 event-driven/manual behaviour unchanged)', async () => {
+        const { service, eventBus } = makeService(current, undefined, { score: 77, healthCategory: 'Healthy', trend: 'stable', signals: {} });
+
+        await service.recalculate('ws_1', 'canon_1');
+
+        expect(eventBus.emit).toHaveBeenCalledTimes(1);
+      });
     });
   });
 

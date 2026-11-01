@@ -159,7 +159,7 @@ describe('Provider parity — core intelligence (real DB)', () => {
       customerIntelligence.getActivity(workspaceId, wooId),
     ]);
     expect(withoutSource(wooActivity)).toEqual(withoutSource(shopifyActivity));
-  });
+  }, 30_000); // four UCIR reads over the network to the dev database; exceeds the 5s default on a slow link
 
   it('computes the same Customer Risk & Engagement State regardless of provider', async () => {
     const [shopify, woo] = await Promise.all([
