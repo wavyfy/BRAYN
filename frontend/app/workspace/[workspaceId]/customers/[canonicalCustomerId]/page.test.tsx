@@ -242,6 +242,22 @@ describe('CustomerDetailPage — Revenue opportunities & risk (Phase 6)', () => 
     render(await CustomerDetailPage({ params: { workspaceId: 'ws_1', canonicalCustomerId: 'cust_1' } }));
   }
 
+  it('loads health history from the backend and shows it in the Risk & Engagement card', async () => {
+    apiFetch.mockImplementation(async (path: string) =>
+      path.endsWith('/health/history')
+        ? [
+            { score: 70, healthCategory: 'Neutral', trend: 'improving', calculatedAt: '2026-01-05T10:00:00.000Z' },
+            { score: 61, healthCategory: 'Neutral', trend: 'unknown', calculatedAt: '2026-01-04T10:00:00.000Z' },
+          ]
+        : [],
+    );
+    await renderWith({ health: { ...withheldHealth, score: 70, healthCategory: 'Neutral', trend: 'improving' } });
+
+    expect(apiFetch).toHaveBeenCalledWith('/api/v1/workspaces/ws_1/customers/cust_1/health/history');
+    expect(screen.getByText('Score history')).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'Score history: 61, 70' })).toBeTruthy();
+  });
+
   it('orders opportunities by priority and shows each linked recommendation once, as its next step', async () => {
     await renderWith({
       opportunities: [

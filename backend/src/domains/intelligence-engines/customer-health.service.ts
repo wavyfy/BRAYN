@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { customerHealthStates } from '../../database/schema/customer-health-states';
 import { customerHealthStateHistory } from '../../database/schema/customer-health-state-history';
 import { DatabaseService } from '../../database/database.service';
@@ -234,6 +234,24 @@ export class CustomerHealthService {
     return state;
   }
 
+  /**
+   * Most recent recalculations, newest first (doc10 — "Historical states"). Score/category/trend
+   * only: the presentation needs the trajectory, and each row's full signals stay available server-side.
+   */
+  async getHistory(workspaceId: string, canonicalCustomerId: string): Promise<HealthHistoryEntry[]> {
+    return this.database.client
+      .select({
+        score: customerHealthStateHistory.score,
+        healthCategory: customerHealthStateHistory.healthCategory,
+        trend: customerHealthStateHistory.trend,
+        calculatedAt: customerHealthStateHistory.calculatedAt,
+      })
+      .from(customerHealthStateHistory)
+      .where(and(eq(customerHealthStateHistory.workspaceId, workspaceId), eq(customerHealthStateHistory.canonicalCustomerId, canonicalCustomerId)))
+      .orderBy(desc(customerHealthStateHistory.calculatedAt))
+      .limit(HEALTH_HISTORY_LIMIT);
+  }
+
   /** The persisted state, or null when none has been calculated yet. */
   async findCurrent(workspaceId: string, canonicalCustomerId: string): Promise<CustomerHealthState | null> {
     const [row] = await this.database.client
@@ -245,6 +263,15 @@ export class CustomerHealthService {
     if (!row) return null;
     return { ...(row as unknown as CustomerHealthState), coverage: computeCoverage(row.signals as Record<string, unknown>) };
   }
+}
+
+export const HEALTH_HISTORY_LIMIT = 30;
+
+export interface HealthHistoryEntry {
+  score: number | null;
+  healthCategory: string | null;
+  trend: string | null;
+  calculatedAt: Date;
 }
 
 type WeightedSignal = { weight: number; available: boolean; score?: number };

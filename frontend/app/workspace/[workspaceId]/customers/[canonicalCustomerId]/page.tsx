@@ -11,7 +11,7 @@ import { DetectOpportunitiesButton } from './detect-opportunities-button';
 import { GenerateRecommendationsButton } from './generate-recommendations-button';
 import { AskBraynCard } from './ask-brayn-card';
 import { ActivityTimeline, type ActivityEntry } from './activity-timeline';
-import { RiskEngagement, type CustomerHealthState } from './risk-engagement';
+import { RiskEngagement, type CustomerHealthState, type HealthHistoryEntry } from './risk-engagement';
 import { RevenueOpportunities, type RevenueOpportunity, type Recommendation } from './revenue-opportunities';
 import { CustomerMemory, type MemoryEntry } from './customer-memory';
 import { CustomerPreferences, type Preference } from './customer-preferences';
@@ -97,7 +97,7 @@ export default async function CustomerDetailPage({
   }
 
   // Health is calculated on demand — "not yet calculated" (404) is an expected empty state, not a page-level error.
-  const [health, memoryResult, preferencesResult, summaryResult] = await Promise.all([
+  const [health, memoryResult, preferencesResult, summaryResult, historyResult] = await Promise.all([
     apiFetch(`${base}/health`).catch((error: unknown): null => {
       if (error instanceof ApiError && error.status === 404) return null;
       throw error;
@@ -105,6 +105,7 @@ export default async function CustomerDetailPage({
     fetchSection<MemoryEntry[]>(`${base}/memory`),
     fetchSection<Preference[]>(`${base}/preferences`),
     fetchSection<CustomerSummaryView>(`${base}/summary`),
+    fetchSection<HealthHistoryEntry[]>(`${base}/health/history`),
   ]);
 
   const opportunities = opportunitiesResult.ok ? opportunitiesResult.data : [];
@@ -223,7 +224,7 @@ export default async function CustomerDetailPage({
           <section>
             <SectionHeader title="Risk & engagement" action={<RecalculateHealthButton workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} />} />
             <div className="mt-3 rounded-xl border border-border bg-surface shadow-panel p-4">
-              <RiskEngagement health={health} />
+              <RiskEngagement health={health} history={historyResult.ok ? historyResult.data : []} />
             </div>
           </section>
 

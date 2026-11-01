@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS "customer_health_state_history_customer_calculated_idx" ON "customer_health_state_history" USING btree ("workspace_id","canonical_customer_id","calculated_at");
