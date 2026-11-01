@@ -38,7 +38,8 @@ export function startOfUtcDay(date: Date): Date {
  *    change (user decision, Nov 1, 2026).
  * 2. Opportunities, then 3. recommendations: always — eligibility is
  *    time-based (a reorder falls due with no new event), and both steps
- *    create nothing twice (advisory lock / unique index).
+ *    create nothing twice (advisory lock / unique index). Website-derived
+ *    cross_sell is evaluated here only (`includeWebsite`, Release 3).
  *
  * Run rules (user decisions, Nov 1, 2026): one `running` row at a time (DB
  * partial unique index — holds across processes/instances); a fresh
@@ -147,7 +148,7 @@ export class IntelligenceDailyRunService {
               await this.customerHealthService.recalculate(customer.workspaceId, customer.id, { emitOnlyOnChange: true });
               counts.healthRecalculated++;
             }
-            await this.revenueOpportunityService.detect(customer.workspaceId, customer.id);
+            await this.revenueOpportunityService.detect(customer.workspaceId, customer.id, { includeWebsite: true });
             await this.recommendationService.generate(customer.workspaceId, customer.id);
             consecutiveFailures = 0;
           } catch (error) {

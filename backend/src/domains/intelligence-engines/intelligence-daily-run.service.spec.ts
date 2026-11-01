@@ -56,6 +56,7 @@ describe('IntelligenceDailyRunService.execute()', () => {
     expect(t.health.recalculate).toHaveBeenCalledWith('ws_1', 'c0', { emitOnlyOnChange: true });
     expect(t.health.recalculate).toHaveBeenCalledWith('ws_1', 'c1', { emitOnlyOnChange: true });
     expect(t.opportunities.detect).toHaveBeenCalledTimes(2);
+    expect(t.opportunities.detect).toHaveBeenCalledWith('ws_1', 'c0', { includeWebsite: true });
     expect(t.recommendations.generate).toHaveBeenCalledTimes(2);
     expect(t.final()).toMatchObject({ status: 'succeeded', error: null, customersProcessed: 2, healthRecalculated: 2, healthSkipped: 0, customersFailed: 0 });
     expect(t.final().completedAt).toBeInstanceOf(Date);

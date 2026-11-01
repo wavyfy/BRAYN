@@ -1,6 +1,7 @@
 import { integer, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { id, timestamps, workspaceId } from './columns';
 import { canonicalCustomers } from './canonical-customers';
+import { commerceProducts } from './commerce-products';
 
 /**
  * A detected revenue opportunity (doc10 — Revenue Opportunity Detector).
@@ -42,5 +43,10 @@ export const revenueOpportunities = pgTable('revenue_opportunities', {
   recommendedAction: text('recommended_action').notNull(),
   closedAt: timestamp('closed_at', { withTimezone: true }),
   closedReason: text('closed_reason'),
+  // Website-derived opportunities only (Milestone #5 Release 3): `evidenceAt` (latest qualifying event
+  // time) set marks the row website-derived; both null for commerce-derived rows. The recreation and
+  // 7-day expiry rules key on them. SET NULL so a Shopify shop/redact catalog purge is never blocked.
+  evidenceProductId: uuid('evidence_product_id').references(() => commerceProducts.id, { onDelete: 'set null' }),
+  evidenceAt: timestamp('evidence_at', { withTimezone: true }),
   ...timestamps(),
 });

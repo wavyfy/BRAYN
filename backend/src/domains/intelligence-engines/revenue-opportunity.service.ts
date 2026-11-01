@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, desc, inArray, notInArray, sql } from 'drizzle-orm';
+import { and, eq, desc, inArray, isNotNull, lt, notInArray, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
+import { recommendations } from '../../database/schema/recommendations';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { commerceOrders, orderPlacedAt } from '../../database/schema/commerce-orders';
 import { commerceOrderLineItems } from '../../database/schema/commerce-order-line-items';
@@ -9,7 +10,7 @@ import { commerceProductVariants } from '../../database/schema/commerce-product-
 import { DatabaseService } from '../../database/database.service';
 import { createEvent } from '../../common/events/domain-event';
 import { EventBus } from '../../common/events/event-bus.service';
-import { CustomerIntelligenceService, type CustomerRecord } from '../customer-intelligence/customer-intelligence.service';
+import { CustomerIntelligenceService, type CustomerRecord, type WebsiteProductIntent } from '../customer-intelligence/customer-intelligence.service';
 import { CustomerHealthService, type HealthCategory } from './customer-health.service';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
@@ -44,6 +45,53 @@ const MIN_WORKSPACE_ORDERS_FOR_AFFINITY = 20;
 const UPSELL_CONFIDENCE_SINGLE_CANDIDATE = 80;
 const UPSELL_CONFIDENCE_MULTIPLE_CANDIDATES = 60;
 
+// Website-derived cross_sell (Milestone #5 Release 3 — user decisions, Nov 1, 2026).
+const DAY_MS = 24 * 60 * 60 * 1000;
+export const WEBSITE_EVIDENCE_WINDOW_MS = 7 * DAY_MS;
+export const WEBSITE_VIEW_MIN_VIEWS = 3;
+export const WEBSITE_VIEW_MIN_SESSIONS = 2;
+export const WEBSITE_CART_WAIT_MS = DAY_MS;
+const WEBSITE_CONFIDENCE_VIEWS = 60; // medium evidence
+const WEBSITE_CONFIDENCE_CART = 80; // high evidence
+const WEBSITE_EXPIRED_REASON = 'Website evidence no longer fresh (7 days).';
+
+export interface WebsiteQualification {
+  kind: 'cart' | 'views';
+  quantity: number;
+  evidenceAt: Date;
+  viewCount: number;
+  sessionCount: number;
+}
+
+/**
+ * Applies the Release 3 rules to one product's evidence, counting only events after `evidenceAfter`
+ * (the earlier website opportunity's closure — so a closed one returns only on new evidence).
+ * Cart: added ≥24 h ago with no purchase since. Views: ≥3 views across ≥2 distinct sessions in the
+ * window. A product the customer ever bought never qualifies — cross_sell offers something new.
+ */
+export function qualifyWebsiteIntent(intent: WebsiteProductIntent, now: Date, evidenceAfter: Date | null): WebsiteQualification | null {
+  if (intent.lastPurchasedAt) return null;
+  const after = (at: Date) => !evidenceAfter || at > evidenceAfter;
+
+  const carts = intent.cartAdds.filter((cart) => after(cart.occurredAt) && now.getTime() - cart.occurredAt.getTime() >= WEBSITE_CART_WAIT_MS);
+  if (carts.length > 0) {
+    const latest = carts.reduce((a, b) => (b.occurredAt > a.occurredAt ? b : a));
+    return { kind: 'cart', quantity: latest.quantity, evidenceAt: latest.occurredAt, viewCount: 0, sessionCount: 0 };
+  }
+
+  const views = intent.views.filter((view) => after(view.occurredAt));
+  const sessionCount = new Set(views.map((view) => view.sessionId)).size;
+  if (views.length < WEBSITE_VIEW_MIN_VIEWS || sessionCount < WEBSITE_VIEW_MIN_SESSIONS) return null;
+  const evidenceAt = views.reduce((a, b) => (b.occurredAt > a.occurredAt ? b : a)).occurredAt;
+  return { kind: 'views', quantity: 1, evidenceAt, viewCount: views.length, sessionCount };
+}
+
+/** Cart beats views; then more sessions, more views, more recent. */
+function strongerQualification(a: WebsiteQualification, b: WebsiteQualification): number {
+  if (a.kind !== b.kind) return a.kind === 'cart' ? -1 : 1;
+  return b.sessionCount - a.sessionCount || b.viewCount - a.viewCount || b.evidenceAt.getTime() - a.evidenceAt.getTime();
+}
+
 export type OpportunityType = 'reorder' | 'win_back' | 'vip_recognition' | 'cross_sell' | 'bundle' | 'upsell';
 export type OpportunityPriority = 'critical' | 'high' | 'medium' | 'low';
 
@@ -53,6 +101,9 @@ interface OpportunityCandidate {
   estimatedRevenue: string | null;
   reason: string;
   recommendedAction: string;
+  /** Website-derived only. */
+  evidenceProductId?: string;
+  evidenceAt?: Date;
 }
 
 /**
@@ -86,6 +137,19 @@ interface OpportunityCandidate {
  *   in the current data ever guarantees a real number here). Evaluated
  *   most-recently-purchased-product first, stopping at the first product
  *   with a qualifying candidate.
+ *
+ * - website `cross_sell` (Milestone #5 Release 3) — only when the caller
+ *   passes `includeWebsite` (the scheduled daily run; no real-time
+ *   creation): a never-purchased product with cart intent (≥24 h, no
+ *   purchase) or repeated views (≥3 across ≥2 sessions in 7 days) — see
+ *   qualifyWebsiteIntent. Evidence comes normalized from
+ *   CustomerIntelligenceService.getWebsiteProductIntent. Carries
+ *   `evidenceProductId`/`evidenceAt`: an open one is refreshed while its
+ *   evidence stays fresh and expires 7 days after it goes stale (its
+ *   active recommendation dismissed, as on merge); a closed one returns
+ *   only when the rule qualifies again on events after its closure. A
+ *   commerce `cross_sell` candidate in the same evaluation wins (one open
+ *   opportunity per type).
  *
  * Not produced: review_request/referral (no review or referral data
  * exists anywhere in BRAYN yet).
@@ -123,8 +187,12 @@ export class RevenueOpportunityService {
     private readonly customerHealthService: CustomerHealthService,
   ) {}
 
-  async detect(workspaceId: string, canonicalCustomerId: string) {
+  async detect(workspaceId: string, canonicalCustomerId: string, options: { includeWebsite?: boolean } = {}) {
     const customer = await this.customerIntelligenceService.getCustomer(workspaceId, canonicalCustomerId);
+    const now = new Date();
+    const websiteIntents = options.includeWebsite
+      ? await this.customerIntelligenceService.getWebsiteProductIntent(workspaceId, canonicalCustomerId, new Date(now.getTime() - WEBSITE_EVIDENCE_WINDOW_MS), now)
+      : null;
 
     // A customer with zero commerce orders trivially owns zero products, so
     // affinity/upsell can only ever return null — skip the queries entirely
@@ -148,6 +216,10 @@ export class RevenueOpportunityService {
     // health event it causes); a per-customer transaction lock makes the open-type check and insert atomic.
     const created = await this.database.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`revenue_opportunity:${workspaceId}:${canonicalCustomerId}`}))`);
+      if (websiteIntents) {
+        const websiteCandidate = await this.maintainWebsiteOpportunities(tx, workspaceId, canonicalCustomerId, websiteIntents, now);
+        if (websiteCandidate && !candidates.some((candidate) => candidate.type === websiteCandidate.type)) candidates.push(websiteCandidate);
+      }
       const existingOpenTypes = await this.getOpenTypes(workspaceId, canonicalCustomerId, tx);
       const newCandidates = candidates.filter((candidate) => !existingOpenTypes.has(candidate.type));
       if (newCandidates.length === 0) return [];
@@ -165,6 +237,8 @@ export class RevenueOpportunityService {
             confidence: candidate.confidence,
             reason: candidate.reason,
             recommendedAction: candidate.recommendedAction,
+            evidenceProductId: candidate.evidenceProductId ?? null,
+            evidenceAt: candidate.evidenceAt ?? null,
           })),
         )
         .returning();
@@ -224,6 +298,104 @@ export class RevenueOpportunityService {
     }
 
     return { total, byPriority };
+  }
+
+  /**
+   * Inside detect()'s per-customer lock: refreshes open website opportunities whose evidence still
+   * qualifies, expires stale ones (dismissing their active recommendation), then returns the strongest
+   * new website candidate — applying the recreation rule per product. Null when nothing qualifies.
+   */
+  private async maintainWebsiteOpportunities(
+    tx: NodePgDatabase,
+    workspaceId: string,
+    canonicalCustomerId: string,
+    intents: WebsiteProductIntent[],
+    now: Date,
+  ): Promise<OpportunityCandidate | null> {
+    const websiteRows = await tx
+      .select({
+        id: revenueOpportunities.id,
+        status: revenueOpportunities.status,
+        evidenceProductId: revenueOpportunities.evidenceProductId,
+        evidenceAt: revenueOpportunities.evidenceAt,
+        closedAt: revenueOpportunities.closedAt,
+        updatedAt: revenueOpportunities.updatedAt,
+      })
+      .from(revenueOpportunities)
+      .where(
+        and(
+          eq(revenueOpportunities.workspaceId, workspaceId),
+          eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId),
+          isNotNull(revenueOpportunities.evidenceAt),
+        ),
+      );
+    const intentByProduct = new Map(intents.map((intent) => [intent.productId, intent]));
+    const isTerminal = (status: string) => (TERMINAL_STATUSES as readonly string[]).includes(status);
+
+    for (const row of websiteRows.filter((r) => !isTerminal(r.status) && r.evidenceProductId)) {
+      const intent = intentByProduct.get(row.evidenceProductId!);
+      const fresh = intent ? qualifyWebsiteIntent(intent, now, null) : null;
+      if (fresh && fresh.evidenceAt > row.evidenceAt!) {
+        await tx.update(revenueOpportunities).set({ evidenceAt: fresh.evidenceAt, updatedAt: now }).where(eq(revenueOpportunities.id, row.id));
+      }
+    }
+
+    const expired = await tx
+      .update(revenueOpportunities)
+      .set({ status: 'expired', closedAt: now, closedReason: WEBSITE_EXPIRED_REASON, updatedAt: now })
+      .where(
+        and(
+          eq(revenueOpportunities.workspaceId, workspaceId),
+          eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId),
+          lt(revenueOpportunities.evidenceAt, new Date(now.getTime() - WEBSITE_EVIDENCE_WINDOW_MS)),
+          notInArray(revenueOpportunities.status, [...TERMINAL_STATUSES]),
+        ),
+      )
+      .returning({ id: revenueOpportunities.id, evidenceProductId: revenueOpportunities.evidenceProductId });
+    if (expired.length > 0) {
+      await tx
+        .update(recommendations)
+        .set({ state: 'dismissed', closedAt: now, closedReason: WEBSITE_EXPIRED_REASON, updatedAt: now })
+        .where(
+          and(
+            eq(recommendations.workspaceId, workspaceId),
+            inArray(recommendations.sourceOpportunityId, expired.map((row) => row.id)),
+            eq(recommendations.state, 'active'),
+          ),
+        );
+    }
+
+    // Recreation rule: per product, only evidence after the latest closure of a website opportunity counts.
+    const closedAtByProduct = new Map<string, Date>();
+    const closures = [
+      ...websiteRows.filter((r) => isTerminal(r.status)).map((r) => ({ productId: r.evidenceProductId, at: r.closedAt ?? r.updatedAt })),
+      ...expired.map((r) => ({ productId: r.evidenceProductId, at: now })),
+    ];
+    for (const { productId, at } of closures) {
+      if (productId && at > (closedAtByProduct.get(productId) ?? new Date(0))) closedAtByProduct.set(productId, at);
+    }
+
+    let best: { intent: WebsiteProductIntent; qualification: WebsiteQualification } | null = null;
+    for (const intent of intents) {
+      const qualification = qualifyWebsiteIntent(intent, now, closedAtByProduct.get(intent.productId) ?? null);
+      if (qualification && (!best || strongerQualification(qualification, best.qualification) < 0)) best = { intent, qualification };
+    }
+    if (!best) return null;
+
+    const { intent, qualification } = best;
+    const price = await this.getLowestVariantPrice(workspaceId, intent.productId);
+    return {
+      type: 'cross_sell',
+      confidence: qualification.kind === 'cart' ? WEBSITE_CONFIDENCE_CART : WEBSITE_CONFIDENCE_VIEWS,
+      estimatedRevenue: price !== null ? (price * qualification.quantity).toFixed(2) : null,
+      reason:
+        qualification.kind === 'cart'
+          ? `Customer added "${intent.title}" to their cart (quantity ${qualification.quantity}) on the website and has not purchased it.`
+          : `Customer viewed "${intent.title}" ${qualification.viewCount} times across ${qualification.sessionCount} website sessions in the last 7 days and has not purchased it.`,
+      recommendedAction: `Recommend "${intent.title}" to the customer.`,
+      evidenceProductId: intent.productId,
+      evidenceAt: qualification.evidenceAt,
+    };
   }
 
   private async getOpenTypes(workspaceId: string, canonicalCustomerId: string, executor: NodePgDatabase): Promise<Set<OpportunityType>> {

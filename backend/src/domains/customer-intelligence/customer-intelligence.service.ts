@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, desc, eq, ilike, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, ne, sql } from 'drizzle-orm';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { commerceOrders, orderPlacedAt } from '../../database/schema/commerce-orders';
@@ -7,6 +7,9 @@ import { commerceRefunds } from '../../database/schema/commerce-refunds';
 import { commerceFulfillments } from '../../database/schema/commerce-fulfillments';
 import { websiteVisitors } from '../../database/schema/website-visitors';
 import { websiteEvents } from '../../database/schema/website-events';
+import { commerceProducts } from '../../database/schema/commerce-products';
+import { commerceProductVariants } from '../../database/schema/commerce-product-variants';
+import { commerceOrderLineItems } from '../../database/schema/commerce-order-line-items';
 import { DatabaseService } from '../../database/database.service';
 import { NotFoundError } from '../../common/errors/app-error';
 
@@ -84,6 +87,26 @@ export interface BehaviouralContext {
   lastActivityAt: Date | null;
   recentEvents: RecentWebsiteEvent[];
 }
+
+/**
+ * Normalized website product-intent evidence for one catalogue product
+ * (Milestone #5 Release 3) — what the opportunity detector consumes instead
+ * of raw event payloads. Only events from visitors linked to this canonical
+ * customer; only `payload.productId` values that match exactly one
+ * `commerce_products.external_id` in the workspace (names, unknown ids and
+ * ids ambiguous across connected stores are dropped, never guessed); cart
+ * events only for `action: 'add'`.
+ */
+export interface WebsiteProductIntent {
+  productId: string;
+  title: string;
+  views: { occurredAt: Date; sessionId: string }[];
+  cartAdds: { occurredAt: Date; quantity: number }[];
+  /** This customer's most recent order containing the product (source placement time), if any. */
+  lastPurchasedAt: Date | null;
+}
+
+const MAX_CART_QUANTITY = 999;
 
 export interface CustomerRecord {
   canonicalCustomerId: string;
@@ -399,6 +422,79 @@ export class CustomerIntelligenceService {
       )
       .orderBy(canonicalCustomers.workspaceId, canonicalCustomers.id)
       .limit(limit);
+  }
+
+  /** Product views / cart adds between `since` and `until`, per validated catalogue product — see WebsiteProductIntent. */
+  async getWebsiteProductIntent(workspaceId: string, canonicalCustomerId: string, since: Date, until: Date): Promise<WebsiteProductIntent[]> {
+    const visitorIds = await this.getLinkedVisitorIds(workspaceId, canonicalCustomerId);
+    if (visitorIds.length === 0) return [];
+
+    const events = await this.database.client
+      .select({
+        eventType: websiteEvents.eventType,
+        sessionId: websiteEvents.sessionId,
+        occurredAt: websiteEvents.occurredAt,
+        externalId: sql<string>`${websiteEvents.payload}->>'productId'`,
+        action: sql<string | null>`${websiteEvents.payload}->>'action'`,
+        quantity: sql<string | null>`${websiteEvents.payload}->>'quantity'`,
+      })
+      .from(websiteEvents)
+      .where(
+        and(
+          eq(websiteEvents.workspaceId, workspaceId),
+          inArray(websiteEvents.visitorId, visitorIds),
+          inArray(websiteEvents.eventType, ['product_view', 'cart']),
+          gte(websiteEvents.occurredAt, since),
+          lte(websiteEvents.occurredAt, until),
+          sql`${websiteEvents.payload}->>'productId' is not null`,
+        ),
+      );
+    const relevant = events.filter((event) => event.eventType === 'product_view' || event.action === 'add');
+    if (relevant.length === 0) return [];
+
+    const products = await this.database.client
+      .select({ id: commerceProducts.id, externalId: commerceProducts.externalId, title: commerceProducts.title })
+      .from(commerceProducts)
+      .where(and(eq(commerceProducts.workspaceId, workspaceId), inArray(commerceProducts.externalId, [...new Set(relevant.map((event) => event.externalId))])));
+    const matches = new Map<string, (typeof products)[number][]>();
+    for (const product of products) matches.set(product.externalId, [...(matches.get(product.externalId) ?? []), product]);
+
+    const byProduct = new Map<string, WebsiteProductIntent>();
+    for (const event of relevant) {
+      const matched = matches.get(event.externalId);
+      if (matched?.length !== 1) continue;
+      const [product] = matched;
+      const intent = byProduct.get(product.id) ?? { productId: product.id, title: product.title, views: [], cartAdds: [], lastPurchasedAt: null };
+      if (event.eventType === 'product_view') {
+        intent.views.push({ occurredAt: event.occurredAt, sessionId: event.sessionId });
+      } else {
+        const quantity = Number(event.quantity);
+        intent.cartAdds.push({ occurredAt: event.occurredAt, quantity: Number.isInteger(quantity) && quantity >= 1 && quantity <= MAX_CART_QUANTITY ? quantity : 1 });
+      }
+      byProduct.set(product.id, intent);
+    }
+    if (byProduct.size === 0) return [];
+
+    const sourceCustomerIds = (await this.getSourceRows(workspaceId, canonicalCustomerId)).map((row) => row.id);
+    if (sourceCustomerIds.length > 0) {
+      const purchases = await this.database.client
+        .select({ productId: commerceProductVariants.productId, lastPurchasedAt: sql<string>`max(${orderPlacedAt()})` })
+        .from(commerceOrderLineItems)
+        .innerJoin(commerceOrders, eq(commerceOrderLineItems.orderId, commerceOrders.id))
+        .innerJoin(commerceProductVariants, eq(commerceOrderLineItems.variantId, commerceProductVariants.id))
+        .where(
+          and(
+            eq(commerceOrderLineItems.workspaceId, workspaceId),
+            inArray(commerceOrders.customerId, sourceCustomerIds),
+            inArray(commerceProductVariants.productId, [...byProduct.keys()]),
+          ),
+        )
+        .groupBy(commerceProductVariants.productId);
+      // Raw aggregate comes back from pg as a string (see getCommerceContext).
+      for (const row of purchases) byProduct.get(row.productId)!.lastPurchasedAt = new Date(row.lastPurchasedAt);
+    }
+
+    return [...byProduct.values()];
   }
 
   /** Workspace-wide commerce totals (doc11 Merchant Dashboard — "Customer activity", not per-customer). */
