@@ -207,3 +207,49 @@ describe('AiActionsPage', () => {
     });
   });
 });
+
+describe('AiActionsPage — order.refund_request (#8, Phase 1 simulation)', () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  const refund = (overrides: Record<string, unknown>) => ({
+    id: 'req_r',
+    action: 'order.refund_request',
+    riskLevel: 'high',
+    permissionDecision: 'permitted',
+    approvalState: 'approved',
+    executionStatus: 'executed',
+    failureReason: null,
+    resultSummary: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  });
+
+  it('labels an approved simulated refund as simulated, never as executed or refunded', async () => {
+    apiFetch.mockResolvedValueOnce([refund({ resultSummary: { mode: 'simulated', orderId: 'o1', amount: '24.50' } })]);
+
+    render(await AiActionsPage({ params: { workspaceId: 'ws_1' } }));
+
+    expect(screen.getByText('Approved — simulated, not processed with the store')).toBeTruthy();
+    expect(screen.queryByText('Executed')).toBeNull();
+    expect(screen.queryByText(/refunded|refund completed/i)).toBeNull();
+  });
+
+  it('keeps pending (with Approve/Deny), denied and failed refund requests distinguishable', async () => {
+    apiFetch.mockResolvedValueOnce([
+      refund({ id: 'p', approvalState: 'pending', executionStatus: 'blocked_approval' }),
+      refund({ id: 'd', approvalState: 'denied', executionStatus: 'blocked_approval' }),
+      refund({ id: 'f', executionStatus: 'failed', failureReason: 'The order is cancelled.' }),
+    ]);
+
+    render(await AiActionsPage({ params: { workspaceId: 'ws_1' } }));
+
+    expect(screen.getByText('Blocked — approval required')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'Approve' })).toHaveLength(1);
+    expect(screen.getByText('Denied')).toBeTruthy();
+    expect(screen.getByText('Execution failed')).toBeTruthy();
+    expect(screen.getByText('The order is cancelled.')).toBeTruthy();
+  });
+});
