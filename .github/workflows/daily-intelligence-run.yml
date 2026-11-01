@@ -1,0 +1,151 @@
+# Daily intelligence run scheduler (Milestone #5 D2 — external scheduled job calling the protected internal endpoint;
+# no in-process cron). Replaces the previously selected Render Cron Job (user decision, Nov 1, 2026).
+#
+# Starts a run, then follows that exact run id to a terminal state. Fails on `failed`/`partial` (so GitHub alerts),
+# on a run that stalls or is superseded, and on auth/config errors.
+#
+# Required repository secrets:
+#   BRAYN_API_URL               backend origin, e.g. https://brayn-production.onrender.com (no path, no trailing slash)
+#   BRAYN_INTERNAL_CRON_SECRET  same value as the backend's BRAYN_INTERNAL_CRON_SECRET
+#
+# Note: GitHub disables scheduled workflows in public repositories after 60 days without repository activity.
+name: Daily intelligence run
+
+on:
+  schedule:
+    - cron: '0 2,8,14,20 * * *' # UTC
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: daily-intelligence-run
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Start and follow the daily intelligence run
+        env:
+          BRAYN_API_URL: ${{ secrets.BRAYN_API_URL }}
+          BRAYN_INTERNAL_CRON_SECRET: ${{ secrets.BRAYN_INTERNAL_CRON_SECRET }}
+          POLL_INTERVAL_SECONDS: '30'
+          POLL_DEADLINE_SECONDS: '3000' # 50 min; the job timeout (60 min) is the hard stop
+          LEASE_SECONDS: '900' # backend DAILY_RUN_LEASE_MS — a `running` run without a heartbeat for this long has stalled
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BRAYN_API_URL:-}" ] || [ -z "${BRAYN_INTERNAL_CRON_SECRET:-}" ]; then
+            echo "::error::Missing BRAYN_API_URL or BRAYN_INTERNAL_CRON_SECRET repository secret."
+            exit 1
+          fi
+          endpoint="${BRAYN_API_URL%/}/api/v1/internal/intelligence/daily-run"
+          body="$(mktemp)"
+
+          # One request; the secret is passed on stdin as a header file, never on the command line or in the URL.
+          # Prints the HTTP status ("000" on a network error/timeout); the response body lands in $body.
+          request() {
+            local status
+            status="$(printf 'Authorization: Bearer %s\n' "$BRAYN_INTERNAL_CRON_SECRET" |
+              curl -sS -o "$body" -w '%{http_code}' --max-time 120 -X "$1" -H @- "$2")" || true
+            echo "${status:-000}"
+          }
+
+          # POST with retries for transient failures (network, cold start, 429, 5xx). 401/503 are config errors: fail fast.
+          code=""
+          for delay in 15 30 60 120 0; do
+            code="$(request POST "$endpoint")"
+            case "$code" in
+              200|202) break ;;
+              401) echo "::error::401 — BRAYN_INTERNAL_CRON_SECRET does not match the backend."; exit 1 ;;
+              503) echo "::error::503 — the backend has no BRAYN_INTERNAL_CRON_SECRET configured."; exit 1 ;;
+              000|429|5??) echo "Start attempt returned $code; retrying in ${delay}s." ;;
+              *) echo "::error::Unexpected HTTP $code from start: $(head -c 500 "$body")"; exit 1 ;;
+            esac
+            [ "$delay" -gt 0 ] && sleep "$delay"
+          done
+          if [ "$code" != 200 ] && [ "$code" != 202 ]; then
+            echo "::error::Could not start the daily run (last HTTP $code)."
+            exit 1
+          fi
+
+          run_id="$(jq -r '.runId' "$body")"
+          status="$(jq -r '.status' "$body")"
+          started="$(jq -r '.started' "$body")"
+          echo "HTTP $code — run $run_id, status $status, started $started."
+
+          # 200 + succeeded: today's run already completed (a succeeded run closes the UTC day).
+          if [ "$status" = succeeded ]; then
+            echo "Today's run $run_id already succeeded; nothing to do."
+            echo "Daily run: today's run \`$run_id\` already **succeeded**." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "$status" != running ]; then
+            echo "::error::Unexpected start status '$status' for run $run_id."
+            exit 1
+          fi
+
+          # Follow this exact run. `latest` is the newest run by start time; while ours is `running` no newer run can
+          # start (single running-row index), so a different id means ours was expired/superseded — never report success.
+          deadline=$(( $(date +%s) + POLL_DEADLINE_SECONDS ))
+          errors=0
+          while :; do
+            sleep "$POLL_INTERVAL_SECONDS"
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::Run $run_id did not finish within ${POLL_DEADLINE_SECONDS}s."
+              exit 1
+            fi
+
+            code="$(request GET "$endpoint/latest")"
+            if [ "$code" != 200 ]; then
+              errors=$((errors + 1))
+              echo "Status check returned $code ($errors consecutive)."
+              if [ "$code" = 401 ] || [ "$code" = 503 ] || [ "$errors" -ge 10 ]; then
+                echo "::error::Cannot read run status (last HTTP $code)."
+                exit 1
+              fi
+              continue
+            fi
+            errors=0
+
+            latest_id="$(jq -r '.runId' "$body")"
+            status="$(jq -r '.status' "$body")"
+            if [ "$latest_id" != "$run_id" ]; then
+              echo "::error::Latest run is $latest_id, not $run_id — run $run_id was superseded; its outcome cannot be confirmed."
+              exit 1
+            fi
+
+            counts="$(jq -c '{customersProcessed, healthRecalculated, healthSkipped, customersFailed}' "$body")"
+            case "$status" in
+              running)
+                heartbeat="$(jq -r '.heartbeatAt' "$body")"
+                age=$(( $(date +%s) - $(date -d "$heartbeat" +%s) ))
+                echo "Run $run_id running — $counts, heartbeat ${age}s ago."
+                if [ "$age" -gt "$LEASE_SECONDS" ]; then
+                  echo "::error::Run $run_id stalled — no heartbeat for ${age}s."
+                  exit 1
+                fi
+                ;;
+              succeeded)
+                echo "Run $run_id succeeded — $counts."
+                echo "Daily run \`$run_id\` **succeeded** — \`$counts\`" >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+                ;;
+              partial)
+                echo "::error::Run $run_id finished partial — some customers failed: $counts."
+                echo "Daily run \`$run_id\` **partial** — \`$counts\`" >> "$GITHUB_STEP_SUMMARY"
+                exit 1
+                ;;
+              failed)
+                echo "::error::Run $run_id failed: $(jq -r '.error // "no error recorded"' "$body") — $counts."
+                echo "Daily run \`$run_id\` **failed** — \`$counts\`" >> "$GITHUB_STEP_SUMMARY"
+                exit 1
+                ;;
+              *)
+                echo "::error::Unknown run status '$status'."
+                exit 1
+                ;;
+            esac
+          done
