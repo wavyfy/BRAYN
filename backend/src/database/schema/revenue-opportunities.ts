@@ -48,5 +48,9 @@ export const revenueOpportunities = pgTable('revenue_opportunities', {
   // 7-day expiry rules key on them. SET NULL so a Shopify shop/redact catalog purge is never blocked.
   evidenceProductId: uuid('evidence_product_id').references(() => commerceProducts.id, { onDelete: 'set null' }),
   evidenceAt: timestamp('evidence_at', { withTimezone: true }),
+  // Commerce affinity cross_sell/bundle only (#8 `ignored` rule): the recommended (owned, other) product pair, so a
+  // dismissed one is recreated only for a different pair. Null on every other row; SET NULL for the same purge reason.
+  affinityOwnedProductId: uuid('affinity_owned_product_id').references(() => commerceProducts.id, { onDelete: 'set null' }),
+  affinityOtherProductId: uuid('affinity_other_product_id').references(() => commerceProducts.id, { onDelete: 'set null' }),
   ...timestamps(),
 });

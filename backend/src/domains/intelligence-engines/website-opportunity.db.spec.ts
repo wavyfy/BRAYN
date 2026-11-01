@@ -243,6 +243,28 @@ describe('Website-derived revenue opportunities (real DB)', { timeout: 60_000 },
     expect(reopened[0]).toMatchObject({ evidenceProductId: product.kettle, type: 'cross_sell' });
   });
 
+  it('a dismissed website cross_sell is ignored and recreated only on new evidence after the dismissal', async () => {
+    const id = await customer();
+    const v = await visitor(id);
+    await threeViews(v, '1003', 2);
+    await opportunities.detect(workspaceId, id, { includeWebsite: true });
+    await recs.generate(workspaceId, id);
+    const [opp] = await openWebsite(id);
+    const [rec] = await db.client.select().from(recommendations).where(eq(recommendations.sourceOpportunityId, opp.id));
+    await recs.dismiss(workspaceId, id, rec.id);
+    const [ignored] = await db.client.select().from(revenueOpportunities).where(eq(revenueOpportunities.id, opp.id));
+    expect(ignored.status).toBe('ignored');
+
+    // Same (pre-dismissal) evidence still in the window: no recreation.
+    await opportunities.detect(workspaceId, id, { includeWebsite: true });
+    expect((await openWebsite(id)).filter((o) => o.status !== 'ignored')).toHaveLength(0);
+
+    const [n1, n2] = [await session(v), await session(v)];
+    for (const s of [n1, n1, n2]) await event(v, s, 'product_view', { productId: '1003' }, new Date());
+    await opportunities.detect(workspaceId, id, { includeWebsite: true });
+    expect((await openWebsite(id)).filter((o) => o.status === 'new')).toHaveLength(1);
+  });
+
   it('refreshes an open website opportunity while evidence stays fresh, so it does not expire', async () => {
     const id = await customer();
     const v = await visitor(id);

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, desc, inArray, isNotNull, lt, notInArray, sql } from 'drizzle-orm';
+import { and, eq, desc, inArray, isNotNull, isNull, lt, notInArray, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
 import { recommendations } from '../../database/schema/recommendations';
@@ -104,6 +104,47 @@ interface OpportunityCandidate {
   /** Website-derived only. */
   evidenceProductId?: string;
   evidenceAt?: Date;
+  /** Commerce affinity cross_sell/bundle only — the recommended (owned, other) pair. */
+  affinityOwnedProductId?: string;
+  affinityOtherProductId?: string;
+  /** Upsell only — when the purchase it was derived from was placed. */
+  qualifyingPurchaseAt?: Date;
+}
+
+type IgnoredCommerceRow = Pick<
+  typeof revenueOpportunities.$inferSelect,
+  'type' | 'closedAt' | 'updatedAt' | 'affinityOwnedProductId' | 'affinityOtherProductId'
+>;
+
+/**
+ * #8 `ignored` rule (user decisions, Nov 1, 2026): a dismissed commerce-derived opportunity returns only when its
+ * qualifying condition changed after the dismissal. reorder/win_back: an order placed after it. upsell: its qualifying
+ * purchase placed after it. cross_sell/bundle: a different recommended pair — a row with no stored pair (created before
+ * pairs were stored) blocks. vip_recognition: never (no second qualifying state). Website cross_sell keeps its own
+ * post-closure evidence rule (maintainWebsiteOpportunities).
+ */
+export function isSuppressedByIgnored(candidate: OpportunityCandidate, ignored: IgnoredCommerceRow[], lastOrderAt: Date | null): boolean {
+  const rows = ignored.filter((row) => row.type === candidate.type);
+  if (rows.length === 0) return false;
+  const latestClosure = new Date(Math.max(...rows.map((row) => (row.closedAt ?? row.updatedAt).getTime())));
+
+  switch (candidate.type) {
+    case 'reorder':
+    case 'win_back':
+      return !lastOrderAt || lastOrderAt <= latestClosure;
+    case 'upsell':
+      return !candidate.qualifyingPurchaseAt || candidate.qualifyingPurchaseAt <= latestClosure;
+    case 'cross_sell':
+    case 'bundle':
+      return rows.some(
+        (row) =>
+          !row.affinityOwnedProductId ||
+          !row.affinityOtherProductId ||
+          (row.affinityOwnedProductId === candidate.affinityOwnedProductId && row.affinityOtherProductId === candidate.affinityOtherProductId),
+      );
+    case 'vip_recognition':
+      return true;
+  }
 }
 
 /**
@@ -216,12 +257,15 @@ export class RevenueOpportunityService {
     // health event it causes); a per-customer transaction lock makes the open-type check and insert atomic.
     const created = await this.database.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`revenue_opportunity:${workspaceId}:${canonicalCustomerId}`}))`);
+      // Before the website step, so a suppressed commerce cross_sell doesn't hold back a qualifying website one.
+      const ignored = await this.getIgnoredCommerceRows(workspaceId, canonicalCustomerId, tx);
+      const eligible = candidates.filter((candidate) => !isSuppressedByIgnored(candidate, ignored, customer.commerceContext.lastOrderAt));
       if (websiteIntents) {
         const websiteCandidate = await this.maintainWebsiteOpportunities(tx, workspaceId, canonicalCustomerId, websiteIntents, now);
-        if (websiteCandidate && !candidates.some((candidate) => candidate.type === websiteCandidate.type)) candidates.push(websiteCandidate);
+        if (websiteCandidate && !eligible.some((candidate) => candidate.type === websiteCandidate.type)) eligible.push(websiteCandidate);
       }
       const existingOpenTypes = await this.getOpenTypes(workspaceId, canonicalCustomerId, tx);
-      const newCandidates = candidates.filter((candidate) => !existingOpenTypes.has(candidate.type));
+      const newCandidates = eligible.filter((candidate) => !existingOpenTypes.has(candidate.type));
       if (newCandidates.length === 0) return [];
 
       return tx
@@ -239,6 +283,8 @@ export class RevenueOpportunityService {
             recommendedAction: candidate.recommendedAction,
             evidenceProductId: candidate.evidenceProductId ?? null,
             evidenceAt: candidate.evidenceAt ?? null,
+            affinityOwnedProductId: candidate.affinityOwnedProductId ?? null,
+            affinityOtherProductId: candidate.affinityOtherProductId ?? null,
           })),
         )
         .returning();
@@ -398,6 +444,27 @@ export class RevenueOpportunityService {
     };
   }
 
+  /** Ignored commerce-derived rows (website ones carry `evidenceAt` and follow their own rule) — input to isSuppressedByIgnored. */
+  private async getIgnoredCommerceRows(workspaceId: string, canonicalCustomerId: string, executor: NodePgDatabase): Promise<IgnoredCommerceRow[]> {
+    return executor
+      .select({
+        type: revenueOpportunities.type,
+        closedAt: revenueOpportunities.closedAt,
+        updatedAt: revenueOpportunities.updatedAt,
+        affinityOwnedProductId: revenueOpportunities.affinityOwnedProductId,
+        affinityOtherProductId: revenueOpportunities.affinityOtherProductId,
+      })
+      .from(revenueOpportunities)
+      .where(
+        and(
+          eq(revenueOpportunities.workspaceId, workspaceId),
+          eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId),
+          eq(revenueOpportunities.status, 'ignored'),
+          isNull(revenueOpportunities.evidenceAt),
+        ),
+      );
+  }
+
   private async getOpenTypes(workspaceId: string, canonicalCustomerId: string, executor: NodePgDatabase): Promise<Set<OpportunityType>> {
     const rows = await executor
       .select({ type: revenueOpportunities.type })
@@ -474,6 +541,8 @@ export class RevenueOpportunityService {
         estimatedRevenue: combined,
         reason: `These two products were purchased together in ${Math.round(bestBundle.ratio * 100)}% of the orders containing the customer's product.`,
         recommendedAction: 'Offer these products together as a bundle.',
+        affinityOwnedProductId: bestBundle.ownedProductId,
+        affinityOtherProductId: bestBundle.otherProductId,
       };
     }
 
@@ -486,6 +555,8 @@ export class RevenueOpportunityService {
         estimatedRevenue: otherPrice !== null ? otherPrice.toFixed(2) : null,
         reason: `Other customers who bought the same product also bought this one in ${Math.round(bestCrossSell.ratio * 100)}% of matching orders.`,
         recommendedAction: 'Recommend this product to the customer.',
+        affinityOwnedProductId: bestCrossSell.ownedProductId,
+        affinityOtherProductId: bestCrossSell.otherProductId,
       };
     }
 
@@ -546,6 +617,7 @@ export class RevenueOpportunityService {
         estimatedRevenue: revenueDelta.toFixed(2),
         reason: `Customer purchased a ${purchasedPrice.toFixed(2)} variant; a ${nearest.price.toFixed(2)} variant of the same product is available and unpurchased.`,
         recommendedAction: 'Suggest the higher-tier variant to this customer.',
+        qualifyingPurchaseAt: purchased.purchasedAt,
       };
     }
 

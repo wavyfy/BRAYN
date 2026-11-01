@@ -116,15 +116,23 @@ describe('Recommendation-driven opportunity lifecycle (real DB)', { timeout: 60_
     expect(await statusOf(opp)).toBe('executed');
   });
 
-  it('dismiss closes the recommendation but leaves the opportunity status as is (ignored is not set)', async () => {
+  it('dismiss closes the recommendation and ignores its own source opportunity; a repeat dismiss/complete conflicts', async () => {
     const id = await customer();
     const opp = await opportunity(id);
+    const other = await opportunity(id, 'new');
     await recs.generate(workspaceId, id);
     const rec = await recommendationFor(opp);
 
     await recs.dismiss(workspaceId, id, rec.id, 'Not relevant');
     expect((await recommendationFor(opp)).state).toBe('dismissed');
-    expect(await statusOf(opp)).toBe('recommended');
+    const [row] = await db.client.select().from(revenueOpportunities).where(eq(revenueOpportunities.id, opp));
+    expect(row).toMatchObject({ status: 'ignored', closedReason: 'recommendation_dismissed' });
+    expect(row.closedAt).not.toBeNull();
+    expect(await statusOf(other)).toBe('recommended');
+
+    await expect(recs.dismiss(workspaceId, id, rec.id)).rejects.toThrow('Recommendation is already dismissed.');
+    await expect(recs.complete(workspaceId, id, rec.id)).rejects.toThrow('Recommendation is already dismissed.');
+    expect(await statusOf(opp)).toBe('ignored');
   });
 
   it('completing one recommendation never changes another customer or workspace opportunity', async () => {

@@ -153,16 +153,17 @@ describe('RecommendationService', () => {
       await expect(service.dismiss('ws_1', 'canon_1', 'rec_1')).rejects.toThrow('Recommendation is already completed.');
     });
 
-    it('updates an active recommendation to dismissed and leaves its opportunity untouched', async () => {
+    it('updates an active recommendation to dismissed and moves its own source opportunity to ignored', async () => {
       const select = makeSelectQueue([[{ id: 'rec_1', state: 'active', sourceOpportunityId: 'opp_1' }]]);
       const updated = { id: 'rec_1', state: 'dismissed' };
-      const update = makeUpdateQueue([makeUpdateChain([updated])]);
+      const opportunityUpdate = makeUpdateChain();
+      const update = makeUpdateQueue([makeUpdateChain([updated]), opportunityUpdate]);
       const service = new RecommendationService(makeDatabase({ select, update }), {} as RevenueOpportunityService, makeLogger());
 
       const result = await service.dismiss('ws_1', 'canon_1', 'rec_1', 'Not relevant');
 
       expect(result).toEqual(updated);
-      expect(update).toHaveBeenCalledTimes(1);
+      expect(opportunityUpdate.set).toHaveBeenCalledWith(expect.objectContaining({ status: 'ignored', closedReason: 'recommendation_dismissed' }));
     });
 
     it('throws ConflictError when a racing close already moved the recommendation out of active', async () => {

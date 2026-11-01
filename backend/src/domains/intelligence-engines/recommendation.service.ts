@@ -1,15 +1,18 @@
 import { Injectable } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, notInArray, sql } from 'drizzle-orm';
 import { recommendations } from '../../database/schema/recommendations';
 import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
 import { DatabaseService } from '../../database/database.service';
 import { ConflictError, NotFoundError } from '../../common/errors/app-error';
 import type { DomainEvent } from '../../common/events/domain-event';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
-import { RevenueOpportunityService } from './revenue-opportunity.service';
+import { RevenueOpportunityService, TERMINAL_STATUSES } from './revenue-opportunity.service';
 
 export type RecommendationState = 'active' | 'dismissed' | 'completed';
+
+/** `closedReason` on an opportunity ignored because its recommendation was dismissed. */
+export const DISMISSED_CLOSED_REASON = 'recommendation_dismissed';
 
 /** Doc10 lifecycle statuses an opportunity may still move to `executed` from; terminal or already-executed ones are left as they are. */
 const PRE_EXECUTION_STATUSES = ['new', 'recommended', 'scheduled'] as const;
@@ -180,9 +183,21 @@ export class RecommendationService {
         throw new ConflictError('Recommendation is no longer active.');
       }
 
-      // Doc10 lifecycle: completing a recommendation executes its own source opportunity, never another one.
-      // Dismissal leaves the opportunity as is — see Phase Status (#8): `ignored` is terminal and would let detection recreate it.
-      if (state === 'completed') {
+      // Doc10 lifecycle, own source opportunity only: dismissal ignores it (terminal; detection recreates it only on
+      // changed evidence — isSuppressedByIgnored / the website post-closure rule); completion executes it.
+      if (state === 'dismissed') {
+        await tx
+          .update(revenueOpportunities)
+          .set({ status: 'ignored', closedAt: now, closedReason: DISMISSED_CLOSED_REASON, updatedAt: now })
+          .where(
+            and(
+              eq(revenueOpportunities.workspaceId, workspaceId),
+              eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId),
+              eq(revenueOpportunities.id, existing.sourceOpportunityId),
+              notInArray(revenueOpportunities.status, [...TERMINAL_STATUSES]),
+            ),
+          );
+      } else {
         await tx
           .update(revenueOpportunities)
           .set({ status: 'executed', updatedAt: now })
