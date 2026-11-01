@@ -14,7 +14,6 @@ import {
   buildRecommendationsBlock,
   buildRevenueOpportunitiesBlock,
   runAgentTurn,
-  selectRelevantKnowledge,
 } from './agent-shared';
 
 const CAPABILITY = 'sales-agent';
@@ -104,13 +103,12 @@ export class SalesAgentService {
   ) {}
 
   async respond(workspaceId: string, canonicalCustomerId: string, message: string): Promise<AgentResult> {
-    const [customer, recommendations, opportunities, knowledgeEntries] = await Promise.all([
+    const [customer, recommendations, opportunities, relevantKnowledge] = await Promise.all([
       this.customerIntelligence.getCustomer(workspaceId, canonicalCustomerId),
       this.recommendation.list(workspaceId, canonicalCustomerId),
       this.revenueOpportunity.list(workspaceId, canonicalCustomerId),
-      this.merchantKnowledge.list(workspaceId, 'knowledge'),
+      this.merchantKnowledge.findRelevant(workspaceId, 'knowledge', message),
     ]);
-    const relevantKnowledge = selectRelevantKnowledge(message, knowledgeEntries);
 
     const messages: AiMessage[] = [
       { role: 'system', content: SALES_AGENT_SYSTEM_PROMPT },

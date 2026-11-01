@@ -10,7 +10,6 @@ import {
   buildMerchantKnowledgeBlock,
   buildMerchantPolicyBlock,
   runAgentTurn,
-  selectRelevantKnowledge,
 } from './agent-shared';
 
 const CAPABILITY = 'support-agent';
@@ -64,12 +63,11 @@ export class SupportAgentService {
   ) {}
 
   async respond(workspaceId: string, canonicalCustomerId: string, message: string): Promise<AgentResult> {
-    const [customer, knowledgeEntries, policyEntries] = await Promise.all([
+    const [customer, relevantKnowledge, policyEntries] = await Promise.all([
       this.customerIntelligence.getCustomer(workspaceId, canonicalCustomerId),
-      this.merchantKnowledge.list(workspaceId, 'knowledge'),
+      this.merchantKnowledge.findRelevant(workspaceId, 'knowledge', message),
       this.merchantKnowledge.list(workspaceId, 'policy'),
     ]);
-    const relevantKnowledge = selectRelevantKnowledge(message, knowledgeEntries);
 
     const messages: AiMessage[] = [
       { role: 'system', content: SUPPORT_AGENT_SYSTEM_PROMPT },

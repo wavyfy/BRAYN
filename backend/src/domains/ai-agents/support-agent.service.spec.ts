@@ -39,9 +39,10 @@ function makeCustomerIntelligence(overrides: Partial<CustomerIntelligenceService
 function makeMerchantKnowledge(entries: { knowledge?: { title: string; content: string }[]; policy?: { title: string; content: string }[] } = {}): MerchantKnowledgeService {
   const knowledge = entries.knowledge ?? [];
   const policy = entries.policy ?? [];
-  return {
-    list: vi.fn(async (_workspaceId: string, type: 'knowledge' | 'policy') => (type === 'policy' ? policy : knowledge)),
-  } as unknown as MerchantKnowledgeService;
+  // Real service with only the DB-backed list() stubbed, so findRelevant's real scoring runs.
+  const service = new MerchantKnowledgeService({} as never);
+  vi.spyOn(service, 'list').mockImplementation(async (_workspaceId, type) => (type === 'policy' ? policy : knowledge) as never);
+  return service;
 }
 
 function makeService(overrides: {
@@ -87,6 +88,7 @@ describe('SupportAgentService', () => {
     expect(result).toEqual({ answer: 'Your order shipped yesterday.', escalate: false });
     expect(customerIntelligence.getCustomer).toHaveBeenCalledWith(WORKSPACE_ID, CUSTOMER_ID);
     expect(merchantKnowledge.list).toHaveBeenCalledWith(WORKSPACE_ID, 'knowledge');
+    expect(vi.mocked(merchantKnowledge.list)).toHaveBeenCalledTimes(2);
     expect(merchantKnowledge.list).toHaveBeenCalledWith(WORKSPACE_ID, 'policy');
 
     const generate = gateway.generate as unknown as ReturnType<typeof vi.fn>;

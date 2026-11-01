@@ -29,30 +29,6 @@ export type RecommendationRow = Awaited<ReturnType<RecommendationService['list']
 export type RevenueOpportunityRow = Awaited<ReturnType<RevenueOpportunityService['list']>>[number];
 export type KnowledgeEntryRow = Awaited<ReturnType<MerchantKnowledgeService['list']>>[number];
 
-const MAX_RELEVANT_KNOWLEDGE_ENTRIES = 5;
-
-/** Same deterministic keyword-overlap scorer as `MerchantBusinessAnalystService` (doc13 — retrieval mechanism is an implementation detail) — duplicated rather than imported since that function isn't exported from a file this domain should otherwise depend on for an unrelated agent's behaviour. */
-export function selectRelevantKnowledge(question: string, entries: KnowledgeEntryRow[]): KnowledgeEntryRow[] {
-  const questionWords = new Set(question.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []);
-  if (questionWords.size === 0) {
-    return [];
-  }
-
-  const scored = entries
-    .map((entry) => {
-      const haystack = `${entry.title} ${entry.content}`.toLowerCase();
-      let score = 0;
-      for (const word of questionWords) {
-        if (haystack.includes(word)) score += 1;
-      }
-      return { entry, score };
-    })
-    .filter(({ score }) => score > 0);
-
-  scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, MAX_RELEVANT_KNOWLEDGE_ENTRIES).map(({ entry }) => entry);
-}
-
 /** Doc08 UCIR — stated facts, not conclusions. Same shape as MBA's own block; this is the one context category every customer-facing agent needs (doc14 Customer Context — "Unified Customer Intelligence Record"). */
 export function buildCustomerFactsBlock(customer: CustomerRecord): string {
   const { profile, commerceContext } = customer;

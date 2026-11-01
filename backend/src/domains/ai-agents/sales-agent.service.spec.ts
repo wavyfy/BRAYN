@@ -50,7 +50,10 @@ function makeRevenueOpportunity(overrides: Partial<RevenueOpportunityService> = 
 }
 
 function makeMerchantKnowledge(entries: { title: string; content: string }[] = []): MerchantKnowledgeService {
-  return { list: vi.fn(async () => entries) } as unknown as MerchantKnowledgeService;
+  // Real service with only the DB-backed list() stubbed, so findRelevant's real scoring runs.
+  const service = new MerchantKnowledgeService({} as never);
+  vi.spyOn(service, 'list').mockImplementation(async () => entries as never);
+  return service;
 }
 
 function makeProduct(overrides: Partial<ProductService> = {}): ProductService {
