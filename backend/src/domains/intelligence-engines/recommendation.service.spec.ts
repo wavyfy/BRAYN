@@ -26,6 +26,23 @@ function makeInsertChain() {
   return { values: vi.fn(() => ({ onConflictDoNothing })), onConflictDoNothing };
 }
 
+function makeUpdateChain(returning: unknown[] = []) {
+  const where = vi.fn(() => ({ returning: vi.fn(async () => returning), then: (resolve: (value: unknown) => void) => resolve(undefined) }));
+  const set = vi.fn(() => ({ where }));
+  return { set, where };
+}
+
+/** Each `update()` call gets the next chain. */
+function makeUpdateQueue(chains: ReturnType<typeof makeUpdateChain>[]) {
+  let i = 0;
+  return vi.fn(() => chains[i++]);
+}
+
+/** `transaction` runs its callback against the same mocked client. */
+function makeDatabase(client: Record<string, unknown>): DatabaseService {
+  return { client, transaction: async (fn: (tx: unknown) => unknown) => fn(client) } as unknown as DatabaseService;
+}
+
 function makeLogger() {
   return { event: vi.fn() } as unknown as StructuredLoggerService;
 }
@@ -61,11 +78,14 @@ describe('RecommendationService', () => {
     it('generates a recommendation from an open opportunity that has none yet', async () => {
       const insertChain = makeInsertChain();
       const insert = vi.fn(() => insertChain);
-      const select = makeSelectQueue([[], []]); // getExistingOpportunityIds -> none, then list()
-      const client = { select, insert };
+      const select = makeSelectQueue([[], []]); // getExistingRecommendationStates -> none, then list()
+      const statusUpdate = makeUpdateChain();
+      const client = { select, insert, update: makeUpdateQueue([statusUpdate]) };
       const service = new RecommendationService({ client } as unknown as DatabaseService, makeRevenueOpportunityService([OPPORTUNITY]), makeLogger());
 
       await service.generate('ws_1', 'canon_1');
+
+      expect(statusUpdate.set).toHaveBeenCalledWith(expect.objectContaining({ status: 'recommended' }));
 
       expect(insertChain.values).toHaveBeenCalledWith([
         expect.objectContaining({
@@ -79,13 +99,27 @@ describe('RecommendationService', () => {
 
     it('skips an opportunity that already has a recommendation', async () => {
       const insert = vi.fn();
-      const select = makeSelectQueue([[{ sourceOpportunityId: 'opp_1' }], []]);
-      const client = { select, insert };
+      const select = makeSelectQueue([[{ sourceOpportunityId: 'opp_1', state: 'active' }], []]);
+      const statusUpdate = makeUpdateChain();
+      const client = { select, insert, update: makeUpdateQueue([statusUpdate]) };
       const service = new RecommendationService({ client } as unknown as DatabaseService, makeRevenueOpportunityService([OPPORTUNITY]), makeLogger());
 
       await service.generate('ws_1', 'canon_1');
 
       expect(insert).not.toHaveBeenCalled();
+      // Still surfaced, so a pre-existing `new` opportunity catches up to `recommended`.
+      expect(statusUpdate.set).toHaveBeenCalledWith(expect.objectContaining({ status: 'recommended' }));
+    });
+
+    it('does not mark an opportunity recommended when its recommendation was already dismissed or completed', async () => {
+      const update = vi.fn();
+      const select = makeSelectQueue([[{ sourceOpportunityId: 'opp_1', state: 'dismissed' }], []]);
+      const client = { select, insert: vi.fn(), update };
+      const service = new RecommendationService({ client } as unknown as DatabaseService, makeRevenueOpportunityService([OPPORTUNITY]), makeLogger());
+
+      await service.generate('ws_1', 'canon_1');
+
+      expect(update).not.toHaveBeenCalled();
     });
   });
 
@@ -119,22 +153,49 @@ describe('RecommendationService', () => {
       await expect(service.dismiss('ws_1', 'canon_1', 'rec_1')).rejects.toThrow('Recommendation is already completed.');
     });
 
-    it('updates an active recommendation to dismissed', async () => {
-      const select = makeSelectQueue([[{ id: 'rec_1', state: 'active' }]]);
+    it('updates an active recommendation to dismissed and leaves its opportunity untouched', async () => {
+      const select = makeSelectQueue([[{ id: 'rec_1', state: 'active', sourceOpportunityId: 'opp_1' }]]);
       const updated = { id: 'rec_1', state: 'dismissed' };
-      const update = vi.fn(() => ({
-        set: vi.fn(() => ({
-          where: vi.fn(() => ({
-            returning: vi.fn(async () => [updated]),
-          })),
-        })),
-      }));
-      const client = { select, update };
-      const service = new RecommendationService({ client } as unknown as DatabaseService, {} as RevenueOpportunityService, makeLogger());
+      const update = makeUpdateQueue([makeUpdateChain([updated])]);
+      const service = new RecommendationService(makeDatabase({ select, update }), {} as RevenueOpportunityService, makeLogger());
 
       const result = await service.dismiss('ws_1', 'canon_1', 'rec_1', 'Not relevant');
 
       expect(result).toEqual(updated);
+      expect(update).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws ConflictError when a racing close already moved the recommendation out of active', async () => {
+      const select = makeSelectQueue([[{ id: 'rec_1', state: 'active', sourceOpportunityId: 'opp_1' }]]);
+      const update = makeUpdateQueue([makeUpdateChain([])]);
+      const service = new RecommendationService(makeDatabase({ select, update }), {} as RevenueOpportunityService, makeLogger());
+
+      await expect(service.dismiss('ws_1', 'canon_1', 'rec_1')).rejects.toThrow('Recommendation is no longer active.');
+      expect(update).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('complete()', () => {
+    it('completes the recommendation and moves its own source opportunity to executed', async () => {
+      const select = makeSelectQueue([[{ id: 'rec_1', state: 'active', sourceOpportunityId: 'opp_1' }]]);
+      const updated = { id: 'rec_1', state: 'completed' };
+      const opportunityUpdate = makeUpdateChain();
+      const update = makeUpdateQueue([makeUpdateChain([updated]), opportunityUpdate]);
+      const service = new RecommendationService(makeDatabase({ select, update }), {} as RevenueOpportunityService, makeLogger());
+
+      const result = await service.complete('ws_1', 'canon_1', 'rec_1');
+
+      expect(result).toEqual(updated);
+      expect(opportunityUpdate.set).toHaveBeenCalledWith(expect.objectContaining({ status: 'executed' }));
+    });
+
+    it('does not touch the opportunity when the recommendation is not active', async () => {
+      const select = makeSelectQueue([[{ id: 'rec_1', state: 'completed', sourceOpportunityId: 'opp_1' }]]);
+      const update = vi.fn();
+      const service = new RecommendationService(makeDatabase({ select, update }), {} as RevenueOpportunityService, makeLogger());
+
+      await expect(service.complete('ws_1', 'canon_1', 'rec_1')).rejects.toThrow('Recommendation is already completed.');
+      expect(update).not.toHaveBeenCalled();
     });
   });
 
@@ -195,7 +256,7 @@ describe('RecommendationService', () => {
   describe('generate() — concurrent evaluation', () => {
     it('inserts with ON CONFLICT DO NOTHING so a racing evaluation cannot duplicate a recommendation', async () => {
       const insertChain = makeInsertChain();
-      const client = { select: makeSelectQueue([[], []]), insert: vi.fn(() => insertChain) };
+      const client = { select: makeSelectQueue([[], []]), insert: vi.fn(() => insertChain), update: makeUpdateQueue([makeUpdateChain()]) };
       const service = new RecommendationService({ client } as unknown as DatabaseService, makeRevenueOpportunityService([OPPORTUNITY]), makeLogger());
 
       await service.generate('ws_1', 'canon_1');

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { recommendations } from '../../database/schema/recommendations';
+import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
 import { DatabaseService } from '../../database/database.service';
 import { ConflictError, NotFoundError } from '../../common/errors/app-error';
 import type { DomainEvent } from '../../common/events/domain-event';
@@ -9,6 +10,9 @@ import { StructuredLoggerService } from '../../common/logging/structured-logger.
 import { RevenueOpportunityService } from './revenue-opportunity.service';
 
 export type RecommendationState = 'active' | 'dismissed' | 'completed';
+
+/** Doc10 lifecycle statuses an opportunity may still move to `executed` from; terminal or already-executed ones are left as they are. */
+const PRE_EXECUTION_STATUSES = ['new', 'recommended', 'scheduled'] as const;
 
 /**
  * Recommendations (doc10 7.3). See recommendations schema's doc comment
@@ -56,13 +60,13 @@ export class RecommendationService {
 
   async generate(workspaceId: string, canonicalCustomerId: string) {
     const openOpportunities = await this.revenueOpportunityService.list(workspaceId, canonicalCustomerId);
-    const existingOpportunityIds = await this.getExistingOpportunityIds(
+    const existingStates = await this.getExistingRecommendationStates(
       workspaceId,
       openOpportunities.map((opportunity) => opportunity.id),
     );
 
     const newRows = openOpportunities
-      .filter((opportunity) => !existingOpportunityIds.has(opportunity.id))
+      .filter((opportunity) => !existingStates.has(opportunity.id))
       .map((opportunity) => ({
         workspaceId,
         canonicalCustomerId,
@@ -81,6 +85,25 @@ export class RecommendationService {
     if (newRows.length > 0) {
       // A concurrent evaluation may have inserted the same opportunity's recommendation; the unique index makes that a no-op.
       await this.database.client.insert(recommendations).values(newRows).onConflictDoNothing();
+    }
+
+    // Doc10 lifecycle: an opportunity whose recommendation is surfaced (active) is `recommended`. Only `new` moves, so a
+    // concurrent expiry or a later status is never overwritten; a dismissed/completed recommendation's opportunity is not touched.
+    const surfacedOpportunityIds = openOpportunities
+      .map((opportunity) => opportunity.id)
+      .filter((id) => !existingStates.has(id) || existingStates.get(id) === 'active');
+    if (surfacedOpportunityIds.length > 0) {
+      await this.database.client
+        .update(revenueOpportunities)
+        .set({ status: 'recommended', updatedAt: new Date() })
+        .where(
+          and(
+            eq(revenueOpportunities.workspaceId, workspaceId),
+            eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId),
+            inArray(revenueOpportunities.id, surfacedOpportunityIds),
+            eq(revenueOpportunities.status, 'new'),
+          ),
+        );
     }
 
     return this.list(workspaceId, canonicalCustomerId);
@@ -146,25 +169,48 @@ export class RecommendationService {
     }
 
     const now = new Date();
-    const [updated] = await this.database.client
-      .update(recommendations)
-      .set({ state, closedAt: now, closedReason, updatedAt: now })
-      .where(eq(recommendations.id, recommendationId))
-      .returning();
+    return this.database.transaction(async (tx) => {
+      // The `active` guard makes a racing second close a conflict instead of a silent re-close.
+      const [updated] = await tx
+        .update(recommendations)
+        .set({ state, closedAt: now, closedReason, updatedAt: now })
+        .where(and(eq(recommendations.id, recommendationId), eq(recommendations.state, 'active')))
+        .returning();
+      if (!updated) {
+        throw new ConflictError('Recommendation is no longer active.');
+      }
 
-    return updated;
+      // Doc10 lifecycle: completing a recommendation executes its own source opportunity, never another one.
+      // Dismissal leaves the opportunity as is — see Phase Status (#8): `ignored` is terminal and would let detection recreate it.
+      if (state === 'completed') {
+        await tx
+          .update(revenueOpportunities)
+          .set({ status: 'executed', updatedAt: now })
+          .where(
+            and(
+              eq(revenueOpportunities.workspaceId, workspaceId),
+              eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId),
+              eq(revenueOpportunities.id, existing.sourceOpportunityId),
+              inArray(revenueOpportunities.status, [...PRE_EXECUTION_STATUSES]),
+            ),
+          );
+      }
+
+      return updated;
+    });
   }
 
-  private async getExistingOpportunityIds(workspaceId: string, opportunityIds: string[]): Promise<Set<string>> {
+  /** Opportunity id → its existing recommendation's state. */
+  private async getExistingRecommendationStates(workspaceId: string, opportunityIds: string[]): Promise<Map<string, RecommendationState>> {
     if (opportunityIds.length === 0) {
-      return new Set();
+      return new Map();
     }
 
     const rows = await this.database.client
-      .select({ sourceOpportunityId: recommendations.sourceOpportunityId })
+      .select({ sourceOpportunityId: recommendations.sourceOpportunityId, state: recommendations.state })
       .from(recommendations)
       .where(and(eq(recommendations.workspaceId, workspaceId), inArray(recommendations.sourceOpportunityId, opportunityIds)));
 
-    return new Set(rows.map((row) => row.sourceOpportunityId));
+    return new Map(rows.map((row) => [row.sourceOpportunityId, row.state]));
   }
 }

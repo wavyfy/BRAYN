@@ -214,6 +214,7 @@ describe('Website-derived revenue opportunities (real DB)', { timeout: 60_000 },
     const [opp] = await openWebsite(id);
     const [rec] = await db.client.select().from(recommendations).where(eq(recommendations.sourceOpportunityId, opp.id));
     expect(rec.state).toBe('active');
+    expect(opp.status).toBe('recommended'); // a surfaced opportunity still expires below
 
     // Evidence goes stale (no qualifying event for 8 days).
     await db.client.update(revenueOpportunities).set({ evidenceAt: ago(8 * 24) }).where(eq(revenueOpportunities.id, opp.id));
