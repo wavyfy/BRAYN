@@ -73,7 +73,8 @@ export class ReadToolsService {
       {
         name: GET_CUSTOMER_ACTIVITY_HISTORY_TOOL,
         description:
-          "Retrieve this customer's chronological activity history (account creation, orders placed) beyond what's " +
+          "Retrieve this customer's chronological activity history (account creation, orders, cancellations, refunds, " +
+          "fulfilments, website activity) beyond what's " +
           'already given. Call this only if the question needs specific historical events not already provided.',
         parameters: NO_ARGS_SCHEMA,
       },
