@@ -6,7 +6,7 @@ import { StructuredLoggerService } from '../../common/logging/structured-logger.
 import { DatabaseService } from '../../database/database.service';
 import { IdempotencyService } from '../../common/idempotency/idempotency.service';
 import { MerchantKnowledgeService } from '../merchant-knowledge/merchant-knowledge.service';
-import { ApprovalRequiredError, ConflictError, NotFoundError, UnauthorizedError, ValidationError } from '../../common/errors/app-error';
+import { ApprovalRequiredError, ConflictError, DuplicateActionRequestError, NotFoundError, UnauthorizedError, ValidationError } from '../../common/errors/app-error';
 import type { ActionDefinition } from './action-definition';
 import type { ActionRegistry } from './actions.registry';
 
@@ -423,6 +423,39 @@ describe('AiActionControlService', () => {
           failureReason: 'This action was already requested with the same idempotency key.',
         }),
       );
+    });
+
+    it('executeForAutomation: a duplicate key raises DuplicateActionRequestError (still a ConflictError, same message), audits "duplicate", and never re-executes', async () => {
+      const { database, values } = makeDatabase();
+      const idempotency = makeIdempotency({
+        reserve: vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false),
+      });
+      const execute = vi.fn(async () => ({ id: RECOMMENDATION_ID, state: 'dismissed' }));
+      const definition = makeLowRiskAction(execute);
+      const service = makeService({ database, idempotency });
+      const context = { workspaceId: WORKSPACE_ID, customerId: CUSTOMER_ID };
+
+      await service.executeForAutomation(definition, { recommendationId: RECOMMENDATION_ID }, context, 'auto_1:evt_1', 'evt_1');
+      const duplicate = service.executeForAutomation(definition, { recommendationId: RECOMMENDATION_ID }, context, 'auto_1:evt_1', 'evt_1');
+
+      await expect(duplicate).rejects.toBeInstanceOf(DuplicateActionRequestError);
+      await expect(duplicate).rejects.toBeInstanceOf(ConflictError);
+      await expect(duplicate).rejects.toThrow(`Action "${definition.name}" was already requested with this idempotency key.`);
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(values).toHaveBeenNthCalledWith(2, expect.objectContaining({ executionStatus: 'duplicate', approvalState: 'not_required', actorUserId: null }));
+    });
+
+    it('executeForAutomation: a ConflictError thrown by the action itself is rethrown as-is, not as a duplicate', async () => {
+      const conflict = new ConflictError('Recommendation is already completed.');
+      const definition = makeLowRiskAction(vi.fn(async () => {
+        throw conflict;
+      }));
+      const service = makeService({});
+
+      const run = service.executeForAutomation(definition, { recommendationId: RECOMMENDATION_ID }, { workspaceId: WORKSPACE_ID, customerId: CUSTOMER_ID }, 'auto_1:evt_2', 'evt_2');
+
+      await expect(run).rejects.toBe(conflict);
+      await expect(run).rejects.not.toBeInstanceOf(DuplicateActionRequestError);
     });
 
     it('permits a new intentional execution under a different key', async () => {

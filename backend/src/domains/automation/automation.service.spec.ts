@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AutomationService } from './automation.service';
+import { AutomationService, DUPLICATE_TRIGGER_REASON } from './automation.service';
+import { ConflictError, DuplicateActionRequestError, ValidationError } from '../../common/errors/app-error';
 import type { DatabaseService } from '../../database/database.service';
 import type { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import type { AiActionControlService } from '../ai-action-control/ai-action-control.service';
@@ -45,7 +46,10 @@ function makeAiActionControl(overrides: { executeForAutomation?: (...args: unkno
 
 /** Opaque marker — `runOne()` only ever forwards this reference to `executeForAutomation` (mocked above), it never inspects the definition itself in these tests. */
 function makeRegistry(): ActionRegistry {
-  return { generateRecommendations: { name: 'generate_recommendations' } } as unknown as ActionRegistry;
+  return {
+    generateRecommendations: { name: 'generate_recommendations' },
+    internalNotificationCreate: { name: 'internal_notification.create' },
+  } as unknown as ActionRegistry;
 }
 
 function makeEvent(payload: Partial<RevenueOpportunityCreatedPayload> = {}): DomainEvent<RevenueOpportunityCreatedPayload> {
@@ -89,7 +93,7 @@ function makeHealthEvent(payload: Partial<CustomerHealthRecalculatedPayload> = {
 
 describe('AutomationService', () => {
   describe('create()', () => {
-    it('fixes triggerType/actionType to the only wired pair', async () => {
+    it('defaults actionType to generate_recommendations', async () => {
       const created = { id: 'auto_1', name: 'Notify on win-back' };
       const insertChain = makeInsertChain(created);
       const insert = vi.fn(() => insertChain);
@@ -108,7 +112,7 @@ describe('AutomationService', () => {
       );
     });
 
-    it('fixes actionType regardless of triggerType, and passes through a customer_health.recalculated trigger unchanged', async () => {
+    it('defaults actionType regardless of triggerType, and passes through a customer_health.recalculated trigger unchanged', async () => {
       const created = { id: 'auto_2', name: 'Reach out on health change' };
       const insertChain = makeInsertChain(created);
       const insert = vi.fn(() => insertChain);
@@ -125,6 +129,28 @@ describe('AutomationService', () => {
       expect(insertChain.values).toHaveBeenCalledWith(
         expect.objectContaining({ triggerType: 'customer_health.recalculated', actionType: 'generate_recommendations' }),
       );
+    });
+
+    it('stores internal_notification.create with the revenue_opportunity.created trigger', async () => {
+      const insertChain = makeInsertChain({ id: 'auto_3' });
+      const insert = vi.fn(() => insertChain);
+      const service = new AutomationService({ client: { insert } } as unknown as DatabaseService, makeAiActionControl(), makeRegistry(), makeLogger());
+
+      await service.create('ws_1', { name: 'Notify', actionType: 'internal_notification.create' });
+
+      expect(insertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ triggerType: 'revenue_opportunity.created', actionType: 'internal_notification.create' }),
+      );
+    });
+
+    it('rejects internal_notification.create with the customer_health.recalculated trigger, inserting nothing', async () => {
+      const insert = vi.fn();
+      const service = new AutomationService({ client: { insert } } as unknown as DatabaseService, makeAiActionControl(), makeRegistry(), makeLogger());
+
+      await expect(
+        service.create('ws_1', { name: 'Bad', triggerType: 'customer_health.recalculated', actionType: 'internal_notification.create' }),
+      ).rejects.toBeInstanceOf(ValidationError);
+      expect(insert).not.toHaveBeenCalled();
     });
   });
 
@@ -296,6 +322,40 @@ describe('AutomationService', () => {
       );
     });
 
+    it('dispatches internal_notification.create with a server-built { opportunityId } input and stores { notificationId }', async () => {
+      const definition = { id: 'auto_n', conditions: null, actionType: 'internal_notification.create' };
+      const select = makeSelectQueue([[definition]]);
+      const insertChain = makeInsertChain();
+      const insert = vi.fn(() => insertChain);
+      const registry = makeRegistry();
+      const aiActionControl = makeAiActionControl({ executeForAutomation: vi.fn(async () => ({ id: 'notif_1', created: true })) });
+      const service = new AutomationService({ client: { select, insert } } as unknown as DatabaseService, aiActionControl, registry, makeLogger());
+
+      await service.handleRevenueOpportunityCreated(makeEvent({ opportunityId: 'opp_9' }));
+
+      expect(aiActionControl.executeForAutomation).toHaveBeenCalledWith(
+        registry.internalNotificationCreate,
+        { opportunityId: 'opp_9' },
+        { workspaceId: 'ws_1', customerId: 'canon_1' },
+        'auto_n:evt_1',
+        'evt_1',
+      );
+      expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ status: 'succeeded', result: { notificationId: 'notif_1' } }));
+    });
+
+    it('records an existing notification (another automation already notified) as succeeded with that notificationId', async () => {
+      const definition = { id: 'auto_n2', conditions: null, actionType: 'internal_notification.create' };
+      const select = makeSelectQueue([[definition]]);
+      const insertChain = makeInsertChain();
+      const insert = vi.fn(() => insertChain);
+      const aiActionControl = makeAiActionControl({ executeForAutomation: vi.fn(async () => ({ id: 'notif_existing', created: false })) });
+      const service = new AutomationService({ client: { select, insert } } as unknown as DatabaseService, aiActionControl, makeRegistry(), makeLogger());
+
+      await service.handleRevenueOpportunityCreated(makeEvent());
+
+      expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ status: 'succeeded', result: { notificationId: 'notif_existing' } }));
+    });
+
     it('records a failed run when AI Action Control rejects the action, without propagating the error', async () => {
       const definition = { id: 'auto_1', conditions: null };
       const select = makeSelectQueue([[definition]]);
@@ -336,6 +396,70 @@ describe('AutomationService', () => {
       expect(aiActionControl.executeForAutomation).not.toHaveBeenCalled();
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ status: 'skipped' }));
     });
+
+    it('records a replayed trigger (idempotency duplicate) as skipped with reason "duplicate trigger", not failed', async () => {
+      const insertChain = makeInsertChain();
+      const aiActionControl = makeAiActionControl({
+        executeForAutomation: vi.fn(async () => {
+          throw new DuplicateActionRequestError('Action "generate_recommendations" was already requested with this idempotency key.');
+        }),
+      });
+      const service = new AutomationService(
+        { client: { select: makeSelectQueue([[{ id: 'auto_1', conditions: null }]]), insert: vi.fn(() => insertChain) } } as unknown as DatabaseService,
+        aiActionControl,
+        makeRegistry(),
+        makeLogger(),
+      );
+
+      await expect(service.handleRevenueOpportunityCreated(makeEvent())).resolves.toBeUndefined();
+
+      expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ status: 'skipped', reason: DUPLICATE_TRIGGER_REASON, automationId: 'auto_1', triggerEventId: 'evt_1' }));
+      expect(insertChain.values).not.toHaveBeenCalledWith(expect.objectContaining({ status: 'failed' }));
+    });
+
+    it('still records a failed run when the action itself fails with a plain ConflictError (not a duplicate)', async () => {
+      const insertChain = makeInsertChain();
+      const aiActionControl = makeAiActionControl({
+        executeForAutomation: vi.fn(async () => {
+          throw new ConflictError('Recommendation is already completed.');
+        }),
+      });
+      const service = new AutomationService(
+        { client: { select: makeSelectQueue([[{ id: 'auto_1', conditions: null }]]), insert: vi.fn(() => insertChain) } } as unknown as DatabaseService,
+        aiActionControl,
+        makeRegistry(),
+        makeLogger(),
+      );
+
+      await service.handleRevenueOpportunityCreated(makeEvent());
+
+      expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', reason: 'Recommendation is already completed.' }));
+    });
+
+    for (const type of ['cross_sell', 'upsell', 'bundle'] as const) {
+      it(`runs the action for a ${type} opportunity when typeIn includes ${type}, and skips it when typeIn does not`, async () => {
+        const runFor = async (typeIn: string[]) => {
+          const insertChain = makeInsertChain();
+          const aiActionControl = makeAiActionControl({ executeForAutomation: vi.fn(async () => []) });
+          const service = new AutomationService(
+            { client: { select: makeSelectQueue([[{ id: 'auto_1', conditions: { typeIn } }]]), insert: vi.fn(() => insertChain) } } as unknown as DatabaseService,
+            aiActionControl,
+            makeRegistry(),
+            makeLogger(),
+          );
+          await service.handleRevenueOpportunityCreated(makeEvent({ type }));
+          return { aiActionControl, insertChain };
+        };
+
+        const matched = await runFor(['reorder', type]);
+        expect(matched.aiActionControl.executeForAutomation).toHaveBeenCalledTimes(1);
+        expect(matched.insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ status: 'succeeded' }));
+
+        const skipped = await runFor(['reorder']);
+        expect(skipped.aiActionControl.executeForAutomation).not.toHaveBeenCalled();
+        expect(skipped.insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ status: 'skipped' }));
+      });
+    }
   });
 
   describe('handleCustomerHealthRecalculated()', () => {
@@ -445,6 +569,22 @@ describe('AutomationService', () => {
       await expect(service.handleCustomerHealthRecalculated(makeHealthEvent())).resolves.toBeUndefined();
 
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', reason: 'boom' }));
+    });
+
+    it('fails a stored internal_notification.create definition on a health trigger without executing anything', async () => {
+      const definition = { id: 'auto_health_n', conditions: null, actionType: 'internal_notification.create' };
+      const select = makeSelectQueue([[definition]]);
+      const insertChain = makeInsertChain();
+      const insert = vi.fn(() => insertChain);
+      const aiActionControl = makeAiActionControl();
+      const service = new AutomationService({ client: { select, insert } } as unknown as DatabaseService, aiActionControl, makeRegistry(), makeLogger());
+
+      await service.handleCustomerHealthRecalculated(makeHealthEvent());
+
+      expect(aiActionControl.executeForAutomation).not.toHaveBeenCalled();
+      expect(insertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'failed', reason: 'internal_notification.create requires a revenue_opportunity.created trigger.' }),
+      );
     });
 
     it('a run failure never propagates back to the caller (fault isolation from the event producer)', async () => {

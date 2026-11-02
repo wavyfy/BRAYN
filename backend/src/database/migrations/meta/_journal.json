@@ -337,6 +337,13 @@
       "when": 1793545490542,
       "tag": "0047_right_deadpool",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1793627395153,
+      "tag": "0048_easy_tyger_tiger",
+      "breakpoints": true
     }
   ]
 }

@@ -5,6 +5,7 @@ import { MerchantKnowledgeModule } from '../merchant-knowledge/merchant-knowledg
 import { RecommendationService } from '../intelligence-engines/recommendation.service';
 import { CommerceModule } from '../commerce/commerce.module';
 import { OrderService } from '../commerce/order.service';
+import { InternalNotificationService } from '../intelligence-engines/internal-notification.service';
 import { AiActionControlService } from './ai-action-control.service';
 import { AiActionRequestController } from './ai-action-request.controller';
 import { ACTION_REGISTRY, buildActionRegistry } from './actions.registry';
@@ -33,8 +34,9 @@ export { ACTION_REGISTRY };
   providers: [
     {
       provide: ACTION_REGISTRY,
-      useFactory: (recommendationService: RecommendationService, orderService: OrderService) => buildActionRegistry(recommendationService, orderService),
-      inject: [RecommendationService, OrderService],
+      useFactory: (recommendationService: RecommendationService, orderService: OrderService, internalNotificationService: InternalNotificationService) =>
+        buildActionRegistry(recommendationService, orderService, internalNotificationService),
+      inject: [RecommendationService, OrderService, InternalNotificationService],
     },
     AiActionControlService,
   ],

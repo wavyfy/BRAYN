@@ -21,6 +21,7 @@ import { conversations } from '../../database/schema/conversations';
 import { conversationMessages } from '../../database/schema/conversation-messages';
 import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
 import { recommendations } from '../../database/schema/recommendations';
+import { internalNotifications } from '../../database/schema/internal-notifications';
 import { customerHealthStates } from '../../database/schema/customer-health-states';
 import { customerHealthStateHistory } from '../../database/schema/customer-health-state-history';
 import { automationRuns } from '../../database/schema/automation-runs';
@@ -466,6 +467,7 @@ export class IntegrationService {
       );
 
     await tx.delete(recommendations).where(and(eq(recommendations.workspaceId, workspaceId), eq(recommendations.canonicalCustomerId, canonicalCustomerId)));
+    await tx.delete(internalNotifications).where(and(eq(internalNotifications.workspaceId, workspaceId), eq(internalNotifications.canonicalCustomerId, canonicalCustomerId)));
     await tx.delete(revenueOpportunities).where(and(eq(revenueOpportunities.workspaceId, workspaceId), eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId)));
     await tx.delete(customerHealthStateHistory).where(and(eq(customerHealthStateHistory.workspaceId, workspaceId), eq(customerHealthStateHistory.canonicalCustomerId, canonicalCustomerId)));
     await tx.delete(customerHealthStates).where(and(eq(customerHealthStates.workspaceId, workspaceId), eq(customerHealthStates.canonicalCustomerId, canonicalCustomerId)));

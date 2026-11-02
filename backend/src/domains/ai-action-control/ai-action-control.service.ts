@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { ApprovalRequiredError, ConflictError, NotFoundError, UnauthorizedError, ValidationError } from '../../common/errors/app-error';
+import { ApprovalRequiredError, ConflictError, DuplicateActionRequestError, NotFoundError, UnauthorizedError, ValidationError } from '../../common/errors/app-error';
 import { IdempotencyService } from '../../common/idempotency/idempotency.service';
 import { RequestContext } from '../../common/logging/request-context';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
@@ -274,7 +274,7 @@ export class AiActionControlService {
         inputSummary: parsed.data,
         failureReason: outcome.failureReason,
       });
-      throw new ConflictError(`Action "${definition.name}" was already requested with this idempotency key.`);
+      throw new DuplicateActionRequestError(`Action "${definition.name}" was already requested with this idempotency key.`);
     }
 
     if (outcome.executionStatus === 'failed') {

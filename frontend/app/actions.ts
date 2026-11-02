@@ -86,10 +86,11 @@ export async function createAutomation(
   name: string,
   triggerType?: 'revenue_opportunity.created' | 'customer_health.recalculated',
   conditions?: { priorityIn?: string[]; typeIn?: string[] },
+  actionType?: 'generate_recommendations' | 'internal_notification.create',
 ) {
   return apiFetch(`/api/v1/workspaces/${workspaceId}/automations`, {
     method: 'POST',
-    body: JSON.stringify({ name, triggerType, conditions }),
+    body: JSON.stringify({ name, triggerType, actionType, conditions }),
   });
 }
 

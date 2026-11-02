@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { RecommendationService } from '../intelligence-engines/recommendation.service';
 import { OrderService } from '../commerce/order.service';
+import { InternalNotificationService } from '../intelligence-engines/internal-notification.service';
 import type { ActionDefinition } from './action-definition';
 
 /**
@@ -37,6 +38,11 @@ const completeInputSchema = z.object({
 /** No fields — `canonicalCustomerId` comes from `context.customerId`, same convention as dismiss/complete, never from caller-supplied input (doc03 rule 3). */
 const generateRecommendationsInputSchema = z.object({});
 
+/** Only the opportunity id — the customer comes from `context.customerId`, and type/priority/reason are resolved server-side from the opportunity, never accepted as input. */
+const internalNotificationInputSchema = z.object({
+  opportunityId: z.string().uuid(),
+});
+
 const refundRequestInputSchema = z.object({
   orderId: z.string().uuid(),
   reason: z.string().min(1).max(500),
@@ -46,6 +52,7 @@ export const ORDER_REFUND_REQUEST_ACTION = 'order.refund_request';
 export const RECOMMENDATION_DISMISS_ACTION = 'recommendation.dismiss';
 export const RECOMMENDATION_COMPLETE_ACTION = 'recommendation.complete';
 export const GENERATE_RECOMMENDATIONS_ACTION = 'generate_recommendations';
+export const INTERNAL_NOTIFICATION_CREATE_ACTION = 'internal_notification.create';
 
 /**
  * Defined here (not in `ai-action-control.module.ts`) so both the module
@@ -55,7 +62,7 @@ export const GENERATE_RECOMMENDATIONS_ACTION = 'generate_recommendations';
  */
 export const ACTION_REGISTRY = Symbol('ACTION_REGISTRY');
 
-export function buildActionRegistry(recommendationService: RecommendationService, orderService: OrderService) {
+export function buildActionRegistry(recommendationService: RecommendationService, orderService: OrderService, internalNotificationService: InternalNotificationService) {
   const dismiss: ActionDefinition<z.infer<typeof dismissInputSchema>, Awaited<ReturnType<RecommendationService['dismiss']>>> = {
     name: RECOMMENDATION_DISMISS_ACTION,
     description: 'Dismiss an active recommendation for a customer.',
@@ -117,7 +124,24 @@ export function buildActionRegistry(recommendationService: RecommendationService
     summarizeResult: (result) => result,
   };
 
-  return { dismiss, complete, generateRecommendations, refundRequest };
+  /**
+   * #9 decision (user, Nov 2, 2026): low risk, no approval — an internal record with no customer contact, money or
+   * provider write. System-triggered only: executed by Business Action Automation through `executeForAutomation()`.
+   * `allowedRoles` is empty so no human or AI request can invoke it through `execute()`; it is not a recipient list —
+   * who may see notifications is the notifications API permission (doc28 Notifications row, all five roles).
+   */
+  const internalNotificationCreate: ActionDefinition<z.infer<typeof internalNotificationInputSchema>, { id: string; created: boolean }> = {
+    name: INTERNAL_NOTIFICATION_CREATE_ACTION,
+    description: 'Create a workspace internal notification for one revenue opportunity (one per opportunity).',
+    riskLevel: 'low',
+    requiresApproval: false,
+    allowedRoles: [],
+    inputSchema: internalNotificationInputSchema,
+    execute: (input, context) => internalNotificationService.createForOpportunity(context.workspaceId, context.customerId!, input.opportunityId),
+    summarizeResult: (result) => ({ notificationId: result.id, created: result.created }),
+  };
+
+  return { dismiss, complete, generateRecommendations, refundRequest, internalNotificationCreate };
 }
 
 export type ActionRegistry = ReturnType<typeof buildActionRegistry>;
