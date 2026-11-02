@@ -13,6 +13,12 @@ export function triggerLabel(triggerType: string): string {
   return TRIGGER_LABELS[triggerType] ?? humanize(triggerType);
 }
 
+const ACTION_LABELS: Record<string, string> = {
+  generate_recommendations: 'Generate recommendations',
+  'internal_notification.create': 'Create internal notification',
+};
+
+/** Display label for an automation action — the same wording the create form offers. */
 export function actionLabel(actionType: string): string {
-  return humanize(actionType);
+  return ACTION_LABELS[actionType] ?? humanize(actionType);
 }

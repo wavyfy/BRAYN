@@ -7,6 +7,7 @@ import {
   RECOMMENDATION_COMPLETE_ACTION,
   GENERATE_RECOMMENDATIONS_ACTION,
   ORDER_REFUND_REQUEST_ACTION,
+  INTERNAL_NOTIFICATION_CREATE_ACTION,
   type ActionRegistry,
 } from '../ai-action-control/actions.registry';
 import { REFUND_REQUEST_SUBMITTED_MESSAGE } from './write-tools.service';
@@ -14,6 +15,7 @@ import type { RecommendationService } from '../intelligence-engines/recommendati
 import type { OrderService } from '../commerce/order.service';
 import { ApprovalRequiredError, ConflictError, UnauthorizedError, ValidationError } from '../../common/errors/app-error';
 import type { AiToolCall } from '../ai/ai-provider.interface';
+import type { InternalNotificationService } from '../intelligence-engines/internal-notification.service';
 
 const WORKSPACE_ID = 'ws_1';
 const CUSTOMER_ID = '11111111-1111-4111-8111-111111111111';
@@ -28,7 +30,7 @@ const RECOMMENDATION_ID = '22222222-2222-4222-8222-222222222222';
  * `summarizeResult` are ever read directly by WriteToolsService.
  */
 function makeRegistry(): ActionRegistry {
-  return buildActionRegistry({} as RecommendationService, {} as OrderService);
+  return buildActionRegistry({} as RecommendationService, {} as OrderService, {} as InternalNotificationService);
 }
 
 function makeAiActionControl(overrides: { execute?: (...args: unknown[]) => Promise<unknown> } = {}): AiActionControlService {
@@ -86,6 +88,14 @@ describe('WriteToolsService', () => {
 
       const names = service.availableTools('owner', CUSTOMER_ID).map((t) => t.name);
       expect(names).not.toContain(GENERATE_RECOMMENDATIONS_ACTION);
+    });
+
+    it('never offers internal_notification.create — automation-only, no role may invoke it', () => {
+      const service = makeService();
+
+      for (const role of ['owner', 'admin', 'marketing', 'support', 'analyst']) {
+        expect(service.availableTools(role, CUSTOMER_ID).map((t) => t.name)).not.toContain(INTERNAL_NOTIFICATION_CREATE_ACTION);
+      }
     });
 
     it('offers no tools when no customerId is bound, regardless of role', () => {

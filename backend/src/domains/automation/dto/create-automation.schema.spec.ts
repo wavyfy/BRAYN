@@ -22,3 +22,30 @@ describe('automation typeIn conditions', () => {
     }
   });
 });
+
+describe('automation actionType', () => {
+  it('defaults to generate_recommendations and accepts internal_notification.create with the revenue-opportunity trigger', () => {
+    expect(createAutomationSchema.parse({ name: 'a' }).actionType).toBe('generate_recommendations');
+    expect(createAutomationSchema.parse({ name: 'a', actionType: 'internal_notification.create' })).toMatchObject({
+      triggerType: 'revenue_opportunity.created',
+      actionType: 'internal_notification.create',
+    });
+    expect(createAutomationSchema.safeParse({ name: 'a', triggerType: 'customer_health.recalculated', actionType: 'generate_recommendations' }).success).toBe(true);
+  });
+
+  it('rejects internal_notification.create with the customer_health.recalculated trigger', () => {
+    const result = createAutomationSchema.safeParse({ name: 'a', triggerType: 'customer_health.recalculated', actionType: 'internal_notification.create' });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].path).toEqual(['actionType']);
+  });
+
+  it('rejects unknown actions, including registry actions automation may not run', () => {
+    for (const actionType of ['order.refund_request', 'recommendation.dismiss', 'send_whatsapp', '']) {
+      expect(createAutomationSchema.safeParse({ name: 'a', actionType }).success).toBe(false);
+    }
+  });
+
+  it('does not let an update change the action or trigger', () => {
+    expect(updateAutomationSchema.parse({ name: 'b', actionType: 'internal_notification.create', triggerType: 'customer_health.recalculated' })).toEqual({ name: 'b' });
+  });
+});

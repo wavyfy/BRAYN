@@ -59,7 +59,7 @@ describe('CreateAutomationForm', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add automation' }));
     await screen.findByRole('button', { name: 'Add automation' });
 
-    expect(createAutomation).toHaveBeenCalledWith('ws_1', 'Reach out on health change', 'customer_health.recalculated', undefined);
+    expect(createAutomation).toHaveBeenCalledWith('ws_1', 'Reach out on health change', 'customer_health.recalculated', undefined, 'generate_recommendations');
   });
 
   it('(5)(6) submits triggerType: "revenue_opportunity.created" with the selected conditions — existing default behavior unchanged', async () => {
@@ -77,6 +77,7 @@ describe('CreateAutomationForm', () => {
       'Recommend on new opportunity',
       'revenue_opportunity.created',
       { priorityIn: ['critical'], typeIn: ['win_back'] },
+      'generate_recommendations',
     );
   });
 
@@ -101,7 +102,7 @@ describe('CreateAutomationForm', () => {
 
     expect(createAutomation).toHaveBeenCalledWith('ws_1', 'Recommend on product opportunities', 'revenue_opportunity.created', {
       typeIn: ['cross_sell', 'upsell', 'bundle'],
-    });
+    }, 'generate_recommendations');
   });
 
   it('(7) shows an inline error and re-enables the button when submission fails, regardless of trigger type', async () => {
@@ -128,5 +129,38 @@ describe('CreateAutomationForm', () => {
     expect(refresh).toHaveBeenCalledTimes(1);
     expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('');
     expect((screen.getByLabelText('Trigger') as HTMLSelectElement).value).toBe('revenue_opportunity.created');
+    expect((screen.getByLabelText('Action') as HTMLSelectElement).value).toBe('generate_recommendations');
+  });
+
+  it('defaults the action to generate recommendations and offers the internal notification action', () => {
+    render(<CreateAutomationForm workspaceId="ws_1" />);
+
+    expect((screen.getByLabelText('Action') as HTMLSelectElement).value).toBe('generate_recommendations');
+    expect(screen.getByRole('option', { name: 'Create internal notification' })).toBeTruthy();
+  });
+
+  it('submits internal_notification.create with the revenue-opportunity trigger and its conditions', async () => {
+    createAutomation.mockResolvedValueOnce(undefined);
+    render(<CreateAutomationForm workspaceId="ws_1" />);
+
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Flag critical win-backs' } });
+    fireEvent.change(screen.getByLabelText('Action'), { target: { value: 'internal_notification.create' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'critical' }));
+    expect(screen.getByText(/Important pending actions/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Add automation' }));
+    await screen.findByRole('button', { name: 'Add automation' });
+
+    expect(createAutomation).toHaveBeenCalledWith('ws_1', 'Flag critical win-backs', 'revenue_opportunity.created', { priorityIn: ['critical'], typeIn: undefined }, 'internal_notification.create');
+  });
+
+  it('disables the incompatible pairing in both directions: health trigger with internal notification', () => {
+    render(<CreateAutomationForm workspaceId="ws_1" />);
+
+    fireEvent.change(screen.getByLabelText('Action'), { target: { value: 'internal_notification.create' } });
+    expect((screen.getByRole('option', { name: 'Customer health recalculated' }) as HTMLOptionElement).disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText('Action'), { target: { value: 'generate_recommendations' } });
+    fireEvent.change(screen.getByLabelText('Trigger'), { target: { value: 'customer_health.recalculated' } });
+    expect((screen.getByRole('option', { name: 'Create internal notification' }) as HTMLOptionElement).disabled).toBe(true);
   });
 });

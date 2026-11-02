@@ -21,6 +21,13 @@ const TRIGGER_TYPES = [
 ] as const;
 type AutomationTriggerType = (typeof TRIGGER_TYPES)[number]['value'];
 
+/** Actions the backend accepts (createAutomationSchema); an internal notification needs the revenue-opportunity trigger. */
+const ACTION_TYPES = [
+  { value: 'generate_recommendations', label: 'Generate recommendations' },
+  { value: 'internal_notification.create', label: 'Create internal notification' },
+] as const;
+type AutomationActionType = (typeof ACTION_TYPES)[number]['value'];
+
 function toggle<T extends string>(list: T[], value: T): T[] {
   return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 }
@@ -28,6 +35,7 @@ function toggle<T extends string>(list: T[], value: T): T[] {
 export function CreateAutomationForm({ workspaceId }: { workspaceId: string }) {
   const [name, setName] = useState('');
   const [triggerType, setTriggerType] = useState<AutomationTriggerType>('revenue_opportunity.created');
+  const [actionType, setActionType] = useState<AutomationActionType>('generate_recommendations');
   const [priorityIn, setPriorityIn] = useState<string[]>([]);
   const [typeIn, setTypeIn] = useState<string[]>([]);
   const [pending, setPending] = useState(false);
@@ -52,9 +60,11 @@ export function CreateAutomationForm({ workspaceId }: { workspaceId: string }) {
             isRevenueOpportunityTrigger
               ? { priorityIn: priorityIn.length > 0 ? priorityIn : undefined, typeIn: typeIn.length > 0 ? typeIn : undefined }
               : undefined,
+            actionType,
           );
           setName('');
           setTriggerType('revenue_opportunity.created');
+          setActionType('generate_recommendations');
           setPriorityIn([]);
           setTypeIn([]);
           router.refresh();
@@ -86,11 +96,29 @@ export function CreateAutomationForm({ workspaceId }: { workspaceId: string }) {
             onChange={(e) => setTriggerType(e.target.value as AutomationTriggerType)}
           >
             {TRIGGER_TYPES.map(({ value, label }) => (
-              <option key={value} value={value}>
+              <option key={value} value={value} disabled={actionType === 'internal_notification.create' && value !== 'revenue_opportunity.created'}>
                 {label}
               </option>
             ))}
           </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="automation-action-type">Action</Label>
+          <Select
+            id="automation-action-type"
+            className="w-full"
+            value={actionType}
+            onChange={(e) => setActionType(e.target.value as AutomationActionType)}
+          >
+            {ACTION_TYPES.map(({ value, label }) => (
+              <option key={value} value={value} disabled={value === 'internal_notification.create' && !isRevenueOpportunityTrigger}>
+                {label}
+              </option>
+            ))}
+          </Select>
+          {actionType === 'internal_notification.create' && (
+            <p className="text-xs text-muted-foreground">Adds the opportunity to Important pending actions on the dashboard. One notification per opportunity.</p>
+          )}
         </div>
       </div>
 

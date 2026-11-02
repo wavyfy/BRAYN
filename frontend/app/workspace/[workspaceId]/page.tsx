@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { apiFetch, ApiError } from '@/lib/api';
 import { RenameWorkspaceForm } from './rename-workspace-form';
+import { ImportantPendingActions, type NotificationsPage } from './important-pending-actions';
 import { AddMemberForm } from './add-member-form';
 import { MemberRowActions } from './member-row-actions';
 import { Card } from '@/components/ui/card';
@@ -82,13 +83,16 @@ function OpportunityBreakdown({ workspaceId, opportunities }: { workspaceId: str
 /** Doc 19 Phase 2 Visible Result — "See workspace state" and "manage basic workspace settings"; doc11 Merchant Dashboard. */
 export default async function WorkspacePage({ params }: { params: { workspaceId: string } }) {
   let workspace: Workspace, memberships: WorkspaceSummary[], members: Membership[], currentUser: CurrentUser, dashboard: DashboardSummary;
+  let notifications: NotificationsPage | null;
   try {
-    [workspace, memberships, members, currentUser, dashboard] = await Promise.all([
+    [workspace, memberships, members, currentUser, dashboard, notifications] = await Promise.all([
       apiFetch(`/api/v1/workspaces/${params.workspaceId}`),
       apiFetch('/api/v1/users/me/workspaces'),
       apiFetch(`/api/v1/workspaces/${params.workspaceId}/members`),
       apiFetch('/api/v1/users/me'),
       apiFetch(`/api/v1/workspaces/${params.workspaceId}/dashboard`),
+      // A notifications failure shows inline in its own section rather than failing the whole dashboard.
+      apiFetch(`/api/v1/workspaces/${params.workspaceId}/notifications?limit=10`).catch(() => null),
     ]);
   } catch (error) {
     // Expected API failures (not a member, workspace deleted, ...) render inline rather than
@@ -127,6 +131,8 @@ export default async function WorkspacePage({ params }: { params: { workspaceId:
           />
           <Metric label="Active recommendations" value={dashboard.activeRecommendationsCount} />
         </MetricStrip>
+
+        <ImportantPendingActions workspaceId={workspace.id} notifications={notifications} />
 
         <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
           <Card className="p-5">

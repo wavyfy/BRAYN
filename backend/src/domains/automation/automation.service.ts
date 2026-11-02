@@ -4,7 +4,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { automationDefinitions } from '../../database/schema/automation-definitions';
 import { automationRuns } from '../../database/schema/automation-runs';
 import { DatabaseService } from '../../database/database.service';
-import { DuplicateActionRequestError, NotFoundError } from '../../common/errors/app-error';
+import { DuplicateActionRequestError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import type { DomainEvent } from '../../common/events/domain-event';
 import { AiActionControlService } from '../ai-action-control/ai-action-control.service';
@@ -23,9 +23,9 @@ interface AutomationConditions {
 }
 
 /**
- * Business Action Automation (doc16; doc19 Phase 15). Phase 1 wires
- * exactly one trigger → action pair — see automation-definitions
- * schema's doc comment for why. This part deliberately omits:
+ * Business Action Automation (doc16; doc19 Phase 15). Two trigger types
+ * and two actions — see automation-definitions schema's doc comment for
+ * the allowed pairs. This part deliberately omits:
  *
  * - Scheduling/delay (doc19 item 5) — no automation here needs a delay;
  *   adding a scheduler before anything uses it is speculative (doc18).
@@ -62,6 +62,11 @@ export class AutomationService {
   ) {}
 
   async create(workspaceId: string, input: CreateAutomationInput) {
+    const triggerType = input.triggerType ?? 'revenue_opportunity.created';
+    // Same rule as createAutomationSchema's refine, for callers that bypass the HTTP boundary.
+    if (input.actionType === 'internal_notification.create' && triggerType !== 'revenue_opportunity.created') {
+      throw new ValidationError('Internal notifications can only be triggered by a new revenue opportunity.');
+    }
     const [automation] = await this.database.client
       .insert(automationDefinitions)
       .values({
@@ -70,9 +75,9 @@ export class AutomationService {
         // Zod's `.default('revenue_opportunity.created')` on createAutomationSchema only applies
         // during ZodValidationPipe's parse — a direct service call (as tests do) bypasses that, so
         // this mirrors the same default here rather than depending on the HTTP boundary having run.
-        triggerType: input.triggerType ?? 'revenue_opportunity.created',
+        triggerType,
         conditions: input.conditions ?? null,
-        actionType: 'generate_recommendations',
+        actionType: input.actionType ?? 'generate_recommendations',
       })
       .returning();
 
@@ -122,7 +127,7 @@ export class AutomationService {
   async handleRevenueOpportunityCreated(event: DomainEvent<RevenueOpportunityCreatedPayload>): Promise<void> {
     if (!event.workspaceId) return;
     const workspaceId = event.workspaceId;
-    const { canonicalCustomerId } = event.payload;
+    const { canonicalCustomerId, opportunityId } = event.payload;
 
     const definitions = await this.database.client
       .select()
@@ -138,7 +143,7 @@ export class AutomationService {
     for (const definition of definitions) {
       try {
         const matched = matchesConditions(definition.conditions as AutomationConditions | null, event.payload);
-        await this.runOne(workspaceId, canonicalCustomerId, definition, event.id, matched, 'Conditions did not match this opportunity.');
+        await this.runOne(workspaceId, canonicalCustomerId, definition, event.id, matched, 'Conditions did not match this opportunity.', opportunityId);
       } catch (error) {
         // A run failure is this automation's own concern (recorded below) — it must never
         // propagate back into the detect() call that emitted this event (doc07 tenant/
@@ -179,7 +184,7 @@ export class AutomationService {
     for (const definition of definitions) {
       try {
         const matched = matchesHealthConditions();
-        await this.runOne(workspaceId, canonicalCustomerId, definition, event.id, matched, 'Conditions did not match this health recalculation.');
+        await this.runOne(workspaceId, canonicalCustomerId, definition, event.id, matched, 'Conditions did not match this health recalculation.', null);
       } catch (error) {
         this.logger.event('error', `Automation ${definition.id} run threw unexpectedly`, 'AutomationService', {
           automationId: definition.id,
@@ -193,6 +198,7 @@ export class AutomationService {
    * Shared by both trigger handlers — condition-matching is computed by
    * the caller (each trigger's payload shape differs), this only owns
    * the skip/execute/record mechanics common to every trigger type.
+   * `opportunityId` is the triggering opportunity (null for health triggers).
    */
   private async runOne(
     workspaceId: string,
@@ -201,6 +207,7 @@ export class AutomationService {
     triggerEventId: string,
     conditionsMatched: boolean,
     skipReason: string,
+    opportunityId: string | null,
   ): Promise<void> {
     if (!conditionsMatched) {
       await this.database.client.insert(automationRuns).values({
@@ -220,20 +227,14 @@ export class AutomationService {
       // of the same event to the same automation reuses this key and is safely de-duped;
       // a different event or automation gets its own.
       const idempotencyKey = `${definition.id}:${triggerEventId}`;
-      const recommendations = await this.aiActionControl.executeForAutomation(
-        this.registry.generateRecommendations,
-        {},
-        { workspaceId, customerId: canonicalCustomerId },
-        idempotencyKey,
-        triggerEventId,
-      );
+      const result = await this.executeAction(definition.actionType, { workspaceId, customerId: canonicalCustomerId }, opportunityId, idempotencyKey, triggerEventId);
       await this.database.client.insert(automationRuns).values({
         workspaceId,
         automationId: definition.id,
         canonicalCustomerId,
         triggerEventId,
         status: 'succeeded',
-        result: { recommendationsCount: recommendations.length },
+        result,
       });
     } catch (error) {
       // Idempotency already processed this automation + trigger event: nothing ran, so it's skipped, not failed.
@@ -247,6 +248,33 @@ export class AutomationService {
         reason: duplicate ? DUPLICATE_TRIGGER_REASON : error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  /**
+   * Dispatches on the definition's `actionType`. Action input is built here from the server-emitted
+   * trigger event only — never from AI or client input (#9 decision, Nov 2, 2026).
+   */
+  private async executeAction(
+    actionType: (typeof automationDefinitions.$inferSelect)['actionType'],
+    context: { workspaceId: string; customerId: string },
+    opportunityId: string | null,
+    idempotencyKey: string,
+    triggerEventId: string,
+  ): Promise<Record<string, unknown>> {
+    if (actionType === 'internal_notification.create') {
+      // Create-time validation rejects any other trigger for this action; this guards rows written before it.
+      if (!opportunityId) throw new Error('internal_notification.create requires a revenue_opportunity.created trigger.');
+      const notification = await this.aiActionControl.executeForAutomation(
+        this.registry.internalNotificationCreate,
+        { opportunityId },
+        context,
+        idempotencyKey,
+        triggerEventId,
+      );
+      return { notificationId: notification.id };
+    }
+    const recommendations = await this.aiActionControl.executeForAutomation(this.registry.generateRecommendations, {}, context, idempotencyKey, triggerEventId);
+    return { recommendationsCount: recommendations.length };
   }
 
   private async requireAutomation(workspaceId: string, automationId: string) {

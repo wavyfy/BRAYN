@@ -17,7 +17,7 @@ type Automation = {
   enabled: boolean;
   conditions: { priorityIn?: string[]; typeIn?: string[] } | null;
 };
-type AutomationRun = { id: string; status: 'skipped' | 'succeeded' | 'failed'; reason: string | null; result: { recommendationsCount?: number } | null; createdAt: string };
+type AutomationRun = { id: string; status: 'skipped' | 'succeeded' | 'failed'; reason: string | null; result: { recommendationsCount?: number; notificationId?: string } | null; createdAt: string };
 type WorkspaceSummary = { id: string; name: string; role: string };
 
 const runTone: Record<AutomationRun['status'], BadgeTone> = {
@@ -122,6 +122,7 @@ export default async function AutomationDetailPage({ params }: { params: { works
                       <td className="px-4 py-2.5 text-foreground/80">
                         {run.reason && <span>{run.reason}</span>}
                         {run.result?.recommendationsCount !== undefined && <span>{run.result.recommendationsCount} recommendation(s) generated</span>}
+                        {run.result?.notificationId !== undefined && <span>Internal notification created</span>}
                       </td>
                       <td className="px-4 py-2.5 text-right text-muted-foreground">{formatDateTime(run.createdAt)}</td>
                     </tr>

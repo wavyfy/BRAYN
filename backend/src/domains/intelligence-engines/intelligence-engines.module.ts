@@ -9,6 +9,8 @@ import { RecommendationService } from './recommendation.service';
 import { RecommendationController } from './recommendation.controller';
 import { IntelligenceDailyRunService } from './intelligence-daily-run.service';
 import { IntelligenceDailyRunController } from './intelligence-daily-run.controller';
+import { InternalNotificationService } from './internal-notification.service';
+import { InternalNotificationController } from './internal-notification.controller';
 import { InternalCronGuard } from '../../common/auth/internal-cron.guard';
 
 /**
@@ -23,6 +25,8 @@ import { InternalCronGuard } from '../../common/auth/internal-cron.guard';
  * see RevenueOpportunityService's doc comment for the rest. Recommendations:
  * generated 1:1 from open Revenue Opportunities — see recommendations
  * schema's doc comment for why the other doc10 inputs aren't available yet.
+ * Internal notifications: one per opportunity, created only by the
+ * automation action `internal_notification.create` (InternalNotificationService).
  * Daily run: IntelligenceDailyRunService, called by the external scheduler
  * through the internal endpoint (Milestone #5 D2).
  *
@@ -33,8 +37,8 @@ import { InternalCronGuard } from '../../common/auth/internal-cron.guard';
  */
 @Module({
   imports: [WorkspaceModule, CustomerIntelligenceModule],
-  controllers: [CustomerHealthController, RevenueOpportunityController, RecommendationController, IntelligenceDailyRunController],
-  providers: [CustomerHealthService, RevenueOpportunityService, RecommendationService, IntelligenceDailyRunService, InternalCronGuard],
-  exports: [CustomerHealthService, RevenueOpportunityService, RecommendationService],
+  controllers: [CustomerHealthController, RevenueOpportunityController, RecommendationController, IntelligenceDailyRunController, InternalNotificationController],
+  providers: [CustomerHealthService, RevenueOpportunityService, RecommendationService, IntelligenceDailyRunService, InternalNotificationService, InternalCronGuard],
+  exports: [CustomerHealthService, RevenueOpportunityService, RecommendationService, InternalNotificationService],
 })
 export class IntelligenceEnginesModule {}
