@@ -142,3 +142,16 @@ describe('internal_notification.create definition (#9, Nov 2, 2026)', () => {
     expect(internalNotificationCreate.summarizeResult!(result)).toEqual({ notificationId: 'notif_1', created: true });
   });
 });
+
+describe('retrySafe (doc16 retry decision, Nov 2, 2026)', () => {
+  it('is true only for the two idempotent automation actions', () => {
+    const registry = buildActionRegistry(makeRecommendationService(), {} as OrderService, {} as InternalNotificationService);
+    expect(Object.fromEntries(Object.values(registry).map((definition) => [definition.name, definition.retrySafe]))).toEqual({
+      'recommendation.dismiss': false,
+      'recommendation.complete': false,
+      generate_recommendations: true,
+      'order.refund_request': false,
+      'internal_notification.create': true,
+    });
+  });
+});

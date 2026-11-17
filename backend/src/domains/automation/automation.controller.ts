@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, UseGuards } from '@nestjs/common';
 import { ZodValidationPipe } from '../../common/api/zod-validation.pipe';
 import { WorkspaceMembershipGuard } from '../workspace/workspace-membership.guard';
 import { RequireWorkspaceRole } from '../workspace/require-workspace-role.decorator';
@@ -52,5 +52,16 @@ export class AutomationController {
   @RequireWorkspaceRole('owner', 'admin', 'marketing', 'analyst')
   async listRuns(@Param('workspaceId') workspaceId: string, @Param('automationId') automationId: string) {
     return this.automationService.listRuns(workspaceId, automationId);
+  }
+
+  /** Manual retry of a failed run (doc16 decision, Nov 2, 2026) — same roles that manage automations (doc28). Returns the new run. */
+  @Post(':automationId/runs/:runId/retry')
+  @RequireWorkspaceRole('owner', 'admin', 'marketing')
+  async retryRun(
+    @Param('workspaceId') workspaceId: string,
+    @Param('automationId', new ParseUUIDPipe()) automationId: string,
+    @Param('runId', new ParseUUIDPipe()) runId: string,
+  ) {
+    return this.automationService.retryRun(workspaceId, automationId, runId);
   }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AutomationService, DUPLICATE_TRIGGER_REASON } from './automation.service';
-import { ConflictError, DuplicateActionRequestError, ValidationError } from '../../common/errors/app-error';
+import { ConflictError, DuplicateActionRequestError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 import type { DatabaseService } from '../../database/database.service';
 import type { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import type { AiActionControlService } from '../ai-action-control/ai-action-control.service';
@@ -608,5 +608,180 @@ describe('AutomationService', () => {
         expect.objectContaining({ automationId: 'auto_health_1' }),
       );
     });
+  });
+});
+
+describe('AutomationService retry (doc16 retry decision, Nov 2, 2026)', () => {
+  const automation = { id: 'auto_n', workspaceId: 'ws_1', actionType: 'internal_notification.create' };
+  const failedRun = {
+    id: 'run_1',
+    workspaceId: 'ws_1',
+    automationId: 'auto_n',
+    canonicalCustomerId: 'canon_1',
+    triggerEventId: 'evt_1',
+    status: 'failed',
+    reason: 'connection reset',
+    result: { retryable: true },
+    actionInput: { opportunityId: 'opp_1' },
+    retryOfRunId: null,
+  };
+  function retryRegistry(): ActionRegistry {
+    return {
+      generateRecommendations: { name: 'generate_recommendations', retrySafe: true },
+      internalNotificationCreate: { name: 'internal_notification.create', retrySafe: true },
+    } as unknown as ActionRegistry;
+  }
+  function makeRetryService(run: unknown, executeForAutomation: (...args: unknown[]) => Promise<unknown>, registry = retryRegistry()) {
+    const insertChain = makeInsertChain({ id: 'run_2' });
+    const insert = vi.fn(() => insertChain);
+    const aiActionControl = makeAiActionControl({ executeForAutomation: vi.fn(executeForAutomation) });
+    const service = new AutomationService(
+      { client: { select: makeSelectQueue([[automation], run ? [run] : []]), insert } } as unknown as DatabaseService,
+      aiActionControl,
+      registry,
+      makeLogger(),
+    );
+    return { service, insertChain, insert, aiActionControl, registry };
+  }
+
+  it('records a failed run as retryable with its action input, and a permanent failure as not retryable', async () => {
+    for (const [error, retryable] of [
+      [new Error('connection reset'), true],
+      [new ValidationError('bad input'), false],
+    ] as const) {
+      const insertChain = makeInsertChain();
+      const service = new AutomationService(
+        {
+          client: {
+            select: makeSelectQueue([[{ id: 'auto_n', conditions: null, actionType: 'internal_notification.create' }]]),
+            insert: vi.fn(() => insertChain),
+          },
+        } as unknown as DatabaseService,
+        makeAiActionControl({
+          executeForAutomation: vi.fn(async () => {
+            throw error;
+          }),
+        }),
+        retryRegistry(),
+        makeLogger(),
+      );
+
+      await service.handleRevenueOpportunityCreated(makeEvent({ opportunityId: 'opp_1' }));
+
+      expect(insertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'failed', result: { retryable }, actionInput: { opportunityId: 'opp_1' } }),
+      );
+    }
+  });
+
+  it('re-executes the stored input under the same key and records a new linked succeeded run', async () => {
+    const { service, insertChain, aiActionControl, registry } = makeRetryService(failedRun, async () => ({ id: 'notif_1', created: true }));
+
+    await expect(service.retryRun('ws_1', 'auto_n', 'run_1')).resolves.toEqual({ id: 'run_2' });
+
+    expect(aiActionControl.executeForAutomation).toHaveBeenCalledWith(
+      registry.internalNotificationCreate,
+      { opportunityId: 'opp_1' },
+      { workspaceId: 'ws_1', customerId: 'canon_1' },
+      'auto_n:evt_1',
+      'evt_1',
+    );
+    expect(insertChain.values).toHaveBeenCalledWith({
+      workspaceId: 'ws_1',
+      automationId: 'auto_n',
+      canonicalCustomerId: 'canon_1',
+      triggerEventId: 'evt_1',
+      actionInput: { opportunityId: 'opp_1' },
+      retryOfRunId: 'run_1',
+      status: 'succeeded',
+      result: { notificationId: 'notif_1' },
+    });
+  });
+
+  it('records a failed retry as a new linked failed run that stays retryable', async () => {
+    const { service, insertChain } = makeRetryService(failedRun, async () => {
+      throw new Error('connection reset again');
+    });
+
+    await service.retryRun('ws_1', 'auto_n', 'run_1');
+
+    expect(insertChain.values).toHaveBeenCalledWith(
+      expect.objectContaining({ retryOfRunId: 'run_1', status: 'failed', reason: 'connection reset again', result: { retryable: true } }),
+    );
+  });
+
+  it('turns an already-completed trigger into a 409 and records nothing', async () => {
+    const { service, insert } = makeRetryService(failedRun, async () => {
+      throw new DuplicateActionRequestError('dup');
+    });
+
+    const retry = service.retryRun('ws_1', 'auto_n', 'run_1');
+    await expect(retry).rejects.toBeInstanceOf(ConflictError);
+    await expect(retry).rejects.toThrow('already been executed successfully');
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it('passes an "already running" conflict through and records nothing', async () => {
+    const running = new ConflictError('This action is already running for the same idempotency key.');
+    const { service, insert } = makeRetryService(failedRun, async () => {
+      throw running;
+    });
+
+    await expect(service.retryRun('ws_1', 'auto_n', 'run_1')).rejects.toBe(running);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a succeeded run', { ...failedRun, status: 'succeeded' }, 'Only a failed run can be retried.'],
+    ['a skipped run', { ...failedRun, status: 'skipped' }, 'Only a failed run can be retried.'],
+    ['a permanent failure', { ...failedRun, result: { retryable: false } }, 'failed permanently'],
+    ['a run recorded without action input', { ...failedRun, actionInput: null }, 'failed permanently'],
+  ])('refuses %s with 409 without executing', async (_label, run, message) => {
+    const { service, aiActionControl } = makeRetryService(run, async () => ({}));
+
+    const retry = service.retryRun('ws_1', 'auto_n', 'run_1');
+    await expect(retry).rejects.toBeInstanceOf(ConflictError);
+    await expect(retry).rejects.toThrow(message);
+    expect(aiActionControl.executeForAutomation).not.toHaveBeenCalled();
+  });
+
+  it('refuses a non-retry-safe action with 409 without executing', async () => {
+    const registry = {
+      generateRecommendations: { name: 'generate_recommendations', retrySafe: true },
+      internalNotificationCreate: { name: 'internal_notification.create', retrySafe: false },
+    } as unknown as ActionRegistry;
+    const { service, aiActionControl } = makeRetryService(failedRun, async () => ({}), registry);
+
+    const retry = service.retryRun('ws_1', 'auto_n', 'run_1');
+    await expect(retry).rejects.toBeInstanceOf(ConflictError);
+    await expect(retry).rejects.toThrow('be retried safely');
+    expect(aiActionControl.executeForAutomation).not.toHaveBeenCalled();
+  });
+
+  it('404s a run that does not belong to this automation/workspace', async () => {
+    const { service } = makeRetryService(null, async () => ({}));
+
+    await expect(service.retryRun('ws_1', 'auto_n', 'run_x')).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it('listRuns marks only a failed, retryable, not-yet-retried run of a trigger that has not since succeeded', async () => {
+    const runs = [
+      { ...failedRun, id: 'a', triggerEventId: 'e1' },
+      { ...failedRun, id: 'b', triggerEventId: 'e2' },
+      { ...failedRun, id: 'c', triggerEventId: 'e2', retryOfRunId: 'b' },
+      { ...failedRun, id: 'd', triggerEventId: 'e3' },
+      { ...failedRun, id: 'e', triggerEventId: 'e3', status: 'succeeded', retryOfRunId: 'd', result: { notificationId: 'n' } },
+      { ...failedRun, id: 'f', triggerEventId: 'e4', result: { retryable: false } },
+    ];
+    const service = new AutomationService(
+      { client: { select: makeSelectQueue([[automation], runs]) } } as unknown as DatabaseService,
+      makeAiActionControl(),
+      retryRegistry(),
+      makeLogger(),
+    );
+
+    const listed = await service.listRuns('ws_1', 'auto_n');
+
+    expect(Object.fromEntries(listed.map((run) => [run.id, run.retryable]))).toEqual({ a: true, b: false, c: true, d: false, e: false, f: false });
   });
 });

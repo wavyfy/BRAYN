@@ -16,8 +16,8 @@ export interface ReserveOptions {
    * When set, a `pending` reservation older than this is treated as
    * abandoned (its holder crashed before `complete()`/`fail()`) and can be
    * reclaimed. Omitted → a `pending` key is never reclaimed, only a
-   * `failed` one (AiActionControlService relies on this: a failed action's
-   * key deliberately stays blocked).
+   * `failed` one (AiActionControlService relies on this: a failed
+   * non-retry-safe action's key deliberately stays blocked).
    */
   leaseMs?: number;
 }
