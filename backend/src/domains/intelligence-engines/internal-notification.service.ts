@@ -3,7 +3,8 @@ import { and, count, desc, eq } from 'drizzle-orm';
 import { internalNotifications } from '../../database/schema/internal-notifications';
 import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
 import { DatabaseService } from '../../database/database.service';
-import { NotFoundError } from '../../common/errors/app-error';
+import { NotFoundError, ValidationError } from '../../common/errors/app-error';
+import { TERMINAL_STATUSES } from './revenue-opportunity.service';
 
 /** Dashboard "Important pending actions" shows the newest 10 (doc24); the API never returns more than this per request. */
 export const DEFAULT_NOTIFICATIONS_LIMIT = 10;
@@ -23,11 +24,14 @@ export class InternalNotificationService {
   /**
    * One notification per opportunity: a second automation firing for the
    * same opportunity gets the existing notification's id back, not a new row.
-   * The opportunity must belong to this workspace and customer.
+   * The opportunity must belong to this workspace and customer, and still be
+   * open: a replay or manual retry after it closed must not put a closed
+   * opportunity back in front of the merchant (doc10 — closed opportunities
+   * don't reappear), so that is a permanent (non-retryable) failure.
    */
   async createForOpportunity(workspaceId: string, canonicalCustomerId: string, opportunityId: string): Promise<{ id: string; created: boolean }> {
     const [opportunity] = await this.database.client
-      .select({ id: revenueOpportunities.id })
+      .select({ id: revenueOpportunities.id, status: revenueOpportunities.status })
       .from(revenueOpportunities)
       .where(
         and(
@@ -39,6 +43,9 @@ export class InternalNotificationService {
       .limit(1);
     if (!opportunity) {
       throw new NotFoundError('No opportunity with that id exists for this customer.');
+    }
+    if ((TERMINAL_STATUSES as readonly string[]).includes(opportunity.status)) {
+      throw new ValidationError(`This opportunity is no longer open (${opportunity.status}).`);
     }
 
     const [inserted] = await this.database.client
