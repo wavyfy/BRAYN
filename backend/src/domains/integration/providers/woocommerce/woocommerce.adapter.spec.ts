@@ -572,6 +572,47 @@ describe('WooCommerceAdapter', () => {
       expect(parse('processing')?.payload).toMatchObject({ data: { sourceCancelledAt: null } });
     });
 
+    it('normalizes the embedded refund summary: id, reason, positive amount; no invented date or line items', () => {
+      const adapter = new WooCommerceAdapter(makeRegistry());
+      const rawBody = JSON.stringify({
+        id: 902,
+        customer_id: 1,
+        total: '50.00',
+        date_modified_gmt: '2026-01-03T00:00:00',
+        line_items: [],
+        // Shapes from WooCommerce's REST v3 docs: "Order - Refunds properties" (reason) and the list example (refund).
+        refunds: [
+          { id: 726, reason: 'Damaged', total: '-10.00' },
+          { id: 724, refund: '', total: '-9.00' },
+        ],
+      });
+
+      const result = adapter.parseWebhookEvent(rawBody, { 'x-wc-webhook-topic': 'order.updated', 'x-wc-webhook-delivery-id': 'wh_evt_refund' });
+
+      expect(result?.payload).toMatchObject({
+        data: {
+          refunds: [
+            { externalId: '726', note: 'Damaged', totalRefunded: '10.00', processedAt: null, lineItems: [] },
+            { externalId: '724', note: null, totalRefunded: '9.00', processedAt: null, lineItems: [] },
+          ],
+        },
+      });
+    });
+
+    it('keeps an order without a refunds array as no refunds, and a null refund total as null', () => {
+      const adapter = new WooCommerceAdapter(makeRegistry());
+      const parse = (extra: object) =>
+        adapter.parseWebhookEvent(JSON.stringify({ id: 903, customer_id: 1, total: '5.00', line_items: [], ...extra }), {
+          'x-wc-webhook-topic': 'order.updated',
+          'x-wc-webhook-delivery-id': `wh_evt_${JSON.stringify(extra)}`,
+        });
+
+      expect(parse({})?.payload).toMatchObject({ data: { refunds: [] } });
+      expect(parse({ refunds: [{ id: 1, reason: null, total: null }] })?.payload).toMatchObject({
+        data: { refunds: [{ externalId: '1', note: null, totalRefunded: null }] },
+      });
+    });
+
     it('returns null for an unrecognized topic (e.g. a delete event) — doc 21 "process only relevant events"', () => {
       const adapter = new WooCommerceAdapter(makeRegistry());
 

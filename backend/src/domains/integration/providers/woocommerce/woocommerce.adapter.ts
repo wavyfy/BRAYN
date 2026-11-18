@@ -13,7 +13,7 @@ import type {
 } from '../../provider-adapter.interface';
 import type { NormalizedCustomer } from '../../../commerce/customer.service';
 import type { NormalizedProduct } from '../../../commerce/product.service';
-import type { NormalizedOrder } from '../../../commerce/order.service';
+import type { NormalizedOrder, NormalizedRefund } from '../../../commerce/order.service';
 
 const WC_API_PATH = 'wp-json/wc/v3';
 const CUSTOMERS_PAGE_SIZE = 100;
@@ -48,6 +48,19 @@ interface WooCommerceLineItem {
   price: string | null;
 }
 
+/**
+ * An order's embedded refund summary (WooCommerce REST v3 "Order - Refunds properties": `id`, `reason`, `total`,
+ * all read-only). `total` is negative (e.g. "-10.00"). No date and no line items here — those exist only at
+ * `/orders/<id>/refunds`, which BRAYN does not call (Stage 10 decision: summary-only, no extra API calls). The
+ * docs' own list example shows the reason under `refund` instead of `reason`, so both are read.
+ */
+interface WooCommerceRefundSummary {
+  id: number;
+  reason?: string | null;
+  refund?: string | null;
+  total: string | null;
+}
+
 interface WooCommerceOrder {
   id: number;
   /** 0 for a guest checkout (WooCommerce convention) — never null/absent. */
@@ -59,6 +72,8 @@ interface WooCommerceOrder {
   /** e.g. `processing`, `completed`, `cancelled`. Optional so payloads/fixtures without it read as not cancelled. */
   status?: string;
   line_items: WooCommerceLineItem[];
+  /** Absent in older fixtures/payloads — read as no refunds. */
+  refunds?: WooCommerceRefundSummary[];
 }
 
 /**
@@ -465,8 +480,23 @@ function normalizeOrder(order: WooCommerceOrder): NormalizedOrder {
       quantity: item.quantity,
       price: item.price,
     })),
-    refunds: [],
+    refunds: (order.refunds ?? []).map(normalizeRefund),
     fulfillments: [],
+  };
+}
+
+/**
+ * Summary-only refund: `processedAt` stays null and `lineItems` empty — WooCommerce's order summary carries neither,
+ * and nothing is invented in their place. `totalRefunded` is stored positive (BRAYN's refund amount; WooCommerce
+ * reports it negative), as the provider's own decimal string.
+ */
+function normalizeRefund(refund: WooCommerceRefundSummary): NormalizedRefund {
+  return {
+    externalId: String(refund.id),
+    note: (refund.reason ?? refund.refund) || null,
+    totalRefunded: refund.total === null ? null : refund.total.trim().replace(/^-/, ''),
+    processedAt: null,
+    lineItems: [],
   };
 }
 
