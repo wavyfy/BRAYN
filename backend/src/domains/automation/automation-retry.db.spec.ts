@@ -189,6 +189,19 @@ describe('Automation manual retry (real DB)', { timeout: 180_000 }, () => {
     expect(await runsOf(automation.id)).toHaveLength(1);
   });
 
+  it('a retry after the opportunity closed creates no notification and is a permanent failure', async () => {
+    const { opportunity, automation, event } = await seed('internal_notification.create');
+    await failOnce(event);
+    const [failed] = await runsOf(automation.id);
+    await db.client.update(revenueOpportunities).set({ status: 'converted', closedAt: new Date(), closedReason: 'converted_by_order' }).where(eq(revenueOpportunities.id, opportunity.id));
+
+    const retried = await automations.retryRun(wsA, automation.id, failed.id);
+
+    expect(retried).toMatchObject({ status: 'failed', retryOfRunId: failed.id, reason: 'This opportunity is no longer open (converted).', result: { retryable: false } });
+    expect(await notificationsFor(opportunity.id)).toHaveLength(0);
+    await expect(automations.retryRun(wsA, automation.id, retried.id)).rejects.toThrow('failed permanently');
+  });
+
   it('isolation: another workspace or another automation cannot retry the run', async () => {
     const { automation, event } = await seed('internal_notification.create');
     await failOnce(event);
