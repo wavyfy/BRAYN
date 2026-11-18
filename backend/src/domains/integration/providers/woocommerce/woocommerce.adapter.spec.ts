@@ -1,6 +1,6 @@
 import { createHash, createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { WooCommerceAdapter } from './woocommerce.adapter';
+import { WooCommerceAdapter, isSameWooCommerceStore } from './woocommerce.adapter';
 import type { ProviderRegistry } from '../../provider-registry.service';
 
 function sign(rawBody: string, secret: string) {
@@ -572,6 +572,47 @@ describe('WooCommerceAdapter', () => {
       expect(parse('processing')?.payload).toMatchObject({ data: { sourceCancelledAt: null } });
     });
 
+    it('normalizes the embedded refund summary: id, reason, positive amount; no invented date or line items', () => {
+      const adapter = new WooCommerceAdapter(makeRegistry());
+      const rawBody = JSON.stringify({
+        id: 902,
+        customer_id: 1,
+        total: '50.00',
+        date_modified_gmt: '2026-01-03T00:00:00',
+        line_items: [],
+        // Shapes from WooCommerce's REST v3 docs: "Order - Refunds properties" (reason) and the list example (refund).
+        refunds: [
+          { id: 726, reason: 'Damaged', total: '-10.00' },
+          { id: 724, refund: '', total: '-9.00' },
+        ],
+      });
+
+      const result = adapter.parseWebhookEvent(rawBody, { 'x-wc-webhook-topic': 'order.updated', 'x-wc-webhook-delivery-id': 'wh_evt_refund' });
+
+      expect(result?.payload).toMatchObject({
+        data: {
+          refunds: [
+            { externalId: '726', note: 'Damaged', totalRefunded: '10.00', processedAt: null, lineItems: [] },
+            { externalId: '724', note: null, totalRefunded: '9.00', processedAt: null, lineItems: [] },
+          ],
+        },
+      });
+    });
+
+    it('keeps an order without a refunds array as no refunds, and a null refund total as null', () => {
+      const adapter = new WooCommerceAdapter(makeRegistry());
+      const parse = (extra: object) =>
+        adapter.parseWebhookEvent(JSON.stringify({ id: 903, customer_id: 1, total: '5.00', line_items: [], ...extra }), {
+          'x-wc-webhook-topic': 'order.updated',
+          'x-wc-webhook-delivery-id': `wh_evt_${JSON.stringify(extra)}`,
+        });
+
+      expect(parse({})?.payload).toMatchObject({ data: { refunds: [] } });
+      expect(parse({ refunds: [{ id: 1, reason: null, total: null }] })?.payload).toMatchObject({
+        data: { refunds: [{ externalId: '1', note: null, totalRefunded: null }] },
+      });
+    });
+
     it('returns null for an unrecognized topic (e.g. a delete event) — doc 21 "process only relevant events"', () => {
       const adapter = new WooCommerceAdapter(makeRegistry());
 
@@ -591,5 +632,61 @@ describe('WooCommerceAdapter', () => {
 
       expect(adapter.parseWebhookEvent('not json', { 'x-wc-webhook-topic': 'customer.updated' })).toBeNull();
     });
+  });
+});
+
+describe('isSameWooCommerceStore', () => {
+  it.each([
+    ['https://Shop.Example.com', 'https://shop.example.com', 'hostname case'],
+    ['https://shop.example.com/', 'https://shop.example.com', 'trailing slash'],
+    ['https://shop.example.com:443', 'https://shop.example.com', 'default HTTPS port'],
+    ['https://shop.example.com/store/', 'https://shop.example.com/store', 'subpath trailing slash'],
+    [' https://shop.example.com ', 'https://shop.example.com', 'surrounding whitespace'],
+    ['https://shop.example.com/?a=1#x', 'https://shop.example.com', 'query and fragment'],
+  ])('treats %s and %s as the same store (%s)', (a, b) => {
+    expect(isSameWooCommerceStore(a, b)).toBe(true);
+  });
+
+  it.each([
+    ['https://shop.example.com', 'https://other.example.com', 'different host'],
+    ['https://shop.example.com', 'https://www.shop.example.com', 'www is a different host'],
+    ['https://shop.example.com:8443', 'https://shop.example.com', 'non-default port'],
+    ['https://shop.example.com/store', 'https://shop.example.com', 'different subpath'],
+    ['https://shop.example.com/Store', 'https://shop.example.com/store', 'path case'],
+    ['http://shop.example.com', 'http://shop.example.com', 'not HTTPS'],
+    ['not a url', 'not a url', 'unparseable'],
+    [undefined, 'https://shop.example.com', 'missing'],
+  ] as Array<[string | undefined, string, string]>)('treats %s and %s as different stores (%s)', (a, b) => {
+    expect(isSameWooCommerceStore(a, b)).toBe(false);
+  });
+});
+
+describe('WooCommerceAdapter.mergeReconnectCredentials()', () => {
+  const adapter = new WooCommerceAdapter(makeRegistry());
+  const previous = { storeUrl: 'https://shop.example.com', consumerKey: 'ck_old', consumerSecret: 'cs_old', webhookSecret: 'whsec_1' };
+
+  it('keeps the webhook secret when the new keys are for the same store', () => {
+    expect(adapter.mergeReconnectCredentials(previous, { storeUrl: 'https://SHOP.example.com/', consumerKey: 'ck_new', consumerSecret: 'cs_new' })).toEqual({
+      storeUrl: 'https://SHOP.example.com/',
+      consumerKey: 'ck_new',
+      consumerSecret: 'cs_new',
+      webhookSecret: 'whsec_1',
+    });
+  });
+
+  it('drops the webhook secret for a different store', () => {
+    const next = { storeUrl: 'https://other.example.com', consumerKey: 'ck_new', consumerSecret: 'cs_new' };
+    expect(adapter.mergeReconnectCredentials(previous, next)).toEqual(next);
+  });
+
+  it('stores the new keys unchanged on a first connect or when no secret existed', () => {
+    const next = { storeUrl: 'https://shop.example.com', consumerKey: 'ck_new', consumerSecret: 'cs_new' };
+    expect(adapter.mergeReconnectCredentials(null, next)).toEqual(next);
+    expect(adapter.mergeReconnectCredentials({ ...previous, webhookSecret: '' }, next)).toEqual(next);
+  });
+
+  it('lets an explicitly supplied secret win', () => {
+    const next = { storeUrl: 'https://shop.example.com', consumerKey: 'ck', consumerSecret: 'cs', webhookSecret: 'whsec_explicit' };
+    expect(adapter.mergeReconnectCredentials(previous, next)).toEqual(next);
   });
 });

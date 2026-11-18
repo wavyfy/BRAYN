@@ -13,7 +13,7 @@ import type {
 } from '../../provider-adapter.interface';
 import type { NormalizedCustomer } from '../../../commerce/customer.service';
 import type { NormalizedProduct } from '../../../commerce/product.service';
-import type { NormalizedOrder } from '../../../commerce/order.service';
+import type { NormalizedOrder, NormalizedRefund } from '../../../commerce/order.service';
 
 const WC_API_PATH = 'wp-json/wc/v3';
 const CUSTOMERS_PAGE_SIZE = 100;
@@ -48,6 +48,19 @@ interface WooCommerceLineItem {
   price: string | null;
 }
 
+/**
+ * An order's embedded refund summary (WooCommerce REST v3 "Order - Refunds properties": `id`, `reason`, `total`,
+ * all read-only). `total` is negative (e.g. "-10.00"). No date and no line items here — those exist only at
+ * `/orders/<id>/refunds`, which BRAYN does not call (Stage 10 decision: summary-only, no extra API calls). The
+ * docs' own list example shows the reason under `refund` instead of `reason`, so both are read.
+ */
+interface WooCommerceRefundSummary {
+  id: number;
+  reason?: string | null;
+  refund?: string | null;
+  total: string | null;
+}
+
 interface WooCommerceOrder {
   id: number;
   /** 0 for a guest checkout (WooCommerce convention) — never null/absent. */
@@ -59,6 +72,8 @@ interface WooCommerceOrder {
   /** e.g. `processing`, `completed`, `cancelled`. Optional so payloads/fixtures without it read as not cancelled. */
   status?: string;
   line_items: WooCommerceLineItem[];
+  /** Absent in older fixtures/payloads — read as no refunds. */
+  refunds?: WooCommerceRefundSummary[];
 }
 
 /**
@@ -207,6 +222,19 @@ export class WooCommerceAdapter implements ProviderAdapter, OnModuleInit {
   }
 
   /**
+   * Stage 10 Slice 3 product rules: re-entering API keys for the **same store** keeps the webhook secret the merchant
+   * already pasted into their WooCommerce webhooks (otherwise every delivery would start failing); a **different
+   * store** (or an unparseable previous URL) drops it, so that store needs its own webhook setup. A secret explicitly
+   * supplied in `next` wins. Disconnect clears everything separately (IntegrationService.disconnect).
+   */
+  mergeReconnectCredentials(previous: Record<string, string> | null, next: Record<string, string>): Record<string, string> {
+    if (next.webhookSecret || !previous?.webhookSecret || !isSameWooCommerceStore(previous.storeUrl, next.storeUrl)) {
+      return next;
+    }
+    return { ...next, webhookSecret: previous.webhookSecret };
+  }
+
+  /**
    * Verifies WooCommerce's `X-WC-Webhook-Signature` header:
    * base64(HMAC-SHA256(rawBody, secret)) — same algorithm as Shopify's
    * own webhook signature, just a different header name. `secret` is
@@ -328,6 +356,27 @@ function parseStoreUrl(storeUrl: string): URL | null {
     return null;
   }
   return url;
+}
+
+/**
+ * Whether two stored store URLs point at the same WooCommerce store: HTTPS only, hostname compared
+ * case-insensitively (URL parsing lowercases it), default port 443 equal to no port, trailing slash ignored; the
+ * path (a WordPress subdirectory install) is compared exactly, and query/fragment are ignored. Anything unparseable
+ * or non-HTTPS is never "the same" — the safe outcome is a fresh webhook setup, never a reused secret.
+ */
+export function isSameWooCommerceStore(a: string | undefined, b: string | undefined): boolean {
+  const key = (value: string | undefined) => {
+    if (!value) return null;
+    let url: URL;
+    try {
+      url = new URL(value.trim());
+    } catch {
+      return null;
+    }
+    return url.protocol === 'https:' ? `${url.host}${trimTrailingSlash(url.pathname)}` : null;
+  };
+  const left = key(a);
+  return left !== null && left === key(b);
 }
 
 /** Joins the WooCommerce REST API path onto `baseUrl`, preserving any subpath the merchant's store runs under (e.g. `https://example.com/shop`). */
@@ -465,8 +514,23 @@ function normalizeOrder(order: WooCommerceOrder): NormalizedOrder {
       quantity: item.quantity,
       price: item.price,
     })),
-    refunds: [],
+    refunds: (order.refunds ?? []).map(normalizeRefund),
     fulfillments: [],
+  };
+}
+
+/**
+ * Summary-only refund: `processedAt` stays null and `lineItems` empty — WooCommerce's order summary carries neither,
+ * and nothing is invented in their place. `totalRefunded` is stored positive (BRAYN's refund amount; WooCommerce
+ * reports it negative), as the provider's own decimal string.
+ */
+function normalizeRefund(refund: WooCommerceRefundSummary): NormalizedRefund {
+  return {
+    externalId: String(refund.id),
+    note: (refund.reason ?? refund.refund) || null,
+    totalRefunded: refund.total === null ? null : refund.total.trim().replace(/^-/, ''),
+    processedAt: null,
+    lineItems: [],
   };
 }
 

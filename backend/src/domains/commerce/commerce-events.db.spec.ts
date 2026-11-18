@@ -23,6 +23,7 @@ import type { DomainEvent } from '../../common/events/domain-event';
 import { IntegrationService } from '../integration/integration.service';
 import { WebhookIngestService } from '../integration/webhook-ingest.service';
 import { WebhookEventProcessorService } from '../integration/webhook-event-processor.service';
+import { WooCommerceAdapter } from '../integration/providers/woocommerce/woocommerce.adapter';
 import { IdentityResolutionService } from '../identity-resolution/identity-resolution.service';
 import { CustomerIntelligenceService } from '../customer-intelligence/customer-intelligence.service';
 import { CustomerService } from './customer.service';
@@ -110,10 +111,10 @@ describe('Commerce domain events (real DB)', { timeout: 60_000 }, () => {
 
   /** Ingest with the wake-up dropped, so the test processes the row itself. Dropped by event type, not call order — a still-running health handler from a previous step may emit concurrently. */
   let suppressWake = false;
-  async function ingestWithoutWake(body: string, headers: Record<string, string>): Promise<string> {
+  async function ingestWithoutWake(body: string, headers: Record<string, string>, provider: 'shopify' | 'woocommerce' = 'shopify'): Promise<string> {
     suppressWake = true;
     try {
-      const result = await ingest.ingest(workspaceId, 'shopify', body, headers);
+      const result = await ingest.ingest(workspaceId, provider, body, headers);
       if (result.status !== 'accepted') throw new Error(`expected accepted, got ${result.status}`);
       return result.webhookEventId;
     } finally {
@@ -195,6 +196,12 @@ describe('Commerce domain events (real DB)', { timeout: 60_000 }, () => {
     await integrationService.setCredentials(workspaceId, 'shopify', {
       shopDomain: 'brayn-commerce-events-test.myshopify.com',
       accessToken: 'unused-in-this-test',
+      webhookSecret,
+    });
+    await integrationService.setCredentials(workspaceId, 'woocommerce', {
+      storeUrl: 'https://brayn-commerce-events-test.example.com',
+      consumerKey: 'unused-in-this-test',
+      consumerSecret: 'unused-in-this-test',
       webhookSecret,
     });
 
@@ -519,5 +526,82 @@ describe('Commerce domain events (real DB)', { timeout: 60_000 }, () => {
     for (const event of commerceEvents() as DomainEvent<OrderEventPayload>[]) {
       expect(event.payload).toMatchObject({ provider: 'woocommerce', orderExternalId: '300', canonicalCustomerId });
     }
+  });
+
+  describe('WooCommerce refund summaries (order-embedded, summary-only)', () => {
+    /** A REST-shaped WooCommerce order webhook body; `refunds` uses the documented summary shape (negative `total`). */
+    function wooOrderBody(id: number, dateModifiedGmt: string, refunds: Array<{ id: number; reason: string; total: string }> = []) {
+      return JSON.stringify({
+        id,
+        customer_id: Number(customerExternalId),
+        total: '20.00',
+        status: 'processing',
+        date_created_gmt: '2026-04-01T00:00:00',
+        date_modified_gmt: dateModifiedGmt,
+        line_items: [],
+        refunds,
+      });
+    }
+
+    async function deliverWoo(topic: 'order.created' | 'order.updated', body: string, deliveryId: string = randomUUID()) {
+      const headers = {
+        'x-wc-webhook-topic': topic,
+        'x-wc-webhook-signature': createHmac('sha256', webhookSecret).update(body, 'utf8').digest('base64'),
+        'x-wc-webhook-delivery-id': deliveryId,
+      };
+      const result = await ingestWithoutWake(body, headers, 'woocommerce');
+      await processor.processEvent(result);
+      return headers;
+    }
+
+    const wooOrderRow = async (externalId: string) =>
+      (
+        await db.client
+          .select()
+          .from(commerceOrders)
+          .where(and(eq(commerceOrders.workspaceId, workspaceId), eq(commerceOrders.provider, 'woocommerce'), eq(commerceOrders.externalId, externalId)))
+      )[0];
+    const wooRefunds = (orderId: string) => db.client.select().from(commerceRefunds).where(eq(commerceRefunds.orderId, orderId)).orderBy(commerceRefunds.externalId);
+
+    it('a refund arriving on order.updated emits refund.processed once, stores a positive amount with no date, and reduces the refundable amount', async () => {
+      await deliverWoo('order.created', wooOrderBody(400, '2026-04-01T00:00:00'));
+      emitted = [];
+
+      const refunded = wooOrderBody(400, '2026-04-02T00:00:00', [{ id: 4001, reason: 'Damaged', total: '-7.50' }]);
+      const headers = await deliverWoo('order.updated', refunded);
+
+      const refundEvents = ofType('refund.processed') as unknown as DomainEvent<RefundProcessedPayload>[];
+      expect(refundEvents).toHaveLength(1);
+      expect(refundEvents[0].payload).toMatchObject({ provider: 'woocommerce', orderExternalId: '400', refundExternalId: '4001', totalRefunded: '7.50', canonicalCustomerId });
+      const order = await wooOrderRow('400');
+      expect(await wooRefunds(order.id)).toEqual([expect.objectContaining({ externalId: '4001', note: 'Damaged', totalRefunded: '7.50', processedAt: null })]);
+      expect(await moduleRef.get(OrderService).findRefundableAmount(workspaceId, canonicalCustomerId, order.id)).toEqual({ amount: '12.50' });
+
+      // The same WooCommerce delivery again: deduplicated before processing, no second event.
+      emitted = [];
+      expect(await ingest.ingest(workspaceId, 'woocommerce', refunded, headers)).toEqual({ status: 'duplicate' });
+      expect(ofType('refund.processed')).toHaveLength(0);
+
+      // A later update carrying the old refund plus a new one: only the new refund is reported.
+      await deliverWoo('order.updated', wooOrderBody(400, '2026-04-03T00:00:00', [
+        { id: 4001, reason: 'Damaged', total: '-7.50' },
+        { id: 4002, reason: '', total: '-2.50' },
+      ]));
+      expect((ofType('refund.processed') as unknown as DomainEvent<RefundProcessedPayload>[]).map((event) => event.payload.refundExternalId)).toEqual(['4002']);
+      expect(await moduleRef.get(OrderService).findRefundableAmount(workspaceId, canonicalCustomerId, order.id)).toEqual({ amount: '10.00' });
+    });
+
+    it('a historical import of an already-refunded order stores the refund silently and still counts it against the refundable amount', async () => {
+      const adapterOrder = JSON.parse(wooOrderBody(401, '2026-04-05T00:00:00', [{ id: 4011, reason: 'Late', total: '-20.00' }])) as Record<string, unknown>;
+      const parsed = moduleRef.get(WooCommerceAdapter).parseWebhookEvent(JSON.stringify(adapterOrder), { 'x-wc-webhook-topic': 'order.created' });
+      const normalized = (parsed!.payload as { data: NormalizedOrder }).data;
+
+      await moduleRef.get(OrderService).upsertMany(workspaceId, integrationIds.woocommerce, 'woocommerce', [normalized]);
+
+      expect(ofType('refund.processed')).toHaveLength(0);
+      const order = await wooOrderRow('401');
+      expect(await wooRefunds(order.id)).toEqual([expect.objectContaining({ externalId: '4011', totalRefunded: '20.00', processedAt: null })]);
+      expect(await moduleRef.get(OrderService).findRefundableAmount(workspaceId, canonicalCustomerId, order.id)).toEqual({ reason: 'The order has no refundable amount remaining.' });
+    });
   });
 });

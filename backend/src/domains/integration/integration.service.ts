@@ -640,10 +640,14 @@ export class IntegrationService {
     const adapter = this.providerRegistry.get(provider);
     const verified = await adapter.verifyConnection(credentials);
     if (!verified) {
+      // Nothing is written on a failed (re)connect: the previous working credentials stay as they were.
       throw new UnauthenticatedError('Could not verify these credentials with the provider.');
     }
 
-    await this.setCredentials(workspaceId, provider, credentials);
+    const toStore = adapter.mergeReconnectCredentials
+      ? adapter.mergeReconnectCredentials(await this.getCredentials(workspaceId, provider), credentials)
+      : credentials;
+    await this.setCredentials(workspaceId, provider, toStore);
   }
 
   /**

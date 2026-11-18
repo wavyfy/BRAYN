@@ -24,6 +24,8 @@ import { ShopifyComplianceController } from './providers/shopify/shopify-complia
 import { ShopifyUninstallService } from './providers/shopify/shopify-uninstall.service';
 import { ShopifyUninstallController } from './providers/shopify/shopify-uninstall.controller';
 import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter';
+import { WooCommerceWebhookSetupService } from './providers/woocommerce/woocommerce-webhook-setup.service';
+import { WooCommerceWebhookSetupController } from './providers/woocommerce/woocommerce-webhook-setup.controller';
 
 /**
  * Owns: external connections, provider auth, imports, sync, webhook intake,
@@ -52,6 +54,7 @@ import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter'
     ShopifyOAuthCallbackController,
     ShopifyComplianceController,
     ShopifyUninstallController,
+    WooCommerceWebhookSetupController,
   ],
   providers: [
     IntegrationService,
@@ -71,6 +74,7 @@ import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter'
     ShopifyComplianceService,
     ShopifyUninstallService,
     WooCommerceAdapter,
+    WooCommerceWebhookSetupService,
   ],
   exports: [
     IntegrationService,

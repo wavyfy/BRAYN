@@ -152,6 +152,11 @@ export async function generateWebsiteTrackingWriteKey(workspaceId: string): Prom
   return apiFetch(`/api/v1/workspaces/${workspaceId}/website-tracking/write-key`, { method: 'POST' });
 }
 
+/** Mints (and so rotates) the WooCommerce webhook signing secret; owner/admin only on the backend. */
+export async function generateWooCommerceWebhookSecret(workspaceId: string): Promise<{ webhookSecret: string }> {
+  return apiFetch(`/api/v1/workspaces/${workspaceId}/integrations/woocommerce/webhook-setup/secret`, { method: 'POST' });
+}
+
 export async function generateWebsiteTrackingIdentitySecret(workspaceId: string): Promise<{ identitySecret: string }> {
   return apiFetch(`/api/v1/workspaces/${workspaceId}/website-tracking/identity-secret`, { method: 'POST' });
 }
