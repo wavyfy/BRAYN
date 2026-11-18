@@ -7,6 +7,7 @@ import { StatusDot, type BadgeTone } from '@/components/ui/status-badge';
 import { ConnectForm } from './connect-form';
 import { ShopifyConnect } from './shopify-connect';
 import { IntegrationActions, type ImportRun } from './integration-actions';
+import { WooCommerceWebhookSetup, type WooCommerceWebhookSettings } from './woocommerce-webhook-setup';
 import { WebsiteTrackingConnect, WebsiteTrackingSetup, type WebsiteTrackingSettings } from './website-tracking-setup';
 
 type Integration = {
@@ -41,6 +42,7 @@ function ProviderCard({
   canManage,
   connect,
   manage,
+  setup,
 }: {
   workspaceId: string;
   provider: string;
@@ -52,6 +54,8 @@ function ProviderCard({
   connect: ReactNode;
   /** Replaces the default import/sync controls for a provider that has none (Website Tracking). */
   manage?: ReactNode;
+  /** Extra provider-specific setup shown under the import/sync controls (WooCommerce webhooks). */
+  setup?: ReactNode;
 }) {
   const isLive = integration && integration.status !== 'disconnected';
   const status = integration?.status ?? 'disconnected';
@@ -90,10 +94,12 @@ function ProviderCard({
         ) : (
           connect
         )}
+        {canManage && isLive && !manage && setup}
       </div>
     </Card>
   );
 }
+
 
 const OAUTH_ERROR_REASONS: Record<string, string> = {
   expired: 'That authorization link expired — try connecting again.',
@@ -135,11 +141,15 @@ export default async function IntegrationsPage({
   const websiteTracking = integrations.find((i) => i.provider === 'website_tracking') ?? null;
   const websiteTrackingLive = websiteTracking !== null && websiteTracking.status !== 'disconnected';
 
-  const [shopifyImport, woocommerceImport, websiteTrackingSettings] = await Promise.all([
+  const woocommerceLive = woocommerce !== null && woocommerce.status !== 'disconnected';
+  const [shopifyImport, woocommerceImport, websiteTrackingSettings, woocommerceWebhookSettings] = await Promise.all([
     shopify && shopify.status !== 'disconnected' ? apiFetch(`/api/v1/workspaces/${workspaceId}/integrations/shopify/import`) : null,
     woocommerce && woocommerce.status !== 'disconnected' ? apiFetch(`/api/v1/workspaces/${workspaceId}/integrations/woocommerce/import`) : null,
     // Settings are owner/admin-only on the backend, same as the controls that use them.
     websiteTrackingLive && canManage ? (apiFetch(`/api/v1/workspaces/${workspaceId}/website-tracking/settings`) as Promise<WebsiteTrackingSettings>) : null,
+    woocommerceLive && canManage
+      ? (apiFetch(`/api/v1/workspaces/${workspaceId}/integrations/woocommerce/webhook-setup`) as Promise<WooCommerceWebhookSettings>)
+      : null,
   ]);
 
   return (
@@ -190,6 +200,7 @@ export default async function IntegrationsPage({
               ]}
             />
           }
+          setup={woocommerceWebhookSettings && <WooCommerceWebhookSetup workspaceId={workspaceId} settings={woocommerceWebhookSettings} />}
         />
 
         <ProviderCard
