@@ -390,19 +390,13 @@ function matchesConditions(conditions: AutomationConditions | null, payload: Rev
 }
 
 /**
- * Doc16 "Conditions" lists "Customer Risk & Engagement State" as an
- * available signal, but no field on `CustomerHealthRecalculatedPayload`
- * is safe to filter on today: `score`/`healthCategory`/`trend` are
- * always `null` (`CustomerHealthService` deliberately withholds them —
- * only 2 of 6 spec'd signal weights are available, see its own doc
- * comment), and `reasonCodes` is free text, not a stable condition
- * target. The canonical docs don't define health-specific condition
- * semantics beyond naming the signal source, so — per this slice's
- * explicit instruction not to invent condition language — every enabled
- * `customer_health.recalculated` automation fires unconditionally for
- * now. `conditions` is still accepted on such a definition (the column
- * is shared) but never evaluated. Revisit once score/category/trend are
- * actually populated by a future Phase 7 slice.
+ * Health-trigger conditions are deferred (doc16 decision, Nov 18, 2026): the
+ * payload's `healthCategory`/`trend` are populated (#5 D1), but the only
+ * action a health trigger can run — `generate_recommendations` — already
+ * runs after every health recalculation (D5), so a filter would change
+ * nothing yet. Every enabled `customer_health.recalculated` automation fires
+ * on each emitted recalculation; `conditions` is accepted on such a
+ * definition (the column is shared) but never evaluated.
  */
 function matchesHealthConditions(): boolean {
   return true;
