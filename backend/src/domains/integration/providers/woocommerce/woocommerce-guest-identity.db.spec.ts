@@ -283,6 +283,84 @@ describe('WooCommerce guest checkout identity (real DB)', { timeout: 60_000 }, (
     expect(await canonicalsWithEmail(wsA, 'gia@example.com')).toHaveLength(1);
   });
 
+  it('guest name/phone: an order without them never clears them, and every arrival order (one by one or in one batch) gives the same result', async () => {
+    const adapter = moduleRef.get(WooCommerceAdapter);
+    const normalize = (payload: object) =>
+      (adapter.parseWebhookEvent(JSON.stringify(payload), { 'x-wc-webhook-topic': 'order.updated' })!.payload as { data: NormalizedOrder }).data;
+    const placed = (id: number, email: string, at: string, billing: object) =>
+      normalize({ ...guestOrder(id, { email, ...billing }), date_created_gmt: at, date_modified_gmt: '2026-11-01T00:00:00' });
+    // Jan: full details. Feb: newer name, no phone. Mar: newest phone, no name. Expected: Feb's name, Mar's phone.
+    const orders = (email: string, base: number) => [
+      placed(base + 1, email, '2026-01-10T00:00:00', { first_name: 'Ann', last_name: 'Old', phone: '+14155550111' }),
+      placed(base + 2, email, '2026-02-10T00:00:00', { first_name: 'Anna', last_name: 'New' }),
+      placed(base + 3, email, '2026-03-10T00:00:00', { phone: '+14155550133' }),
+    ];
+    const permutations = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+    const services = [moduleRef.get(CustomerService), moduleRef.get(IdentityResolutionService)] as const;
+
+    const results = [];
+    for (const [i, permutation] of permutations.entries()) {
+      for (const mode of ['one-by-one', 'batch'] as const) {
+        const email = `perm-${i}-${mode}@example.com`;
+        const batch = permutation.map((index) => orders(email, 6100 + i * 10 + (mode === 'batch' ? 100 : 0))[index]);
+        if (mode === 'batch') await upsertGuestCustomers(...services, wsA, integrationIds[wsA], 'woocommerce', batch);
+        else for (const order of batch) await upsertGuestCustomers(...services, wsA, integrationIds[wsA], 'woocommerce', [order]);
+        const row = await sourceCustomer(wsA, `guest:${email}`);
+        results.push({ firstName: row.firstName, lastName: row.lastName, phone: row.phone, phoneE164: row.phoneE164 });
+      }
+    }
+
+    for (const result of results) {
+      expect(result).toEqual({ firstName: 'Anna', lastName: 'New', phone: '+14155550133', phoneE164: '+14155550133' });
+    }
+
+    // A later order with no name or phone at all changes nothing.
+    await upsertGuestCustomers(...services, wsA, integrationIds[wsA], 'woocommerce', [placed(6999, 'perm-0-batch@example.com', '2026-10-01T00:00:00', {})]);
+    expect(await sourceCustomer(wsA, 'guest:perm-0-batch@example.com')).toMatchObject({ firstName: 'Anna', lastName: 'New', phone: '+14155550133' });
+  });
+
+  it('eligible guest purchases create revenue opportunities through the live pipeline; a repeat order and a replay add no duplicates', async () => {
+    const email = 'opps@example.com';
+    const opportunities = async (canonicalCustomerId: string) =>
+      db.client.select().from(revenueOpportunities).where(and(eq(revenueOpportunities.workspaceId, wsA), eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId)));
+    const typesOf = async (canonicalCustomerId: string) => (await opportunities(canonicalCustomerId)).map((row) => row.type).sort();
+    /** Opportunity evaluation runs fire-and-forget off order.created / health — poll until the expected set appears and stays put. */
+    async function settledTypes(canonicalCustomerId: string, expected: string[]) {
+      const deadline = Date.now() + 20_000;
+      let types: string[] = [];
+      while (Date.now() < deadline) {
+        types = await typesOf(canonicalCustomerId);
+        if (JSON.stringify(types) === JSON.stringify(expected)) {
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          return typesOf(canonicalCustomerId);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      return types;
+    }
+    const placedOrder = (id: number, at: string) => ({ ...guestOrder(id, { email, first_name: 'Opal' }), date_created_gmt: at, date_modified_gmt: at });
+
+    // First guest purchase (long ago): past the win-back threshold.
+    await deliver(wsA, 'order.created', placedOrder(6201, '2026-01-10T00:00:00'));
+    const guest = await sourceCustomer(wsA, `guest:${email}`);
+    expect(await settledTypes(guest.canonicalCustomerId!, ['win_back'])).toEqual(['win_back']);
+
+    // Repeat purchase a month later: now also a reorder candidate; win-back is not duplicated.
+    const repeat = placedOrder(6202, '2026-02-10T00:00:00');
+    const repeatDelivery = await deliver(wsA, 'order.created', repeat);
+    expect(await settledTypes(guest.canonicalCustomerId!, ['reorder', 'win_back'])).toEqual(['reorder', 'win_back']);
+    const before = await opportunities(guest.canonicalCustomerId!);
+    expect(await db.client.select().from(recommendations).where(inArray(recommendations.sourceOpportunityId, before.map((row) => row.id)))).toHaveLength(2);
+
+    // Replay: the same delivery is deduplicated; a redelivery under a new id emits nothing and creates nothing.
+    emitted = [];
+    expect(await ingest.ingest(wsA, 'woocommerce', repeatDelivery.body, repeatDelivery.headers)).toEqual({ status: 'duplicate' });
+    await deliver(wsA, 'order.created', repeat);
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    expect(orderCreated()).toHaveLength(0);
+    expect((await opportunities(guest.canonicalCustomerId!)).map((row) => row.id).sort()).toEqual(before.map((row) => row.id).sort());
+  });
+
   it('import/sync/reconciliation batches: repeat guests in one page dedupe, and an older unlinked guest order is linked when re-upserted', async () => {
     const adapter = moduleRef.get(WooCommerceAdapter);
     const normalize = (payload: object) =>

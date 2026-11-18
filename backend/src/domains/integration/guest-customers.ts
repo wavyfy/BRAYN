@@ -17,11 +17,10 @@ export async function upsertGuestCustomers(
   provider: IntegrationProvider,
   orders: NormalizedOrder[],
 ): Promise<void> {
-  // One row per key: a page with repeat guest purchases would otherwise hit the same row twice in one ON CONFLICT insert.
-  const guests = [...new Map(orders.flatMap((order) => (order.guestCustomer ? [[order.guestCustomer.externalId, order.guestCustomer] as const] : []))).values()];
+  const guests = orders.flatMap((order) => (order.guestCustomer ? [order.guestCustomer] : []));
   if (guests.length === 0) {
     return;
   }
-  await customerService.upsertMany(workspaceId, integrationId, provider, guests);
-  await identityResolutionService.resolveMany(workspaceId, provider, guests.map((guest) => guest.externalId));
+  await customerService.upsertGuestMany(workspaceId, integrationId, provider, guests);
+  await identityResolutionService.resolveMany(workspaceId, provider, [...new Set(guests.map((guest) => guest.externalId))]);
 }

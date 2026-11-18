@@ -11,7 +11,7 @@ import type {
   ProviderAdapter,
   WebhookResourceEvent,
 } from '../../provider-adapter.interface';
-import type { NormalizedCustomer } from '../../../commerce/customer.service';
+import type { NormalizedCustomer, NormalizedGuestCustomer } from '../../../commerce/customer.service';
 import type { NormalizedProduct } from '../../../commerce/product.service';
 import type { NormalizedOrder, NormalizedRefund } from '../../../commerce/order.service';
 
@@ -531,7 +531,7 @@ const GUEST_EMAIL = /^[^\s@]+@[^\s@]+$/;
  * links by the same exact-email rule as a registered customer. No usable email: null — the order stays unlinked
  * (a billing phone alone never identifies a customer). Dates stay null: a guest has no customer record at the source.
  */
-function normalizeGuestCustomer(order: WooCommerceOrder): NormalizedCustomer | null {
+function normalizeGuestCustomer(order: WooCommerceOrder): NormalizedGuestCustomer | null {
   const email = order.billing?.email?.trim().toLowerCase();
   if (!email || !GUEST_EMAIL.test(email)) {
     return null;
@@ -539,11 +539,13 @@ function normalizeGuestCustomer(order: WooCommerceOrder): NormalizedCustomer | n
   return {
     externalId: `guest:${email}`,
     email,
-    firstName: order.billing?.first_name || null,
-    lastName: order.billing?.last_name || null,
-    phone: order.billing?.phone || null,
+    firstName: order.billing?.first_name?.trim() || null,
+    lastName: order.billing?.last_name?.trim() || null,
+    phone: order.billing?.phone?.trim() || null,
     sourceUpdatedAt: null,
     sourceCreatedAt: null,
+    // The order's placed time — its billing details are as of then (last-modified only when that is unknown).
+    billingAt: order.date_created_gmt ? parseGmtDate(order.date_created_gmt) : order.date_modified_gmt ? parseGmtDate(order.date_modified_gmt) : null,
   };
 }
 

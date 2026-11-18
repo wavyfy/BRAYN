@@ -13,7 +13,7 @@ import { commerceFulfillments } from '../../database/schema/commerce-fulfillment
 import { DatabaseService } from '../../database/database.service';
 import type { IntegrationProvider } from '../integration/dto/connect-integration.schema';
 import type { OrderEventPayload, RefundProcessedPayload } from './commerce-events';
-import type { NormalizedCustomer } from './customer.service';
+import type { NormalizedGuestCustomer } from './customer.service';
 
 export interface NormalizedOrderLineItem {
   externalId: string;
@@ -66,7 +66,7 @@ export interface NormalizedOrder {
    * like any other source customer before writing the order — see integration/guest-customers.ts. Absent for a
    * registered customer and for a guest with no usable email (phone alone never identifies a customer).
    */
-  guestCustomer?: NormalizedCustomer;
+  guestCustomer?: NormalizedGuestCustomer;
   totalPrice: string | null;
   sourceUpdatedAt: Date | null;
   /** When the order was placed at the source — see commerce_orders.sourceCreatedAt. */

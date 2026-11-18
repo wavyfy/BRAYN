@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CustomerService, type NormalizedCustomer } from './customer.service';
+import { CustomerService, guestValueWins, type NormalizedCustomer } from './customer.service';
 import type { DatabaseService } from '../../database/database.service';
 
 function makeInsertChain() {
@@ -99,5 +99,26 @@ describe('CustomerService', () => {
 
       expect(result).toEqual(new Map([['123', customer.sourceUpdatedAt]]));
     });
+  });
+});
+
+describe('guestValueWins (guest field ordering)', () => {
+  const v = (value: string | null, at: string | null) => ({ value, at: at ? new Date(at) : null });
+
+  it('an empty value never wins; any value beats an empty one', () => {
+    expect(guestValueWins(v(null, '2026-12-01'), v('A', '2026-01-01'))).toBe(false);
+    expect(guestValueWins(v('A', null), v(null, '2026-12-01'))).toBe(true);
+  });
+
+  it('the later order wins; an unknown time is older than any known time', () => {
+    expect(guestValueWins(v('Old', '2026-01-01'), v('New', '2026-02-01'))).toBe(false);
+    expect(guestValueWins(v('New', '2026-02-01'), v('Old', '2026-01-01'))).toBe(true);
+    expect(guestValueWins(v('X', null), v('Y', '2026-01-01'))).toBe(false);
+  });
+
+  it('a tie on time is broken by value, the same either way round', () => {
+    expect(guestValueWins(v('B', '2026-01-01'), v('A', '2026-01-01'))).toBe(true);
+    expect(guestValueWins(v('A', '2026-01-01'), v('B', '2026-01-01'))).toBe(false);
+    expect(guestValueWins(v('A', '2026-01-01'), v('A', '2026-01-01'))).toBe(false);
   });
 });

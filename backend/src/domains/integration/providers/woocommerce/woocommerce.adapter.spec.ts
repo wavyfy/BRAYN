@@ -624,7 +624,9 @@ describe('WooCommerceAdapter', () => {
       it('builds a guest source customer keyed on the normalized billing email and links the order to it', () => {
         const data = parseOrder({
           customer_id: 0,
-          billing: { first_name: 'Gia', last_name: 'Guest', email: '  Gia.Guest@Example.COM ', phone: '+1 415 555 0100' },
+          date_created_gmt: '2026-03-01T10:00:00',
+          date_modified_gmt: '2026-03-05T00:00:00',
+          billing: { first_name: ' Gia ', last_name: 'Guest', email: '  Gia.Guest@Example.COM ', phone: '+1 415 555 0100' },
         })(new WooCommerceAdapter(makeRegistry()))?.data;
 
         expect(data?.customerExternalId).toBe('guest:gia.guest@example.com');
@@ -636,7 +638,17 @@ describe('WooCommerceAdapter', () => {
           phone: '+1 415 555 0100',
           sourceUpdatedAt: null,
           sourceCreatedAt: null,
+          billingAt: new Date('2026-03-01T10:00:00Z'),
         });
+      });
+
+      it('billing time is the placed time, falling back to last-modified, else null; blank name/phone parts are absent', () => {
+        const adapter = new WooCommerceAdapter(makeRegistry());
+        const guest = (extra: object) =>
+          parseOrder({ customer_id: 0, billing: { email: 'g@example.com', first_name: '  ', last_name: '', phone: ' ' }, ...extra })(adapter)?.data.guestCustomer as Record<string, unknown>;
+
+        expect(guest({ date_modified_gmt: '2026-03-05T00:00:00' })).toMatchObject({ billingAt: new Date('2026-03-05T00:00:00Z'), firstName: null, lastName: null, phone: null });
+        expect(guest({})).toMatchObject({ billingAt: null });
       });
 
       it.each([
