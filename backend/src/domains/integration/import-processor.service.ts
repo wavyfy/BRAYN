@@ -12,6 +12,7 @@ import { IntegrationService } from './integration.service';
 import { ProviderRegistry } from './provider-registry.service';
 import type { IntegrationProvider } from './dto/connect-integration.schema';
 import type { ProviderAdapter } from './provider-adapter.interface';
+import { upsertGuestCustomers } from './guest-customers';
 
 export interface ImportRequestedPayload {
   provider: IntegrationProvider;
@@ -186,7 +187,10 @@ export class ImportProcessorService {
     do {
       const page = await adapter.fetchOrders!(credentials, cursor);
       try {
-        const result = await withRetry(() => this.orderService.upsertMany(workspaceId, integrationId, provider, page.orders));
+        const result = await withRetry(async () => {
+          await upsertGuestCustomers(this.customerService, this.identityResolutionService, workspaceId, integrationId, provider, page.orders);
+          return this.orderService.upsertMany(workspaceId, integrationId, provider, page.orders);
+        });
         imported += result.ordersWritten;
       } catch {
         failed += page.orders.length;

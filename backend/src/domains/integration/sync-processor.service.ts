@@ -11,6 +11,7 @@ import { IntegrationService } from './integration.service';
 import { ProviderRegistry } from './provider-registry.service';
 import type { IntegrationProvider } from './dto/connect-integration.schema';
 import type { FetchOptions, ProviderAdapter } from './provider-adapter.interface';
+import { upsertGuestCustomers } from './guest-customers';
 
 export interface SyncRequestedPayload {
   provider: IntegrationProvider;
@@ -144,7 +145,10 @@ export class SyncProcessorService {
     let cursor: string | undefined;
     do {
       const page = await adapter.fetchOrders!(credentials, cursor, options);
-      await withRetry(() => this.orderService.upsertMany(workspaceId, integrationId, provider, page.orders));
+      await withRetry(async () => {
+        await upsertGuestCustomers(this.customerService, this.identityResolutionService, workspaceId, integrationId, provider, page.orders);
+        await this.orderService.upsertMany(workspaceId, integrationId, provider, page.orders);
+      });
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
   }
