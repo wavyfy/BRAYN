@@ -125,7 +125,7 @@ export class AutomationService {
     return updated;
   }
 
-  /** Each run with `retryable`: a failed, retryable run whose trigger hasn't since succeeded and that hasn't been retried already. */
+  /** Each run with `retryable`: a failed, retryable run of an enabled automation whose trigger hasn't since succeeded and that hasn't been retried already. */
   async listRuns(workspaceId: string, automationId: string) {
     const automation = await this.requireAutomation(workspaceId, automationId);
 
@@ -140,15 +140,16 @@ export class AutomationService {
     const retried = new Set(runs.map((run) => run.retryOfRunId));
     return runs.map((run) => ({
       ...run,
-      retryable: retrySafe && canRetry(run) && !succeededEvents.has(run.triggerEventId) && !retried.has(run.id),
+      retryable: automation.enabled && retrySafe && canRetry(run) && !succeededEvents.has(run.triggerEventId) && !retried.has(run.id),
     }));
   }
 
   /**
    * Manual retry (doc16 decision, Nov 2, 2026): re-executes a failed run's stored action input through AI Action
    * Control under the same `${automationId}:${triggerEventId}` key, recording a new run linked by `retryOfRunId`.
-   * Refused (409) for a run that isn't failed, a non-retry-safe action, a permanent failure, a trigger that has
-   * already succeeded, or while another attempt is running — none of which execute anything.
+   * Refused (409) for a disabled automation (disabling stops all its actions — decision, Nov 18, 2026), a run that
+   * isn't failed, a non-retry-safe action, a permanent failure, a trigger that has already succeeded, or while
+   * another attempt is running — none of which execute anything.
    */
   async retryRun(workspaceId: string, automationId: string, runId: string): Promise<AutomationRun> {
     const automation = await this.requireAutomation(workspaceId, automationId);
@@ -158,6 +159,7 @@ export class AutomationService {
       .where(and(eq(automationRuns.workspaceId, workspaceId), eq(automationRuns.automationId, automationId), eq(automationRuns.id, runId)))
       .limit(1);
     if (!run) throw new NotFoundError('No run with that id exists for this automation.');
+    if (!automation.enabled) throw new ConflictError('This automation is disabled. Enable it to retry its runs.');
     if (run.status !== 'failed') throw new ConflictError('Only a failed run can be retried.');
     if (!this.actionDefinition(automation.actionType).retrySafe) throw new ConflictError("This automation's action can't be retried safely.");
     if (!canRetry(run)) throw new ConflictError('This run failed permanently and cannot be retried.');

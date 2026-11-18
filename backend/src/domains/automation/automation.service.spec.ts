@@ -612,7 +612,7 @@ describe('AutomationService', () => {
 });
 
 describe('AutomationService retry (doc16 retry decision, Nov 2, 2026)', () => {
-  const automation = { id: 'auto_n', workspaceId: 'ws_1', actionType: 'internal_notification.create' };
+  const automation = { id: 'auto_n', workspaceId: 'ws_1', actionType: 'internal_notification.create', enabled: true };
   const failedRun = {
     id: 'run_1',
     workspaceId: 'ws_1',
@@ -756,6 +756,34 @@ describe('AutomationService retry (doc16 retry decision, Nov 2, 2026)', () => {
     await expect(retry).rejects.toBeInstanceOf(ConflictError);
     await expect(retry).rejects.toThrow('be retried safely');
     expect(aiActionControl.executeForAutomation).not.toHaveBeenCalled();
+  });
+
+  it('refuses a run of a disabled automation with 409 without executing', async () => {
+    const insert = vi.fn();
+    const aiActionControl = makeAiActionControl();
+    const service = new AutomationService(
+      { client: { select: makeSelectQueue([[{ ...automation, enabled: false }], [failedRun]]), insert } } as unknown as DatabaseService,
+      aiActionControl,
+      retryRegistry(),
+      makeLogger(),
+    );
+
+    const retry = service.retryRun('ws_1', 'auto_n', 'run_1');
+    await expect(retry).rejects.toBeInstanceOf(ConflictError);
+    await expect(retry).rejects.toThrow('This automation is disabled. Enable it to retry its runs.');
+    expect(aiActionControl.executeForAutomation).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it('listRuns marks nothing retryable while the automation is disabled', async () => {
+    const service = new AutomationService(
+      { client: { select: makeSelectQueue([[{ ...automation, enabled: false }], [failedRun]]) } } as unknown as DatabaseService,
+      makeAiActionControl(),
+      retryRegistry(),
+      makeLogger(),
+    );
+
+    expect((await service.listRuns('ws_1', 'auto_n')).map((run) => run.retryable)).toEqual([false]);
   });
 
   it('404s a run that does not belong to this automation/workspace', async () => {

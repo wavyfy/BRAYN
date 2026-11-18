@@ -202,6 +202,21 @@ describe('Automation manual retry (real DB)', { timeout: 180_000 }, () => {
     await expect(automations.retryRun(wsA, automation.id, retried.id)).rejects.toThrow('failed permanently');
   });
 
+  it('a disabled automation refuses retry; once re-enabled the same run retries', async () => {
+    const { opportunity, automation, event } = await seed('internal_notification.create');
+    await failOnce(event);
+    const [failed] = await runsOf(automation.id);
+
+    await automations.update(wsA, automation.id, { enabled: false });
+    await expect(automations.retryRun(wsA, automation.id, failed.id)).rejects.toThrow('This automation is disabled');
+    expect((await automations.listRuns(wsA, automation.id))[0].retryable).toBe(false);
+    expect(await notificationsFor(opportunity.id)).toHaveLength(0);
+
+    await automations.update(wsA, automation.id, { enabled: true });
+    await expect(automations.retryRun(wsA, automation.id, failed.id)).resolves.toMatchObject({ status: 'succeeded', retryOfRunId: failed.id });
+    expect(await notificationsFor(opportunity.id)).toHaveLength(1);
+  });
+
   it('isolation: another workspace or another automation cannot retry the run', async () => {
     const { automation, event } = await seed('internal_notification.create');
     await failOnce(event);
