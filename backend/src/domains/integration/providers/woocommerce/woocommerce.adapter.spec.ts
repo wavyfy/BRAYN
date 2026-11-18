@@ -657,11 +657,20 @@ describe('WooCommerceAdapter', () => {
         ['whitespace email', { billing: { email: '   ' } }],
         ['not an email', { billing: { email: 'guest at example.com' } }],
         ['phone only', { billing: { first_name: 'P', phone: '+14155550100' } }],
+        ['WordPress-anonymized email (erased personal data)', { billing: { email: 'deleted@site.invalid', phone: '+14155550100' } }],
+        ['any .invalid domain, any case', { billing: { email: 'Someone@Shop.INVALID' } }],
+        ['bare .invalid domain', { billing: { email: 'x@invalid' } }],
       ])('%s: no guest customer and the order stays unlinked (phone alone never identifies)', (_label, extra) => {
         const data = parseOrder({ customer_id: 0, ...extra })(new WooCommerceAdapter(makeRegistry()))?.data;
 
         expect(data?.customerExternalId).toBeNull();
         expect(data).not.toHaveProperty('guestCustomer');
+      });
+
+      it('a domain merely containing "invalid" is still a real email', () => {
+        const data = parseOrder({ customer_id: 0, billing: { email: 'a@invalid-shop.com' } })(new WooCommerceAdapter(makeRegistry()))?.data;
+
+        expect(data?.customerExternalId).toBe('guest:a@invalid-shop.com');
       });
 
       it('a registered customer order keeps its provider id and builds no guest customer, even with a billing email', () => {

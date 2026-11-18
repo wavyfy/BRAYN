@@ -533,7 +533,9 @@ const GUEST_EMAIL = /^[^\s@]+@[^\s@]+$/;
  */
 function normalizeGuestCustomer(order: WooCommerceOrder): NormalizedGuestCustomer | null {
   const email = order.billing?.email?.trim().toLowerCase();
-  if (!email || !GUEST_EMAIL.test(email)) {
+  // `.invalid` is reserved (RFC 2606) and never a real mailbox; WordPress's personal-data eraser anonymizes order emails
+  // to `deleted@site.invalid`, which would otherwise join every erased guest into one customer.
+  if (!email || !GUEST_EMAIL.test(email) || /(^|\.)invalid$/.test(email.slice(email.lastIndexOf('@') + 1))) {
     return null;
   }
   return {
