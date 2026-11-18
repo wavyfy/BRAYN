@@ -153,7 +153,7 @@ export function CreateAutomationForm({ workspaceId }: { workspaceId: string }) {
         </>
       ) : (
         <p className="text-xs text-muted-foreground">
-          Runs every time a customer&apos;s health score is recalculated. Filtering by health status isn&apos;t available yet.
+          Runs every time a customer&apos;s health score is recalculated. Health filters will come with health-specific actions.
         </p>
       )}
 
