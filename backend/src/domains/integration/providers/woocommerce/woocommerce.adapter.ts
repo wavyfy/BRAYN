@@ -222,6 +222,19 @@ export class WooCommerceAdapter implements ProviderAdapter, OnModuleInit {
   }
 
   /**
+   * Stage 10 Slice 3 product rules: re-entering API keys for the **same store** keeps the webhook secret the merchant
+   * already pasted into their WooCommerce webhooks (otherwise every delivery would start failing); a **different
+   * store** (or an unparseable previous URL) drops it, so that store needs its own webhook setup. A secret explicitly
+   * supplied in `next` wins. Disconnect clears everything separately (IntegrationService.disconnect).
+   */
+  mergeReconnectCredentials(previous: Record<string, string> | null, next: Record<string, string>): Record<string, string> {
+    if (next.webhookSecret || !previous?.webhookSecret || !isSameWooCommerceStore(previous.storeUrl, next.storeUrl)) {
+      return next;
+    }
+    return { ...next, webhookSecret: previous.webhookSecret };
+  }
+
+  /**
    * Verifies WooCommerce's `X-WC-Webhook-Signature` header:
    * base64(HMAC-SHA256(rawBody, secret)) — same algorithm as Shopify's
    * own webhook signature, just a different header name. `secret` is
@@ -343,6 +356,27 @@ function parseStoreUrl(storeUrl: string): URL | null {
     return null;
   }
   return url;
+}
+
+/**
+ * Whether two stored store URLs point at the same WooCommerce store: HTTPS only, hostname compared
+ * case-insensitively (URL parsing lowercases it), default port 443 equal to no port, trailing slash ignored; the
+ * path (a WordPress subdirectory install) is compared exactly, and query/fragment are ignored. Anything unparseable
+ * or non-HTTPS is never "the same" — the safe outcome is a fresh webhook setup, never a reused secret.
+ */
+export function isSameWooCommerceStore(a: string | undefined, b: string | undefined): boolean {
+  const key = (value: string | undefined) => {
+    if (!value) return null;
+    let url: URL;
+    try {
+      url = new URL(value.trim());
+    } catch {
+      return null;
+    }
+    return url.protocol === 'https:' ? `${url.host}${trimTrailingSlash(url.pathname)}` : null;
+  };
+  const left = key(a);
+  return left !== null && left === key(b);
 }
 
 /** Joins the WooCommerce REST API path onto `baseUrl`, preserving any subpath the merchant's store runs under (e.g. `https://example.com/shop`). */

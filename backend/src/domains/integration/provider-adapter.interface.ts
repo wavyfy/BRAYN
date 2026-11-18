@@ -133,6 +133,15 @@ export interface ProviderAdapter {
   resolveWebhookSecret?(credentials: Record<string, string> | null): string | null;
 
   /**
+   * What to store when credentials are re-entered for an existing connection
+   * (`IntegrationService.connectCredentials`, after `verifyConnection` passed):
+   * `next` plus anything from `previous` that must survive, e.g. a webhook
+   * secret the merchant already configured at the provider. Omitted → `next`
+   * replaces the stored credentials as-is.
+   */
+  mergeReconnectCredentials?(previous: Record<string, string> | null, next: Record<string, string>): Record<string, string>;
+
+  /**
    * Initial-import support (doc 20 — Initial Import). Optional: a provider
    * without commerce customer data (e.g. Website Tracking, WhatsApp)
    * implements neither. Fetches one page starting at `cursor` (undefined

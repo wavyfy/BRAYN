@@ -1,6 +1,6 @@
 import { createHash, createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { WooCommerceAdapter } from './woocommerce.adapter';
+import { WooCommerceAdapter, isSameWooCommerceStore } from './woocommerce.adapter';
 import type { ProviderRegistry } from '../../provider-registry.service';
 
 function sign(rawBody: string, secret: string) {
@@ -632,5 +632,61 @@ describe('WooCommerceAdapter', () => {
 
       expect(adapter.parseWebhookEvent('not json', { 'x-wc-webhook-topic': 'customer.updated' })).toBeNull();
     });
+  });
+});
+
+describe('isSameWooCommerceStore', () => {
+  it.each([
+    ['https://Shop.Example.com', 'https://shop.example.com', 'hostname case'],
+    ['https://shop.example.com/', 'https://shop.example.com', 'trailing slash'],
+    ['https://shop.example.com:443', 'https://shop.example.com', 'default HTTPS port'],
+    ['https://shop.example.com/store/', 'https://shop.example.com/store', 'subpath trailing slash'],
+    [' https://shop.example.com ', 'https://shop.example.com', 'surrounding whitespace'],
+    ['https://shop.example.com/?a=1#x', 'https://shop.example.com', 'query and fragment'],
+  ])('treats %s and %s as the same store (%s)', (a, b) => {
+    expect(isSameWooCommerceStore(a, b)).toBe(true);
+  });
+
+  it.each([
+    ['https://shop.example.com', 'https://other.example.com', 'different host'],
+    ['https://shop.example.com', 'https://www.shop.example.com', 'www is a different host'],
+    ['https://shop.example.com:8443', 'https://shop.example.com', 'non-default port'],
+    ['https://shop.example.com/store', 'https://shop.example.com', 'different subpath'],
+    ['https://shop.example.com/Store', 'https://shop.example.com/store', 'path case'],
+    ['http://shop.example.com', 'http://shop.example.com', 'not HTTPS'],
+    ['not a url', 'not a url', 'unparseable'],
+    [undefined, 'https://shop.example.com', 'missing'],
+  ] as Array<[string | undefined, string, string]>)('treats %s and %s as different stores (%s)', (a, b) => {
+    expect(isSameWooCommerceStore(a, b)).toBe(false);
+  });
+});
+
+describe('WooCommerceAdapter.mergeReconnectCredentials()', () => {
+  const adapter = new WooCommerceAdapter(makeRegistry());
+  const previous = { storeUrl: 'https://shop.example.com', consumerKey: 'ck_old', consumerSecret: 'cs_old', webhookSecret: 'whsec_1' };
+
+  it('keeps the webhook secret when the new keys are for the same store', () => {
+    expect(adapter.mergeReconnectCredentials(previous, { storeUrl: 'https://SHOP.example.com/', consumerKey: 'ck_new', consumerSecret: 'cs_new' })).toEqual({
+      storeUrl: 'https://SHOP.example.com/',
+      consumerKey: 'ck_new',
+      consumerSecret: 'cs_new',
+      webhookSecret: 'whsec_1',
+    });
+  });
+
+  it('drops the webhook secret for a different store', () => {
+    const next = { storeUrl: 'https://other.example.com', consumerKey: 'ck_new', consumerSecret: 'cs_new' };
+    expect(adapter.mergeReconnectCredentials(previous, next)).toEqual(next);
+  });
+
+  it('stores the new keys unchanged on a first connect or when no secret existed', () => {
+    const next = { storeUrl: 'https://shop.example.com', consumerKey: 'ck_new', consumerSecret: 'cs_new' };
+    expect(adapter.mergeReconnectCredentials(null, next)).toEqual(next);
+    expect(adapter.mergeReconnectCredentials({ ...previous, webhookSecret: '' }, next)).toEqual(next);
+  });
+
+  it('lets an explicitly supplied secret win', () => {
+    const next = { storeUrl: 'https://shop.example.com', consumerKey: 'ck', consumerSecret: 'cs', webhookSecret: 'whsec_explicit' };
+    expect(adapter.mergeReconnectCredentials(previous, next)).toEqual(next);
   });
 });
