@@ -76,7 +76,7 @@ export default async function AutomationsPage({ params }: { params: { workspaceI
 
           {canManage && (
             <Card className="p-4">
-              <SectionHeader title="New automation" description="Pick a trigger; BRAYN generates recommendations when it fires." />
+              <SectionHeader title="New automation" description="Pick a trigger and what BRAYN does when it fires." />
               <div className="mt-4">
                 <CreateAutomationForm workspaceId={workspaceId} />
               </div>

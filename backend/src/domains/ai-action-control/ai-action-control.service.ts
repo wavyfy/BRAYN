@@ -31,6 +31,9 @@ interface AuditFields {
   failureReason?: string;
 }
 
+/** How long a retry-safe action's `pending` reservation is honoured before a crashed holder's key may be reclaimed — far above any single execution. */
+export const RETRY_SAFE_LEASE_MS = 5 * 60_000;
+
 type ExecutionOutcome<TResult> =
   | { executionStatus: 'executed'; result: TResult; resultSummary: Record<string, unknown> | null }
   | { executionStatus: 'duplicate'; failureReason: string }
@@ -69,12 +72,15 @@ type ExecutionOutcome<TResult> =
  *
  * Placement: AFTER permission/policy/approval, immediately before
  * `execute` — those earlier gates are deterministic per role/input/risk
- * and don't need retry-safety; only the actual write does. This also
- * matches `WebhookIngestService`'s own placement (reserve only once a
- * delivery is already known-valid) and its own limitation: `reserve()`
- * has no release/rollback, so a request that reserves a key and then
- * fails execution leaves that key permanently unable to retry through
- * this path — identical to the webhook precedent, not a new gap.
+ * and don't need retry-safety; only the actual write does.
+ *
+ * Failure (doc16 retry decision, Nov 2, 2026): only a `completed` key is a
+ * duplicate. A failed `retrySafe` action releases its key (`fail()`), so a
+ * replay or manual retry under the same key executes again; its
+ * reservation also carries a lease, so one left `pending` by a crash is
+ * reclaimable. A failed non-retry-safe action keeps its key `pending`
+ * (blocked) — the failure may have followed a real external effect, so no
+ * retry through this path may repeat it.
  */
 @Injectable()
 export class AiActionControlService {
@@ -451,20 +457,26 @@ export class AiActionControlService {
     context: ActionExecutionContext,
     namespacedKey: string,
   ): Promise<ExecutionOutcome<TResult>> {
-    const reserved = await this.idempotency.reserve(namespacedKey);
+    const reserved = definition.retrySafe
+      ? await this.idempotency.reserve(namespacedKey, { leaseMs: RETRY_SAFE_LEASE_MS })
+      : await this.idempotency.reserve(namespacedKey);
     if (!reserved) {
-      return { executionStatus: 'duplicate', failureReason: 'This action was already requested with the same idempotency key.' };
+      // Non-retry-safe: any held key is a duplicate (a failed one stays blocked). Retry-safe: only a completed one is;
+      // otherwise another attempt is running right now — nothing ran here, and the key is left to its holder.
+      if (!definition.retrySafe || (await this.idempotency.isCompleted(namespacedKey))) {
+        return { executionStatus: 'duplicate', failureReason: 'This action was already requested with the same idempotency key.' };
+      }
+      const failureReason = 'This action is already running for the same idempotency key.';
+      return { executionStatus: 'failed', failureReason, error: new ConflictError(failureReason) };
     }
 
     try {
       const result = await definition.execute(input, context);
-      // No `complete()`/`fail()` call here on failure, deliberately (and no lease on `reserve()`):
-      // the key stays reserved-but-incomplete rather than being released for a retry, so
-      // a blind retry can't paper over a real execution failure. Recovery from this state is a
-      // separate, explicit operation, not built here.
       await this.idempotency.complete(namespacedKey);
       return { executionStatus: 'executed', result, resultSummary: definition.summarizeResult ? definition.summarizeResult(result) : null };
     } catch (error) {
+      // Only a retry-safe action releases its key for a retry; any other failure keeps it blocked (see class comment).
+      if (definition.retrySafe) await this.idempotency.fail(namespacedKey);
       return { executionStatus: 'failed', failureReason: error instanceof Error ? error.message : 'Action execution failed.', error };
     }
   }

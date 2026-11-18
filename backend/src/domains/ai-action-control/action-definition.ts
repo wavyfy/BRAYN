@@ -25,6 +25,12 @@ export interface ActionDefinition<TInput, TResult> {
   requiresApproval: boolean;
   /** Doc28 Permission Matrix — which workspace roles may invoke this action at all (checked before risk/approval, per the canonical lifecycle order). */
   allowedRoles: readonly WorkspaceRole[];
+  /**
+   * Doc16 retry decision (Nov 2, 2026): true only when re-running `execute` after a failure can never duplicate a
+   * business effect (the write is idempotent on its own). A failed retry-safe execution releases its idempotency
+   * reservation for a retry; any other failure keeps it blocked, because the effect may already have happened.
+   */
+  retrySafe: boolean;
   inputSchema: ZodType<TInput>;
   /** Domain-state check beyond the input schema, run on request and again on approval (doc14 Execution validation). Returns a failure reason, or null when valid. */
   validate?: (input: TInput, context: ActionExecutionContext) => Promise<string | null>;

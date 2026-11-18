@@ -7,6 +7,7 @@ import { SectionHeader } from '@/components/ui/section';
 import { ArrowRightIcon } from '@/components/ui/icons';
 import { formatDateTime } from '@/lib/format';
 import { ToggleAutomationButton } from './toggle-automation-button';
+import { RetryRunButton } from './retry-run-button';
 import { actionLabel, triggerLabel } from '../labels';
 
 type Automation = {
@@ -17,7 +18,16 @@ type Automation = {
   enabled: boolean;
   conditions: { priorityIn?: string[]; typeIn?: string[] } | null;
 };
-type AutomationRun = { id: string; status: 'skipped' | 'succeeded' | 'failed'; reason: string | null; result: { recommendationsCount?: number; notificationId?: string } | null; createdAt: string };
+type AutomationRun = {
+  id: string;
+  status: 'skipped' | 'succeeded' | 'failed';
+  reason: string | null;
+  result: { recommendationsCount?: number; notificationId?: string } | null;
+  retryOfRunId: string | null;
+  /** Server-computed: a failed run of a retry-safe action that may still be retried. */
+  retryable: boolean;
+  createdAt: string;
+};
 type WorkspaceSummary = { id: string; name: string; role: string };
 
 const runTone: Record<AutomationRun['status'], BadgeTone> = {
@@ -123,8 +133,14 @@ export default async function AutomationDetailPage({ params }: { params: { works
                         {run.reason && <span>{run.reason}</span>}
                         {run.result?.recommendationsCount !== undefined && <span>{run.result.recommendationsCount} recommendation(s) generated</span>}
                         {run.result?.notificationId !== undefined && <span>Internal notification created</span>}
+                        {run.retryOfRunId && <span className="ml-2 text-xs text-muted-foreground">Retry attempt</span>}
                       </td>
-                      <td className="px-4 py-2.5 text-right text-muted-foreground">{formatDateTime(run.createdAt)}</td>
+                      <td className="px-4 py-2.5 text-right text-muted-foreground">
+                        <div className="flex items-center justify-end gap-3">
+                          {canManage && run.retryable && <RetryRunButton workspaceId={workspaceId} automationId={automation.id} runId={run.id} />}
+                          <span>{formatDateTime(run.createdAt)}</span>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

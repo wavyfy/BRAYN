@@ -69,6 +69,7 @@ export function buildActionRegistry(recommendationService: RecommendationService
     riskLevel: 'low',
     requiresApproval: false,
     allowedRoles: ['owner', 'admin', 'marketing', 'support'],
+    retrySafe: false,
     inputSchema: dismissInputSchema,
     execute: (input, context) => recommendationService.dismiss(context.workspaceId, context.customerId!, input.recommendationId, input.reason),
     summarizeResult: (result) => ({ recommendationId: result?.id, state: result?.state }),
@@ -80,6 +81,7 @@ export function buildActionRegistry(recommendationService: RecommendationService
     riskLevel: 'low',
     requiresApproval: false,
     allowedRoles: ['owner', 'admin', 'marketing', 'support'],
+    retrySafe: false,
     inputSchema: completeInputSchema,
     execute: (input, context) => recommendationService.complete(context.workspaceId, context.customerId!, input.recommendationId),
     summarizeResult: (result) => ({ recommendationId: result?.id, state: result?.state }),
@@ -92,6 +94,8 @@ export function buildActionRegistry(recommendationService: RecommendationService
     riskLevel: 'low',
     requiresApproval: false,
     allowedRoles: ['owner', 'admin', 'marketing'],
+    // Idempotent: generation skips opportunities that already have a recommendation (unique per opportunity).
+    retrySafe: true,
     inputSchema: generateRecommendationsInputSchema,
     execute: (_input, context) => recommendationService.generate(context.workspaceId, context.customerId!),
     summarizeResult: (result) => ({ recommendationsCount: result.length }),
@@ -110,6 +114,8 @@ export function buildActionRegistry(recommendationService: RecommendationService
     riskLevel: 'high',
     requiresApproval: true,
     allowedRoles: ['owner', 'admin'],
+    // Never retry-safe: a real refund can fail after the provider already refunded.
+    retrySafe: false,
     inputSchema: refundRequestInputSchema,
     validate: async (input, context) => {
       const refundable = await orderService.findRefundableAmount(context.workspaceId, context.customerId!, input.orderId);
@@ -136,6 +142,8 @@ export function buildActionRegistry(recommendationService: RecommendationService
     riskLevel: 'low',
     requiresApproval: false,
     allowedRoles: [],
+    // Idempotent: one notification per opportunity (unique), a repeat returns the existing id.
+    retrySafe: true,
     inputSchema: internalNotificationInputSchema,
     execute: (input, context) => internalNotificationService.createForOpportunity(context.workspaceId, context.customerId!, input.opportunityId),
     summarizeResult: (result) => ({ notificationId: result.id, created: result.created }),

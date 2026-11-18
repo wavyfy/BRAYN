@@ -4,7 +4,14 @@ import { and, desc, eq } from 'drizzle-orm';
 import { automationDefinitions } from '../../database/schema/automation-definitions';
 import { automationRuns } from '../../database/schema/automation-runs';
 import { DatabaseService } from '../../database/database.service';
-import { DuplicateActionRequestError, NotFoundError, ValidationError } from '../../common/errors/app-error';
+import {
+  ApprovalRequiredError,
+  ConflictError,
+  DuplicateActionRequestError,
+  NotFoundError,
+  UnauthorizedError,
+  ValidationError,
+} from '../../common/errors/app-error';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import type { DomainEvent } from '../../common/events/domain-event';
 import { AiActionControlService } from '../ai-action-control/ai-action-control.service';
@@ -16,6 +23,11 @@ import type { UpdateAutomationInput } from './dto/update-automation.schema';
 
 /** Run reason when the same automation + trigger event was already processed. */
 export const DUPLICATE_TRIGGER_REASON = 'duplicate trigger';
+
+/** Failures a retry can never fix (doc07 — "Do not repeatedly retry permanent validation or authorization failures"). */
+const PERMANENT_FAILURES = [ValidationError, NotFoundError, UnauthorizedError, ApprovalRequiredError];
+
+type AutomationRun = typeof automationRuns.$inferSelect;
 
 interface AutomationConditions {
   priorityIn?: string[];
@@ -29,9 +41,9 @@ interface AutomationConditions {
  *
  * - Scheduling/delay (doc19 item 5) — no automation here needs a delay;
  *   adding a scheduler before anything uses it is speculative (doc18).
- * - Retry/recovery (doc19 item 9) — see automation-runs schema's doc
- *   comment; nothing here fails in a way retry would help with today (a
- *   thrown error means a real bug, not a transient failure).
+ * - Automatic retry (doc19 item 9) — retry is manual only (doc16
+ *   decision, Nov 2, 2026): `retryRun()` re-executes a failed run of a
+ *   retry-safe action under the same idempotency key, as a new run row.
  *
  * AI Action Control integration (doc19 item 7) is DONE — `runOne()` calls
  * `AiActionControlService.executeForAutomation()` rather than
@@ -113,14 +125,72 @@ export class AutomationService {
     return updated;
   }
 
+  /** Each run with `retryable`: a failed, retryable run whose trigger hasn't since succeeded and that hasn't been retried already. */
   async listRuns(workspaceId: string, automationId: string) {
-    await this.requireAutomation(workspaceId, automationId);
+    const automation = await this.requireAutomation(workspaceId, automationId);
 
-    return this.database.client
+    const runs = await this.database.client
       .select()
       .from(automationRuns)
       .where(and(eq(automationRuns.workspaceId, workspaceId), eq(automationRuns.automationId, automationId)))
       .orderBy(desc(automationRuns.createdAt));
+
+    const retrySafe = this.actionDefinition(automation.actionType).retrySafe;
+    const succeededEvents = new Set(runs.filter((run) => run.status === 'succeeded').map((run) => run.triggerEventId));
+    const retried = new Set(runs.map((run) => run.retryOfRunId));
+    return runs.map((run) => ({
+      ...run,
+      retryable: retrySafe && canRetry(run) && !succeededEvents.has(run.triggerEventId) && !retried.has(run.id),
+    }));
+  }
+
+  /**
+   * Manual retry (doc16 decision, Nov 2, 2026): re-executes a failed run's stored action input through AI Action
+   * Control under the same `${automationId}:${triggerEventId}` key, recording a new run linked by `retryOfRunId`.
+   * Refused (409) for a run that isn't failed, a non-retry-safe action, a permanent failure, a trigger that has
+   * already succeeded, or while another attempt is running — none of which execute anything.
+   */
+  async retryRun(workspaceId: string, automationId: string, runId: string): Promise<AutomationRun> {
+    const automation = await this.requireAutomation(workspaceId, automationId);
+    const [run] = await this.database.client
+      .select()
+      .from(automationRuns)
+      .where(and(eq(automationRuns.workspaceId, workspaceId), eq(automationRuns.automationId, automationId), eq(automationRuns.id, runId)))
+      .limit(1);
+    if (!run) throw new NotFoundError('No run with that id exists for this automation.');
+    if (run.status !== 'failed') throw new ConflictError('Only a failed run can be retried.');
+    if (!this.actionDefinition(automation.actionType).retrySafe) throw new ConflictError("This automation's action can't be retried safely.");
+    if (!canRetry(run)) throw new ConflictError('This run failed permanently and cannot be retried.');
+
+    const actionInput = run.actionInput as Record<string, unknown>;
+    const retryRow = {
+      workspaceId,
+      automationId,
+      canonicalCustomerId: run.canonicalCustomerId,
+      triggerEventId: run.triggerEventId,
+      actionInput,
+      retryOfRunId: run.id,
+    };
+    try {
+      const result = await this.executeAction(
+        automation.actionType,
+        { workspaceId, customerId: run.canonicalCustomerId },
+        actionInput,
+        `${automation.id}:${run.triggerEventId}`,
+        run.triggerEventId,
+      );
+      const [created] = await this.database.client.insert(automationRuns).values({ ...retryRow, status: 'succeeded', result }).returning();
+      return created;
+    } catch (error) {
+      if (error instanceof DuplicateActionRequestError) throw new ConflictError('This trigger has already been executed successfully; nothing was retried.');
+      // Another attempt holds the key right now: nothing ran here.
+      if (error instanceof ConflictError) throw error;
+      const [created] = await this.database.client
+        .insert(automationRuns)
+        .values({ ...retryRow, status: 'failed', reason: errorMessage(error), result: { retryable: this.isRetryable(automation.actionType, error) } })
+        .returning();
+      return created;
+    }
   }
 
   @OnEvent('revenue_opportunity.created')
@@ -221,13 +291,15 @@ export class AutomationService {
       return;
     }
 
+    let actionInput: Record<string, unknown> | null = null;
     try {
+      actionInput = this.buildActionInput(definition.actionType, opportunityId);
       // Idempotency key derived from infra-assigned ids (this automation + the triggering event),
       // never from workspaceId/action/input content (doc03 rule 5) — a genuine duplicate delivery
       // of the same event to the same automation reuses this key and is safely de-duped;
-      // a different event or automation gets its own.
+      // a different event or automation gets its own. A manual retry reuses it too.
       const idempotencyKey = `${definition.id}:${triggerEventId}`;
-      const result = await this.executeAction(definition.actionType, { workspaceId, customerId: canonicalCustomerId }, opportunityId, idempotencyKey, triggerEventId);
+      const result = await this.executeAction(definition.actionType, { workspaceId, customerId: canonicalCustomerId }, actionInput, idempotencyKey, triggerEventId);
       await this.database.client.insert(automationRuns).values({
         workspaceId,
         automationId: definition.id,
@@ -235,9 +307,10 @@ export class AutomationService {
         triggerEventId,
         status: 'succeeded',
         result,
+        actionInput,
       });
     } catch (error) {
-      // Idempotency already processed this automation + trigger event: nothing ran, so it's skipped, not failed.
+      // This automation + trigger event already executed (for a retry-safe action: completed): nothing ran, so it's skipped, not failed.
       const duplicate = error instanceof DuplicateActionRequestError;
       await this.database.client.insert(automationRuns).values({
         workspaceId,
@@ -245,35 +318,50 @@ export class AutomationService {
         canonicalCustomerId,
         triggerEventId,
         status: duplicate ? 'skipped' : 'failed',
-        reason: duplicate ? DUPLICATE_TRIGGER_REASON : error instanceof Error ? error.message : String(error),
+        reason: duplicate ? DUPLICATE_TRIGGER_REASON : errorMessage(error),
+        result: duplicate ? null : { retryable: this.isRetryable(definition.actionType, error) },
+        actionInput,
       });
     }
   }
 
-  /**
-   * Dispatches on the definition's `actionType`. Action input is built here from the server-emitted
-   * trigger event only — never from AI or client input (#9 decision, Nov 2, 2026).
-   */
+  /** Built from the server-emitted trigger event only — never from AI or client input (#9 decision, Nov 2, 2026). */
+  private buildActionInput(actionType: AutomationActionType, opportunityId: string | null): Record<string, unknown> {
+    if (actionType === 'internal_notification.create') {
+      // Create-time validation rejects any other trigger for this action; this guards rows written before it.
+      if (!opportunityId) throw new ValidationError('internal_notification.create requires a revenue_opportunity.created trigger.');
+      return { opportunityId };
+    }
+    return {};
+  }
+
+  private actionDefinition(actionType: AutomationActionType) {
+    return actionType === 'internal_notification.create' ? this.registry.internalNotificationCreate : this.registry.generateRecommendations;
+  }
+
+  private isRetryable(actionType: AutomationActionType, error: unknown): boolean {
+    return this.actionDefinition(actionType).retrySafe && !PERMANENT_FAILURES.some((permanent) => error instanceof permanent);
+  }
+
+  /** Dispatches on the definition's `actionType`, always through AI Action Control; returns the run's `result`. */
   private async executeAction(
-    actionType: (typeof automationDefinitions.$inferSelect)['actionType'],
+    actionType: AutomationActionType,
     context: { workspaceId: string; customerId: string },
-    opportunityId: string | null,
+    actionInput: Record<string, unknown>,
     idempotencyKey: string,
     triggerEventId: string,
   ): Promise<Record<string, unknown>> {
     if (actionType === 'internal_notification.create') {
-      // Create-time validation rejects any other trigger for this action; this guards rows written before it.
-      if (!opportunityId) throw new Error('internal_notification.create requires a revenue_opportunity.created trigger.');
       const notification = await this.aiActionControl.executeForAutomation(
         this.registry.internalNotificationCreate,
-        { opportunityId },
+        actionInput,
         context,
         idempotencyKey,
         triggerEventId,
       );
       return { notificationId: notification.id };
     }
-    const recommendations = await this.aiActionControl.executeForAutomation(this.registry.generateRecommendations, {}, context, idempotencyKey, triggerEventId);
+    const recommendations = await this.aiActionControl.executeForAutomation(this.registry.generateRecommendations, actionInput, context, idempotencyKey, triggerEventId);
     return { recommendationsCount: recommendations.length };
   }
 
@@ -316,4 +404,15 @@ function matchesConditions(conditions: AutomationConditions | null, payload: Rev
  */
 function matchesHealthConditions(): boolean {
   return true;
+}
+
+type AutomationActionType = (typeof automationDefinitions.$inferSelect)['actionType'];
+
+/** A failed run whose stored input can be re-executed and whose failure wasn't permanent. */
+function canRetry(run: AutomationRun): boolean {
+  return run.status === 'failed' && run.actionInput !== null && (run.result as { retryable?: boolean } | null)?.retryable === true;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

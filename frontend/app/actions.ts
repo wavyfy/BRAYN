@@ -94,6 +94,21 @@ export async function createAutomation(
   });
 }
 
+/** Returns the API's refusal reason (e.g. a 409) instead of throwing: server actions hide thrown messages in production. */
+export async function retryAutomationRun(
+  workspaceId: string,
+  automationId: string,
+  runId: string,
+): Promise<{ ok: true; status: 'succeeded' | 'failed'; reason: string | null } | { ok: false; message: string }> {
+  try {
+    const run = await apiFetch(`/api/v1/workspaces/${workspaceId}/automations/${automationId}/runs/${runId}/retry`, { method: 'POST' });
+    return { ok: true, status: run.status, reason: run.reason };
+  } catch (error) {
+    if (error instanceof ApiError) return { ok: false, message: error.message };
+    throw error;
+  }
+}
+
 export async function setAutomationEnabled(workspaceId: string, automationId: string, enabled: boolean) {
   return apiFetch(`/api/v1/workspaces/${workspaceId}/automations/${automationId}`, {
     method: 'PATCH',

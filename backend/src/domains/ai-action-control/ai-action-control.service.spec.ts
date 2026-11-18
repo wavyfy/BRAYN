@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { AiActionControlService } from './ai-action-control.service';
+import { AiActionControlService, RETRY_SAFE_LEASE_MS } from './ai-action-control.service';
 import { RequestContext } from '../../common/logging/request-context';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import { DatabaseService } from '../../database/database.service';
@@ -29,6 +29,8 @@ function makeIdempotency(overrides: Partial<IdempotencyService> = {}): Idempoten
   return {
     reserve: vi.fn(async () => true),
     complete: vi.fn(async () => undefined),
+    fail: vi.fn(async () => undefined),
+    isCompleted: vi.fn(async () => true),
     ...overrides,
   } as unknown as IdempotencyService;
 }
@@ -82,6 +84,7 @@ function makeLowRiskAction(execute: ActionDefinition<{ recommendationId: string 
     riskLevel: 'low',
     requiresApproval: false,
     allowedRoles: ['owner', 'admin', 'marketing', 'support'],
+    retrySafe: false,
     inputSchema: lowRiskInputSchema,
     execute,
     summarizeResult: (result) => ({ recommendationId: result.id, state: result.state }),
@@ -96,6 +99,7 @@ function makeHighRiskAction(): ActionDefinition<{ recommendationId: string }, { 
     riskLevel: 'high',
     requiresApproval: true,
     allowedRoles: ['owner', 'admin'],
+    retrySafe: false,
     inputSchema: lowRiskInputSchema,
     execute: vi.fn(async () => ({ id: 'should-never-run' })),
   };
@@ -113,6 +117,7 @@ function makeApprovableAction(
     riskLevel: 'high',
     requiresApproval: true,
     allowedRoles: ['owner', 'admin'],
+    retrySafe: false,
     inputSchema: lowRiskInputSchema,
     execute,
     summarizeResult: (result) => ({ recommendationId: result.id, state: result.state }),
@@ -456,6 +461,58 @@ describe('AiActionControlService', () => {
 
       await expect(run).rejects.toBe(conflict);
       await expect(run).rejects.not.toBeInstanceOf(DuplicateActionRequestError);
+    });
+
+    describe('retrySafe actions (doc16 retry decision)', () => {
+      const context = { workspaceId: WORKSPACE_ID, customerId: CUSTOMER_ID };
+      const retrySafe = (execute: Parameters<typeof makeLowRiskAction>[0]) => ({ ...makeLowRiskAction(execute), retrySafe: true });
+
+      it('reserves with a lease and releases the key on failure so a retry can re-reserve it', async () => {
+        const idempotency = makeIdempotency();
+        const service = makeService({ idempotency });
+        const boom = new Error('connection reset');
+
+        await expect(service.executeForAutomation(retrySafe(vi.fn(async () => { throw boom; })), { recommendationId: RECOMMENDATION_ID }, context, 'auto_1:evt_1', 'evt_1')).rejects.toBe(boom);
+
+        const key = `ai-action-automation:${WORKSPACE_ID}:recommendation.dismiss:auto_1:evt_1`;
+        expect(idempotency.reserve).toHaveBeenCalledWith(key, { leaseMs: RETRY_SAFE_LEASE_MS });
+        expect(idempotency.fail).toHaveBeenCalledWith(key);
+        expect(idempotency.complete).not.toHaveBeenCalled();
+      });
+
+      it('a non-retry-safe failure keeps the key blocked: no fail(), no lease', async () => {
+        const idempotency = makeIdempotency();
+        const service = makeService({ idempotency });
+
+        await expect(service.executeForAutomation(makeLowRiskAction(vi.fn(async () => { throw new Error('boom'); })), { recommendationId: RECOMMENDATION_ID }, context, 'auto_1:evt_1', 'evt_1')).rejects.toThrow('boom');
+
+        expect(idempotency.reserve).toHaveBeenCalledWith(`ai-action-automation:${WORKSPACE_ID}:recommendation.dismiss:auto_1:evt_1`);
+        expect(idempotency.fail).not.toHaveBeenCalled();
+      });
+
+      it('a held but not completed key is "already running" (a plain ConflictError, audited failed), never a duplicate, and leaves the key alone', async () => {
+        const { database, values } = makeDatabase();
+        const idempotency = makeIdempotency({ reserve: vi.fn(async () => false), isCompleted: vi.fn(async () => false) });
+        const execute = vi.fn();
+        const service = makeService({ database, idempotency });
+
+        const run = service.executeForAutomation(retrySafe(execute), { recommendationId: RECOMMENDATION_ID }, context, 'auto_1:evt_1', 'evt_1');
+
+        await expect(run).rejects.toBeInstanceOf(ConflictError);
+        await expect(run).rejects.not.toBeInstanceOf(DuplicateActionRequestError);
+        expect(execute).not.toHaveBeenCalled();
+        expect(idempotency.fail).not.toHaveBeenCalled();
+        expect(values).toHaveBeenCalledWith(expect.objectContaining({ executionStatus: 'failed', failureReason: 'This action is already running for the same idempotency key.' }));
+      });
+
+      it('a completed key is still a duplicate', async () => {
+        const idempotency = makeIdempotency({ reserve: vi.fn(async () => false), isCompleted: vi.fn(async () => true) });
+        const service = makeService({ idempotency });
+
+        await expect(
+          service.executeForAutomation(retrySafe(vi.fn()), { recommendationId: RECOMMENDATION_ID }, context, 'auto_1:evt_1', 'evt_1'),
+        ).rejects.toBeInstanceOf(DuplicateActionRequestError);
+      });
     });
 
     it('permits a new intentional execution under a different key', async () => {
