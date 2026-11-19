@@ -50,11 +50,11 @@ const keyOf = (identifier: ErasedIdentifier) => `${identifier.kind}${SEP}${ident
 export class ErasedIdentifierService {
   constructor(private readonly config: ConfigService<Env, true>) {}
 
-  static async lockShared(tx: NodePgDatabase, workspaceId: string): Promise<void> {
+  async lockShared(tx: NodePgDatabase, workspaceId: string): Promise<void> {
     await tx.execute(sql`select pg_advisory_xact_lock_shared(hashtextextended(${`customer-erasure:${workspaceId}`}, 0))`);
   }
 
-  static async lockExclusive(tx: NodePgDatabase, workspaceId: string): Promise<void> {
+  async lockExclusive(tx: NodePgDatabase, workspaceId: string): Promise<void> {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`customer-erasure:${workspaceId}`}, 0))`);
   }
 

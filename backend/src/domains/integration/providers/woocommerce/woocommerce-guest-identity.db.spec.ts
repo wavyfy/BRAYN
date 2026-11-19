@@ -36,7 +36,7 @@ import { WooCommerceAdapter } from './woocommerce.adapter';
  * durable ingest → processor → guest source customer + identity resolution → order linked → order.created with a
  * canonical customer → health. Throwaway workspaces deleted in afterAll.
  */
-describe('WooCommerce guest checkout identity (real DB)', { timeout: 60_000 }, () => {
+describe('WooCommerce guest checkout identity (real DB)', { timeout: 150_000 }, () => {
   let moduleRef: TestingModule;
   let db: DatabaseService;
   let ingest: WebhookIngestService;

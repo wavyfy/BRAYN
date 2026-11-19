@@ -220,6 +220,11 @@ export class WebhookEventProcessorService implements OnModuleDestroy {
       await this.fail(claimed, 'Processing was abandoned (worker crash or timeout) on every attempt.');
       return;
     }
+    if (claimed.payload === null) {
+      // Cleared by a customer erasure: the personal data is gone and there is nothing left to apply.
+      await this.complete(claimed);
+      return;
+    }
     const payload = reviveDates(claimed.payload);
     if (!isWebhookResourceEvent(payload)) {
       await this.fail(claimed, 'Stored payload is not a recognized webhook resource event.', { permanent: true });

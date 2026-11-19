@@ -1,8 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { DatabaseService } from '../../database/database.service';
 import { normalizePhoneE164 } from '../../common/identity/phone';
+import {
+  ErasedIdentifierService,
+  emailIdentifier,
+  sourceIdentifier,
+} from './erased-identifier.service';
 import type { IntegrationProvider } from '../integration/dto/connect-integration.schema';
 
 /** A provider's customer record, already mapped into BRAYN's shape (doc 06 — Normalization output). */
@@ -29,10 +35,25 @@ export interface NormalizedGuestCustomer extends NormalizedCustomer {
 type GuestField = 'firstName' | 'lastName' | 'phone';
 type GuestValue = { value: string | null; at: Date | null };
 const GUEST_FIELDS = [
-  { field: 'firstName', at: 'guestFirstNameSourceAt', column: 'first_name', atColumn: 'guest_first_name_source_at' },
-  { field: 'lastName', at: 'guestLastNameSourceAt', column: 'last_name', atColumn: 'guest_last_name_source_at' },
+  {
+    field: 'firstName',
+    at: 'guestFirstNameSourceAt',
+    column: 'first_name',
+    atColumn: 'guest_first_name_source_at',
+  },
+  {
+    field: 'lastName',
+    at: 'guestLastNameSourceAt',
+    column: 'last_name',
+    atColumn: 'guest_last_name_source_at',
+  },
   { field: 'phone', at: 'guestPhoneSourceAt', column: 'phone', atColumn: 'guest_phone_source_at' },
-] as const satisfies ReadonlyArray<{ field: GuestField; at: string; column: string; atColumn: string }>;
+] as const satisfies ReadonlyArray<{
+  field: GuestField;
+  at: string;
+  column: string;
+  atColumn: string;
+}>;
 
 /** The rule `upsertGuestMany`'s SQL applies, in TS for in-batch merging: non-empty beats empty, then later order, then the greater value (byte order, as `COLLATE "C"`). */
 export function guestValueWins(candidate: GuestValue, current: GuestValue): boolean {
@@ -51,7 +72,33 @@ export function guestValueWins(candidate: GuestValue, current: GuestValue): bool
  */
 @Injectable()
 export class CustomerService {
-  constructor(private readonly database: DatabaseService) {}
+  constructor(
+    private readonly database: DatabaseService,
+    private readonly erasedIdentifiers: ErasedIdentifierService,
+  ) {}
+
+  /**
+   * Drops customers an erasure blocked (by provider id or email), inside the writing transaction and under the
+   * shared erasure lock — see ErasedIdentifierService. Shared by both upserts below.
+   */
+  private async withoutErased<T extends { externalId: string; email: string | null }>(
+    tx: NodePgDatabase,
+    workspaceId: string,
+    provider: IntegrationProvider,
+    customers: T[],
+  ): Promise<T[]> {
+    await this.erasedIdentifiers.lockShared(tx, workspaceId);
+    const candidates = customers.flatMap((customer) => [
+      sourceIdentifier(provider, customer.externalId),
+      emailIdentifier(customer.email),
+    ]);
+    const isBlocked = await this.erasedIdentifiers.findBlocked(tx, workspaceId, candidates);
+    return customers.filter(
+      (customer) =>
+        !isBlocked(sourceIdentifier(provider, customer.externalId)) &&
+        !isBlocked(emailIdentifier(customer.email)),
+    );
+  }
 
   /**
    * Inserts or updates customers keyed on (workspace, provider, externalId)
@@ -68,32 +115,42 @@ export class CustomerService {
       return 0;
     }
 
-    await this.database.client
-      .insert(commerceCustomers)
-      .values(
-        customers.map((customer) => ({
-          workspaceId,
-          integrationId,
-          provider,
-          ...customer,
-          phoneE164: normalizePhoneE164(customer.phone),
-        })),
-      )
-      .onConflictDoUpdate({
-        target: [commerceCustomers.workspaceId, commerceCustomers.provider, commerceCustomers.externalId],
-        set: {
-          email: sql`excluded.email`,
-          firstName: sql`excluded.first_name`,
-          lastName: sql`excluded.last_name`,
-          phone: sql`excluded.phone`,
-          phoneE164: sql`excluded.phone_e164`,
-          sourceUpdatedAt: sql`excluded.source_updated_at`,
-          sourceCreatedAt: sql`excluded.source_created_at`,
-          updatedAt: new Date(),
-        },
-      });
+    return this.database.transaction(async (tx) => {
+      const allowed = await this.withoutErased(tx, workspaceId, provider, customers);
+      if (allowed.length === 0) {
+        return 0;
+      }
+      await tx
+        .insert(commerceCustomers)
+        .values(
+          allowed.map((customer) => ({
+            workspaceId,
+            integrationId,
+            provider,
+            ...customer,
+            phoneE164: normalizePhoneE164(customer.phone),
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [
+            commerceCustomers.workspaceId,
+            commerceCustomers.provider,
+            commerceCustomers.externalId,
+          ],
+          set: {
+            email: sql`excluded.email`,
+            firstName: sql`excluded.first_name`,
+            lastName: sql`excluded.last_name`,
+            phone: sql`excluded.phone`,
+            phoneE164: sql`excluded.phone_e164`,
+            sourceUpdatedAt: sql`excluded.source_updated_at`,
+            sourceCreatedAt: sql`excluded.source_created_at`,
+            updatedAt: new Date(),
+          },
+        });
 
-    return customers.length;
+      return allowed.length;
+    });
   }
 
   /**
@@ -128,40 +185,62 @@ export class CustomerService {
       return;
     }
 
-    const set: Record<string, unknown> = { updatedAt: new Date() };
-    for (const { field, at, column, atColumn } of GUEST_FIELDS) {
-      const stored = `(coalesce(commerce_customers.${atColumn}, '-infinity'), coalesce(commerce_customers.${column}, '') COLLATE "C")`;
-      const incoming = `(coalesce(excluded.${atColumn}, '-infinity'), coalesce(excluded.${column}, '') COLLATE "C")`;
-      const wins = `excluded.${column} IS NOT NULL AND (commerce_customers.${column} IS NULL OR ${incoming} > ${stored})`;
-      set[field] = sql.raw(`CASE WHEN ${wins} THEN excluded.${column} ELSE commerce_customers.${column} END`);
-      set[at] = sql.raw(`CASE WHEN ${wins} THEN excluded.${atColumn} ELSE commerce_customers.${atColumn} END`);
-      if (field === 'phone') {
-        set.phoneE164 = sql.raw(`CASE WHEN ${wins} THEN excluded.phone_e164 ELSE commerce_customers.phone_e164 END`);
+    await this.database.transaction(async (tx) => {
+      const allowed = await this.withoutErased(
+        tx,
+        workspaceId,
+        provider,
+        [...merged].map(([externalId, guest]) => ({ externalId, email: guest.email, guest })),
+      );
+      if (allowed.length === 0) {
+        return;
       }
-    }
 
-    await this.database.client
-      .insert(commerceCustomers)
-      .values(
-        [...merged].map(([externalId, guest]) => ({
-          workspaceId,
-          integrationId,
-          provider,
-          externalId,
-          email: guest.email,
-          firstName: guest.firstName.value,
-          lastName: guest.lastName.value,
-          phone: guest.phone.value,
-          phoneE164: normalizePhoneE164(guest.phone.value),
-          guestFirstNameSourceAt: guest.firstName.value === null ? null : guest.firstName.at,
-          guestLastNameSourceAt: guest.lastName.value === null ? null : guest.lastName.at,
-          guestPhoneSourceAt: guest.phone.value === null ? null : guest.phone.at,
-        })),
-      )
-      .onConflictDoUpdate({
-        target: [commerceCustomers.workspaceId, commerceCustomers.provider, commerceCustomers.externalId],
-        set,
-      });
+      const set: Record<string, unknown> = { updatedAt: new Date() };
+      for (const { field, at, column, atColumn } of GUEST_FIELDS) {
+        const stored = `(coalesce(commerce_customers.${atColumn}, '-infinity'), coalesce(commerce_customers.${column}, '') COLLATE "C")`;
+        const incoming = `(coalesce(excluded.${atColumn}, '-infinity'), coalesce(excluded.${column}, '') COLLATE "C")`;
+        const wins = `excluded.${column} IS NOT NULL AND (commerce_customers.${column} IS NULL OR ${incoming} > ${stored})`;
+        set[field] = sql.raw(
+          `CASE WHEN ${wins} THEN excluded.${column} ELSE commerce_customers.${column} END`,
+        );
+        set[at] = sql.raw(
+          `CASE WHEN ${wins} THEN excluded.${atColumn} ELSE commerce_customers.${atColumn} END`,
+        );
+        if (field === 'phone') {
+          set.phoneE164 = sql.raw(
+            `CASE WHEN ${wins} THEN excluded.phone_e164 ELSE commerce_customers.phone_e164 END`,
+          );
+        }
+      }
+
+      await tx
+        .insert(commerceCustomers)
+        .values(
+          allowed.map(({ externalId, guest }) => ({
+            workspaceId,
+            integrationId,
+            provider,
+            externalId,
+            email: guest.email,
+            firstName: guest.firstName.value,
+            lastName: guest.lastName.value,
+            phone: guest.phone.value,
+            phoneE164: normalizePhoneE164(guest.phone.value),
+            guestFirstNameSourceAt: guest.firstName.value === null ? null : guest.firstName.at,
+            guestLastNameSourceAt: guest.lastName.value === null ? null : guest.lastName.at,
+            guestPhoneSourceAt: guest.phone.value === null ? null : guest.phone.at,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [
+            commerceCustomers.workspaceId,
+            commerceCustomers.provider,
+            commerceCustomers.externalId,
+          ],
+          set,
+        });
+    });
   }
 
   /** This workspace/provider's current `sourceUpdatedAt` for each existing externalId (doc 06/20 — Reconciliation: detect missing/changed records before repairing). Absent from the map means no such row exists yet. */
@@ -175,7 +254,10 @@ export class CustomerService {
     }
 
     const rows = await this.database.client
-      .select({ externalId: commerceCustomers.externalId, sourceUpdatedAt: commerceCustomers.sourceUpdatedAt })
+      .select({
+        externalId: commerceCustomers.externalId,
+        sourceUpdatedAt: commerceCustomers.sourceUpdatedAt,
+      })
       .from(commerceCustomers)
       .where(
         and(
