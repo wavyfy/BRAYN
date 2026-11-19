@@ -465,3 +465,44 @@ describe('CustomerDetailPage — Customer summary (Slice 4.5)', () => {
     expect(screen.getByText('Activity')).toBeTruthy();
   });
 });
+
+describe('CustomerDetailPage — owner-only erase action (Stage 10)', () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  const withRole = (role: string | null) =>
+    apiFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/users/me/workspaces') return role ? [{ id: 'ws_1', role }, { id: 'ws_other', role: 'owner' }] : [{ id: 'ws_other', role: 'owner' }];
+      return [];
+    });
+
+  it('shows Erase customer to the workspace owner', async () => {
+    withRole('owner');
+    render(await renderPage(baseCustomer));
+    expect(screen.getByRole('button', { name: 'Erase customer' })).toBeTruthy();
+  });
+
+  it.each(['admin', 'marketing', 'support', 'analyst'])('hides it from %s — the rest of the page is unchanged', async (role) => {
+    withRole(role);
+    render(await renderPage(baseCustomer));
+    expect(screen.queryByRole('button', { name: 'Erase customer' })).toBeNull();
+    expect(screen.getByRole('heading', { level: 1, name: 'Jane Doe' })).toBeTruthy();
+  });
+
+  it('hides it when the caller owns a different workspace only, or the membership lookup fails', async () => {
+    withRole(null);
+    render(await renderPage(baseCustomer));
+    expect(screen.queryByRole('button', { name: 'Erase customer' })).toBeNull();
+    cleanup();
+
+    apiFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/users/me/workspaces') throw new ApiError(500, 'INTERNAL', 'boom');
+      return [];
+    });
+    render(await renderPage(baseCustomer));
+    expect(screen.queryByRole('button', { name: 'Erase customer' })).toBeNull();
+    expect(screen.getByRole('heading', { level: 1, name: 'Jane Doe' })).toBeTruthy();
+  });
+});

@@ -16,6 +16,7 @@ import { RevenueOpportunities, type RevenueOpportunity, type Recommendation } fr
 import { CustomerMemory, type MemoryEntry } from './customer-memory';
 import { CustomerPreferences, type Preference } from './customer-preferences';
 import { CustomerSummary, RefreshSummaryButton, type CustomerSummaryView } from './customer-summary';
+import { EraseCustomerButton } from './erase-customer-button';
 
 type CustomerRecord = {
   canonicalCustomerId: string;
@@ -97,7 +98,7 @@ export default async function CustomerDetailPage({
   }
 
   // Health is calculated on demand — "not yet calculated" (404) is an expected empty state, not a page-level error.
-  const [health, memoryResult, preferencesResult, summaryResult, historyResult] = await Promise.all([
+  const [health, memoryResult, preferencesResult, summaryResult, historyResult, membershipsResult] = await Promise.all([
     apiFetch(`${base}/health`).catch((error: unknown): null => {
       if (error instanceof ApiError && error.status === 404) return null;
       throw error;
@@ -106,7 +107,10 @@ export default async function CustomerDetailPage({
     fetchSection<Preference[]>(`${base}/preferences`),
     fetchSection<CustomerSummaryView>(`${base}/summary`),
     fetchSection<HealthHistoryEntry[]>(`${base}/health/history`),
+    // Only to decide whether to offer the owner-only erase action; the backend enforces the role regardless.
+    fetchSection<Array<{ id: string; role: string }>>('/api/v1/users/me/workspaces'),
   ]);
+  const isOwner = membershipsResult.ok && membershipsResult.data.find((membership) => membership.id === workspaceId)?.role === 'owner';
 
   const opportunities = opportunitiesResult.ok ? opportunitiesResult.data : [];
   const recommendations = recommendationsResult.ok ? recommendationsResult.data : [];
@@ -133,6 +137,11 @@ export default async function CustomerDetailPage({
               ))}
             </div>
           </div>
+          {isOwner && (
+            <div className="ml-auto">
+              <EraseCustomerButton workspaceId={workspaceId} canonicalCustomerId={canonicalCustomerId} />
+            </div>
+          )}
         </div>
 
         <MetricStrip className="mt-5">

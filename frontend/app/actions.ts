@@ -229,3 +229,25 @@ export async function generateCustomerSummary(workspaceId: string, canonicalCust
     method: 'POST',
   });
 }
+
+/**
+ * Person-level customer erasure (owner-only backend endpoint, Stage 10). Returns a result instead of throwing so the
+ * caller can show a status-specific message (Next.js masks thrown server-action errors in production). Never returns
+ * or logs any of the erased customer's data.
+ */
+export async function eraseCustomer(
+  workspaceId: string,
+  canonicalCustomerId: string,
+  confirmation: string,
+): Promise<{ ok: true } | { ok: false; status: number }> {
+  try {
+    await apiFetch(`/api/v1/workspaces/${workspaceId}/customers/${canonicalCustomerId}/erasure`, {
+      method: 'POST',
+      body: JSON.stringify({ confirmation }),
+    });
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof ApiError) return { ok: false, status: error.status };
+    throw error;
+  }
+}

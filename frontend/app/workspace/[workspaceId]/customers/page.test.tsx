@@ -90,4 +90,17 @@ describe('CustomersPage', () => {
     expect(screen.getByText('Access denied')).toBeTruthy();
     expect(screen.getByText('Your role does not permit this action.')).toBeTruthy();
   });
+
+  it('after an erasure, shows a confirmation that names no one; without the flag it shows nothing', async () => {
+    apiFetch.mockResolvedValueOnce({ customers: [], page: 1, limit: 20, hasMore: false });
+    render(await CustomersPage({ params: { workspaceId: 'ws_1' }, searchParams: { erased: '1' } }));
+    expect(screen.getByRole('status').textContent).toBe(
+      'Customer erased. Their records and orders were permanently deleted, and their identifiers are blocked from re-import.',
+    );
+    cleanup();
+
+    apiFetch.mockResolvedValueOnce({ customers: [], page: 1, limit: 20, hasMore: false });
+    render(await CustomersPage({ params: { workspaceId: 'ws_1' }, searchParams: {} }));
+    expect(screen.queryByText(/Customer erased/)).toBeNull();
+  });
 });

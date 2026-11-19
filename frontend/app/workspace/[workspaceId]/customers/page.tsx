@@ -23,7 +23,7 @@ export default async function CustomersPage({
   searchParams,
 }: {
   params: { workspaceId: string };
-  searchParams: { search?: string; page?: string };
+  searchParams: { search?: string; page?: string; erased?: string };
 }) {
   const search = searchParams.search ?? '';
   const page = Number(searchParams.page ?? '1') || 1;
@@ -47,6 +47,11 @@ export default async function CustomersPage({
       <PageHeader title="Customers" description="Every customer BRAYN has resolved across your connected sources." />
 
       <PageBody>
+        {searchParams.erased === '1' && (
+          <p role="status" className="mb-4 rounded-lg bg-success/[0.07] px-3 py-2 text-[13px] text-success ring-1 ring-inset ring-success/20">
+            Customer erased. Their records and orders were permanently deleted, and their identifiers are blocked from re-import.
+          </p>
+        )}
         <form method="GET" className="flex flex-wrap items-center gap-2" role="search">
           <div className="relative w-full max-w-sm">
             <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
