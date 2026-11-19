@@ -7,6 +7,7 @@ import { WebsiteEventIngestService } from './website-event-ingest.service';
 import { WebsiteTrackingKeyController } from './website-tracking-key.controller';
 import { WebsiteTrackingKeyService } from './website-tracking-key.service';
 import { RedisService } from '../../common/rate-limit/redis.service';
+import { CommerceModule } from '../commerce/commerce.module';
 
 /**
  * Website Behaviour domain (doc06 Integration Sources — "Website
@@ -24,7 +25,7 @@ import { RedisService } from '../../common/rate-limit/redis.service';
  * pattern as DashboardModule/IntegrationController.
  */
 @Module({
-  imports: [WorkspaceModule, IntegrationModule, IdentityResolutionModule],
+  imports: [WorkspaceModule, IntegrationModule, IdentityResolutionModule, CommerceModule],
   controllers: [WebsiteEventController, WebsiteTrackingKeyController],
   // RedisService is a root-module provider (not exported by any module); its client is lazy and stateless, so a second instance here is harmless.
   providers: [WebsiteEventIngestService, WebsiteTrackingKeyService, RedisService],

@@ -6,6 +6,9 @@ import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { customerErasures } from '../../database/schema/customer-erasures';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
+import { websiteEvents } from '../../database/schema/website-events';
+import { websiteSessions } from '../../database/schema/website-sessions';
+import { websiteVisitors } from '../../database/schema/website-visitors';
 import { NotFoundError } from '../../common/errors/app-error';
 import {
   ErasedIdentifierService,
@@ -125,6 +128,7 @@ export class CustomerErasureService {
         sources,
         emails,
       );
+      await this.eraseWebsiteIdentityData(tx, workspaceId, personIds, emails);
 
       const identifiers: ErasedIdentifier[] = [
         ...emails.map((email) => emailIdentifier(email)!),
@@ -205,6 +209,72 @@ export class CustomerErasureService {
       all.push(...frontier);
     }
     return all;
+  }
+
+  /**
+   * Website identity data carrying the erased emails (`identity_signal` events store `{ email, verified }`), beyond
+   * the visitors linked to the person (purgeCanonicalCustomerIfOrphaned deletes those): a visitor that sent one of
+   * the emails but was never linked (unsigned signal, or sent before the customer existed) is this person's browsing
+   * data — deleted with its sessions and events. A visitor linked to a *different* customer keeps its own history;
+   * only the identity events carrying the erased email are removed.
+   */
+  private async eraseWebsiteIdentityData(
+    tx: NodePgDatabase,
+    workspaceId: string,
+    personIds: string[],
+    emails: string[],
+  ): Promise<void> {
+    if (emails.length === 0) {
+      return;
+    }
+    const carriesErasedEmail = and(
+      eq(websiteEvents.workspaceId, workspaceId),
+      eq(websiteEvents.eventType, 'identity_signal'),
+      sql`lower(trim(${websiteEvents.payload}->>'email')) in ${emails}`,
+    );
+    const visitors = await tx
+      .selectDistinct({
+        id: websiteVisitors.id,
+        canonicalCustomerId: websiteVisitors.canonicalCustomerId,
+      })
+      .from(websiteEvents)
+      .innerJoin(websiteVisitors, eq(websiteVisitors.id, websiteEvents.visitorId))
+      .where(carriesErasedEmail);
+    const wholeVisitorIds = visitors
+      .filter(
+        (visitor) =>
+          visitor.canonicalCustomerId === null || personIds.includes(visitor.canonicalCustomerId),
+      )
+      .map((visitor) => visitor.id);
+
+    await tx.delete(websiteEvents).where(carriesErasedEmail);
+    if (wholeVisitorIds.length > 0) {
+      // events → sessions → visitors (FK), same order as purgeCanonicalCustomerIfOrphaned.
+      await tx
+        .delete(websiteEvents)
+        .where(
+          and(
+            eq(websiteEvents.workspaceId, workspaceId),
+            inArray(websiteEvents.visitorId, wholeVisitorIds),
+          ),
+        );
+      await tx
+        .delete(websiteSessions)
+        .where(
+          and(
+            eq(websiteSessions.workspaceId, workspaceId),
+            inArray(websiteSessions.visitorId, wholeVisitorIds),
+          ),
+        );
+      await tx
+        .delete(websiteVisitors)
+        .where(
+          and(
+            eq(websiteVisitors.workspaceId, workspaceId),
+            inArray(websiteVisitors.id, wholeVisitorIds),
+          ),
+        );
+    }
   }
 
   /**

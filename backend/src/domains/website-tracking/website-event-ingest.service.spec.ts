@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { WebsiteEventIngestService } from './website-event-ingest.service';
+import type { ErasedIdentifierService } from '../commerce/erased-identifier.service';
 import type { DatabaseService } from '../../database/database.service';
 import type { IdempotencyService } from '../../common/idempotency/idempotency.service';
 import type { RedisService } from '../../common/rate-limit/redis.service';
@@ -49,6 +50,8 @@ function makeDeps(
     fail?: () => Promise<void>;
     redisConfigured?: boolean;
     increment?: (key: string) => Promise<number>;
+    /** Emails on the erased-customer block list (normalized). */
+    erasedEmails?: string[];
   } = {},
 ) {
   const selectResults = overrides.select ?? [[connectedIntegration]];
@@ -92,6 +95,12 @@ function makeDeps(
     incrementWithExpiry: vi.fn(overrides.increment ?? (async () => 1)),
   };
 
+  const erasedIdentifiers = {
+    lockShared: vi.fn(async () => undefined),
+    findBlocked: vi.fn(async () => (identifier: { kind: string; value: string } | null) =>
+      identifier !== null && identifier.kind === 'email' && (overrides.erasedEmails ?? []).includes(identifier.value)),
+  } as unknown as ErasedIdentifierService;
+
   const configValues: Record<string, unknown> = {
     RATE_LIMIT_WINDOW_SECONDS: 60,
     WEBSITE_EVENT_RATE_LIMIT_IP_MAX: 120,
@@ -100,13 +109,14 @@ function makeDeps(
   };
 
   const service = new WebsiteEventIngestService(
-    { client } as unknown as DatabaseService,
+    { client, transaction: (fn: (tx: unknown) => unknown) => fn(client) } as unknown as DatabaseService,
     idempotency,
     integrationService,
     identityResolutionService,
     redis as unknown as RedisService,
     { event: vi.fn() } as unknown as StructuredLoggerService,
     { get: (key: string) => configValues[key] } as never,
+    erasedIdentifiers,
   );
 
   return { service, client, idempotency, integrationService, identityResolutionService, eventInsertChain, redis };
@@ -356,6 +366,16 @@ describe('WebsiteEventIngestService', () => {
 
       expect(identityResolutionService.resolveWebsiteVisitor).toHaveBeenCalledWith('ws_1', 'visitor_row_xyz', 'shopper@example.com');
       expect(storedPayload(client)).toEqual({ email: 'shopper@example.com', verified: true });
+    });
+
+    it('an erased customer’s email is never stored or linked, even with a valid signature; the event is kept anonymous', async () => {
+      const { service, client, identityResolutionService } = makeDeps({ erasedEmails: ['shopper@example.com'] });
+
+      const result = await service.ingest('ws_1', identity({ email: ' Shopper@Example.com', signature: sign('shopper@example.com') }), CTX);
+
+      expect(result).toEqual({ status: 'accepted' });
+      expect(identityResolutionService.resolveWebsiteVisitor).not.toHaveBeenCalled();
+      expect(storedPayload(client)).toBeNull();
     });
 
     it('stores but does not link an unsigned signal', async () => {
