@@ -28,6 +28,8 @@ const REQUIRED_IN_PRODUCTION: ReadonlyArray<keyof Env> = [
   // Milestone #5 D2 — without this the daily intelligence run endpoint
   // refuses every call (fails closed), so daily recalculation never runs.
   'BRAYN_INTERNAL_CRON_SECRET',
+  // Stage 10 customer erasure — without it erasure fails closed (503).
+  'ERASURE_HMAC_SECRET',
 ];
 
 export function warnOnMissingProductionSecrets(env: Env, logger: StructuredLoggerService): void {

@@ -113,6 +113,12 @@ export const envSchema = z.object({
   // daily intelligence run endpoint (Milestone #5 D2). Unset → that endpoint
   // fails closed (503). e.g. `openssl rand -hex 32`, distinct per environment.
   BRAYN_INTERNAL_CRON_SECRET: z.string().min(32).optional(),
+
+  // Keys the HMACs of erased customers' identifiers (ErasedIdentifierService). Dedicated — never the credential
+  // encryption key. Unset → customer erasure fails closed (503), and ingestion fails closed for any workspace that
+  // already has erased identifiers. Do NOT rotate: stored HMACs can't be re-keyed, so a new value makes ingestion
+  // for those workspaces fail closed. e.g. `openssl rand -hex 32`, distinct per environment.
+  ERASURE_HMAC_SECRET: z.string().min(32).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
