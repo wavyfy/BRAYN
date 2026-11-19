@@ -10,10 +10,7 @@ import { customerPreferences } from '../../database/schema/customer-preferences'
 import { customerSummaries } from '../../database/schema/customer-summaries';
 import { revenueOpportunities } from '../../database/schema/revenue-opportunities';
 import { recommendations } from '../../database/schema/recommendations';
-import {
-  identityMergeHistory,
-  type MergeSnapshotCustomer,
-} from '../../database/schema/identity-merge-history';
+import { identityMergeHistory, type MergeSnapshotCustomer } from '../../database/schema/identity-merge-history';
 import { TERMINAL_STATUSES } from '../intelligence-engines/revenue-opportunity.service';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import {
@@ -25,12 +22,7 @@ import { websiteVisitors } from '../../database/schema/website-visitors';
 import { DatabaseService } from '../../database/database.service';
 import { lockErasureShared } from '../commerce/erased-identifier.service';
 import { RequestContext } from '../../common/logging/request-context';
-import {
-  ConflictError,
-  NotFoundError,
-  UnauthenticatedError,
-  ValidationError,
-} from '../../common/errors/app-error';
+import { ConflictError, NotFoundError, UnauthenticatedError, ValidationError } from '../../common/errors/app-error';
 import type { IntegrationProvider } from '../integration/dto/connect-integration.schema';
 
 const REVIEW_INSERT_CHUNK = 1000;
@@ -107,11 +99,7 @@ export class IdentityResolutionService {
    * with the same ids — an already-linked row keeps its link, and re-
    * flagging an already-recorded pair is a no-op (doc 20 Idempotency).
    */
-  async resolveMany(
-    workspaceId: string,
-    provider: IntegrationProvider,
-    externalIds: string[],
-  ): Promise<void> {
+  async resolveMany(workspaceId: string, provider: IntegrationProvider, externalIds: string[]): Promise<void> {
     if (externalIds.length === 0) {
       return;
     }
@@ -131,10 +119,7 @@ export class IdentityResolutionService {
           canonicalEmail: canonicalCustomers.primaryEmail,
         })
         .from(commerceCustomers)
-        .leftJoin(
-          canonicalCustomers,
-          eq(canonicalCustomers.id, commerceCustomers.canonicalCustomerId),
-        )
+        .leftJoin(canonicalCustomers, eq(canonicalCustomers.id, commerceCustomers.canonicalCustomerId))
         .where(
           and(
             eq(commerceCustomers.workspaceId, workspaceId),
@@ -198,17 +183,11 @@ export class IdentityResolutionService {
    * visitor row associates its entire historical event history; nothing
    * is duplicated or rewritten.
    */
-  async resolveWebsiteVisitor(
-    workspaceId: string,
-    websiteVisitorId: string,
-    email: string,
-  ): Promise<void> {
+  async resolveWebsiteVisitor(workspaceId: string, websiteVisitorId: string, email: string): Promise<void> {
     const [visitor] = await this.database.client
       .select({ id: websiteVisitors.id, canonicalCustomerId: websiteVisitors.canonicalCustomerId })
       .from(websiteVisitors)
-      .where(
-        and(eq(websiteVisitors.workspaceId, workspaceId), eq(websiteVisitors.id, websiteVisitorId)),
-      )
+      .where(and(eq(websiteVisitors.workspaceId, workspaceId), eq(websiteVisitors.id, websiteVisitorId)))
       .limit(1);
     if (!visitor) {
       return;
@@ -216,24 +195,14 @@ export class IdentityResolutionService {
 
     const normalizedEmail = email.trim().toLowerCase();
     if (visitor.canonicalCustomerId) {
-      await this.flagEmailConflicts(
-        this.database.client,
-        workspaceId,
-        [{ canonicalCustomerId: visitor.canonicalCustomerId, email: normalizedEmail }],
-        'website_email_conflict',
-      );
+      await this.flagEmailConflicts(this.database.client, workspaceId, [{ canonicalCustomerId: visitor.canonicalCustomerId, email: normalizedEmail }], 'website_email_conflict');
       return;
     }
 
     const [canonical] = await this.database.client
       .select({ id: canonicalCustomers.id, mergedIntoId: canonicalCustomers.mergedIntoId })
       .from(canonicalCustomers)
-      .where(
-        and(
-          eq(canonicalCustomers.workspaceId, workspaceId),
-          eq(canonicalCustomers.primaryEmail, normalizedEmail),
-        ),
-      )
+      .where(and(eq(canonicalCustomers.workspaceId, workspaceId), eq(canonicalCustomers.primaryEmail, normalizedEmail)))
       .limit(1);
     if (!canonical) {
       return;
@@ -250,12 +219,7 @@ export class IdentityResolutionService {
     return this.database.client
       .select()
       .from(canonicalCustomerDuplicates)
-      .where(
-        and(
-          eq(canonicalCustomerDuplicates.workspaceId, workspaceId),
-          eq(canonicalCustomerDuplicates.status, 'pending'),
-        ),
-      );
+      .where(and(eq(canonicalCustomerDuplicates.workspaceId, workspaceId), eq(canonicalCustomerDuplicates.status, 'pending')));
   }
 
   /**
@@ -293,16 +257,9 @@ export class IdentityResolutionService {
     const [existing] = await this.database.client
       .select({ id: canonicalCustomerDuplicates.id })
       .from(canonicalCustomerDuplicates)
-      .where(
-        and(
-          eq(canonicalCustomerDuplicates.workspaceId, workspaceId),
-          eq(canonicalCustomerDuplicates.id, duplicateId),
-        ),
-      )
+      .where(and(eq(canonicalCustomerDuplicates.workspaceId, workspaceId), eq(canonicalCustomerDuplicates.id, duplicateId)))
       .limit(1);
-    throw existing
-      ? new ConflictError('This candidate has already been reviewed.')
-      : new NotFoundError('Duplicate candidate not found.');
+    throw existing ? new ConflictError('This candidate has already been reviewed.') : new NotFoundError('Duplicate candidate not found.');
   }
 
   /**
@@ -359,12 +316,7 @@ export class IdentityResolutionService {
       const [candidate] = await tx
         .select()
         .from(canonicalCustomerDuplicates)
-        .where(
-          and(
-            eq(canonicalCustomerDuplicates.workspaceId, workspaceId),
-            eq(canonicalCustomerDuplicates.id, duplicateId),
-          ),
-        )
+        .where(and(eq(canonicalCustomerDuplicates.workspaceId, workspaceId), eq(canonicalCustomerDuplicates.id, duplicateId)))
         .for('update');
       if (!candidate) {
         throw new NotFoundError('Duplicate candidate not found.');
@@ -376,15 +328,7 @@ export class IdentityResolutionService {
       const pair = await tx
         .select()
         .from(canonicalCustomers)
-        .where(
-          and(
-            eq(canonicalCustomers.workspaceId, workspaceId),
-            inArray(canonicalCustomers.id, [
-              candidate.canonicalCustomerAId,
-              candidate.canonicalCustomerBId,
-            ]),
-          ),
-        )
+        .where(and(eq(canonicalCustomers.workspaceId, workspaceId), inArray(canonicalCustomers.id, [candidate.canonicalCustomerAId, candidate.canonicalCustomerBId])))
         .for('update');
       if (pair.length !== 2) {
         throw new NotFoundError('Both customers must exist in this workspace.');
@@ -392,13 +336,9 @@ export class IdentityResolutionService {
       if (pair.some((customer) => customer.mergedIntoId)) {
         throw new ConflictError('One of these customers has already been merged.');
       }
-      const [surviving, merged] = [...pair].sort(
-        (x, y) => x.createdAt.getTime() - y.createdAt.getTime() || x.id.localeCompare(y.id),
-      );
+      const [surviving, merged] = [...pair].sort((x, y) => x.createdAt.getTime() - y.createdAt.getTime() || x.id.localeCompare(y.id));
 
-      const snapshotOf = async (
-        customer: (typeof pair)[number],
-      ): Promise<MergeSnapshotCustomer> => {
+      const snapshotOf = async (customer: (typeof pair)[number]): Promise<MergeSnapshotCustomer> => {
         const sourceRecords = await tx
           .select({
             commerceCustomerId: commerceCustomers.id,
@@ -409,39 +349,19 @@ export class IdentityResolutionService {
             phoneE164: commerceCustomers.phoneE164,
           })
           .from(commerceCustomers)
-          .where(
-            and(
-              eq(commerceCustomers.workspaceId, workspaceId),
-              eq(commerceCustomers.canonicalCustomerId, customer.id),
-            ),
-          );
+          .where(and(eq(commerceCustomers.workspaceId, workspaceId), eq(commerceCustomers.canonicalCustomerId, customer.id)));
         const visitors = await tx
           .select({ id: websiteVisitors.id })
           .from(websiteVisitors)
-          .where(
-            and(
-              eq(websiteVisitors.workspaceId, workspaceId),
-              eq(websiteVisitors.canonicalCustomerId, customer.id),
-            ),
-          );
+          .where(and(eq(websiteVisitors.workspaceId, workspaceId), eq(websiteVisitors.canonicalCustomerId, customer.id)));
         const memoryEntries = await tx
           .select({ id: customerMemoryEntries.id })
           .from(customerMemoryEntries)
-          .where(
-            and(
-              eq(customerMemoryEntries.workspaceId, workspaceId),
-              eq(customerMemoryEntries.canonicalCustomerId, customer.id),
-            ),
-          );
+          .where(and(eq(customerMemoryEntries.workspaceId, workspaceId), eq(customerMemoryEntries.canonicalCustomerId, customer.id)));
         const preferenceRows = await tx
           .select({ id: customerPreferences.id })
           .from(customerPreferences)
-          .where(
-            and(
-              eq(customerPreferences.workspaceId, workspaceId),
-              eq(customerPreferences.canonicalCustomerId, customer.id),
-            ),
-          );
+          .where(and(eq(customerPreferences.workspaceId, workspaceId), eq(customerPreferences.canonicalCustomerId, customer.id)));
         return {
           canonicalCustomerId: customer.id,
           primaryEmail: customer.primaryEmail,
@@ -455,12 +375,7 @@ export class IdentityResolutionService {
       const [mergedHealthState] = await tx
         .select()
         .from(customerHealthStates)
-        .where(
-          and(
-            eq(customerHealthStates.workspaceId, workspaceId),
-            eq(customerHealthStates.canonicalCustomerId, merged.id),
-          ),
-        );
+        .where(and(eq(customerHealthStates.workspaceId, workspaceId), eq(customerHealthStates.canonicalCustomerId, merged.id)));
 
       const [history] = await tx
         .insert(identityMergeHistory)
@@ -473,70 +388,36 @@ export class IdentityResolutionService {
           matchedSignal: candidate.matchedSignal,
           confidence: candidate.confidence,
           reason: trimmedReason,
-          snapshot: {
-            surviving: await snapshotOf(surviving),
-            merged: { ...(await snapshotOf(merged)), healthState: mergedHealthState ?? null },
-          },
+          snapshot: { surviving: await snapshotOf(surviving), merged: { ...(await snapshotOf(merged)), healthState: mergedHealthState ?? null } },
         })
         .returning();
 
       const now = new Date();
-      const fromMerged = <T extends { workspaceId: AnyPgColumn; canonicalCustomerId: AnyPgColumn }>(
-        table: T,
-      ) => and(eq(table.workspaceId, workspaceId), eq(table.canonicalCustomerId, merged.id));
+      const fromMerged = <T extends { workspaceId: AnyPgColumn; canonicalCustomerId: AnyPgColumn }>(table: T) =>
+        and(eq(table.workspaceId, workspaceId), eq(table.canonicalCustomerId, merged.id));
 
-      await tx
-        .update(commerceCustomers)
-        .set({ canonicalCustomerId: surviving.id, updatedAt: now })
-        .where(fromMerged(commerceCustomers));
-      await tx
-        .update(websiteVisitors)
-        .set({ canonicalCustomerId: surviving.id, updatedAt: now })
-        .where(fromMerged(websiteVisitors));
-      await tx
-        .update(conversations)
-        .set({ canonicalCustomerId: surviving.id, updatedAt: now })
-        .where(fromMerged(conversations));
+      await tx.update(commerceCustomers).set({ canonicalCustomerId: surviving.id, updatedAt: now }).where(fromMerged(commerceCustomers));
+      await tx.update(websiteVisitors).set({ canonicalCustomerId: surviving.id, updatedAt: now }).where(fromMerged(websiteVisitors));
+      await tx.update(conversations).set({ canonicalCustomerId: surviving.id, updatedAt: now }).where(fromMerged(conversations));
       // Memory moves as-is (all statuses): updatedAt is pinned so it keeps meaning "content last changed", not "merged".
       await tx
         .update(customerMemoryEntries)
-        .set({
-          canonicalCustomerId: surviving.id,
-          updatedAt: sql`${customerMemoryEntries.updatedAt}`,
-        })
+        .set({ canonicalCustomerId: surviving.id, updatedAt: sql`${customerMemoryEntries.updatedAt}` })
         .where(fromMerged(customerMemoryEntries));
       await tx
         .update(customerPreferences)
-        .set({
-          canonicalCustomerId: surviving.id,
-          updatedAt: sql`${customerPreferences.updatedAt}`,
-        })
+        .set({ canonicalCustomerId: surviving.id, updatedAt: sql`${customerPreferences.updatedAt}` })
         .where(fromMerged(customerPreferences));
       await tx.delete(customerHealthStates).where(fromMerged(customerHealthStates));
       // Derived and now describes a customer that no longer exists on its own; the survivor's summary turns stale by itself.
       await tx.delete(customerSummaries).where(fromMerged(customerSummaries));
       await tx
         .update(revenueOpportunities)
-        .set({
-          status: 'expired',
-          closedAt: now,
-          closedReason: MERGE_CLOSED_REASON,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            fromMerged(revenueOpportunities),
-            notInArray(revenueOpportunities.status, [...TERMINAL_STATUSES]),
-          ),
-        );
+        .set({ status: 'expired', closedAt: now, closedReason: MERGE_CLOSED_REASON, updatedAt: now })
+        .where(and(fromMerged(revenueOpportunities), notInArray(revenueOpportunities.status, [...TERMINAL_STATUSES])));
       await tx
         .update(recommendations)
-        .set({
-          state: 'dismissed',
-          closedAt: now,
-          closedReason: MERGE_CLOSED_REASON,
-          updatedAt: now,
-        })
+        .set({ state: 'dismissed', closedAt: now, closedReason: MERGE_CLOSED_REASON, updatedAt: now })
         .where(and(fromMerged(recommendations), eq(recommendations.state, 'active')));
 
       await tx
@@ -545,42 +426,22 @@ export class IdentityResolutionService {
         .where(eq(canonicalCustomerDuplicates.id, candidate.id));
       await tx
         .update(canonicalCustomerDuplicates)
-        .set({
-          status: 'superseded',
-          reviewedByUserId: actorUserId,
-          reviewedAt: now,
-          updatedAt: now,
-        })
+        .set({ status: 'superseded', reviewedByUserId: actorUserId, reviewedAt: now, updatedAt: now })
         .where(
           and(
             eq(canonicalCustomerDuplicates.workspaceId, workspaceId),
             eq(canonicalCustomerDuplicates.status, 'pending'),
-            or(
-              eq(canonicalCustomerDuplicates.canonicalCustomerAId, merged.id),
-              eq(canonicalCustomerDuplicates.canonicalCustomerBId, merged.id),
-            ),
+            or(eq(canonicalCustomerDuplicates.canonicalCustomerAId, merged.id), eq(canonicalCustomerDuplicates.canonicalCustomerBId, merged.id)),
           ),
         );
 
       await tx
         .update(canonicalCustomers)
         .set({ mergedIntoId: surviving.id, updatedAt: now })
-        .where(
-          and(
-            eq(canonicalCustomers.workspaceId, workspaceId),
-            eq(canonicalCustomers.mergedIntoId, merged.id),
-          ),
-        );
-      await tx
-        .update(canonicalCustomers)
-        .set({ mergedIntoId: surviving.id, mergedAt: now, updatedAt: now })
-        .where(eq(canonicalCustomers.id, merged.id));
+        .where(and(eq(canonicalCustomers.workspaceId, workspaceId), eq(canonicalCustomers.mergedIntoId, merged.id)));
+      await tx.update(canonicalCustomers).set({ mergedIntoId: surviving.id, mergedAt: now, updatedAt: now }).where(eq(canonicalCustomers.id, merged.id));
 
-      return {
-        survivingCanonicalCustomerId: surviving.id,
-        mergedCanonicalCustomerId: merged.id,
-        mergeHistoryId: history.id,
-      };
+      return { survivingCanonicalCustomerId: surviving.id, mergedCanonicalCustomerId: merged.id, mergeHistoryId: history.id };
     });
   }
 
@@ -593,11 +454,7 @@ export class IdentityResolutionService {
    * `resolveMany` only ever reaches an unresolved row once. A match on a
    * merged customer returns its survivor.
    */
-  private async resolveOne(
-    db: NodePgDatabase,
-    workspaceId: string,
-    email: string | null,
-  ): Promise<string> {
+  private async resolveOne(db: NodePgDatabase, workspaceId: string, email: string | null): Promise<string> {
     const [row] = await db
       .insert(canonicalCustomers)
       .values({ workspaceId, primaryEmail: normalizeEmail(email) })
@@ -616,20 +473,13 @@ export class IdentityResolutionService {
    * pairing as a `medium`-confidence candidate (`matchedValue` = the E.164
    * value). One lookup for the whole batch rather than one per row.
    */
-  private async flagPhoneDuplicates(
-    db: NodePgDatabase,
-    workspaceId: string,
-    rows: { canonicalCustomerId: string; phoneE164: string }[],
-  ): Promise<void> {
+  private async flagPhoneDuplicates(db: NodePgDatabase, workspaceId: string, rows: { canonicalCustomerId: string; phoneE164: string }[]): Promise<void> {
     if (rows.length === 0) {
       return;
     }
 
     const sharing = await db
-      .selectDistinct({
-        phoneE164: commerceCustomers.phoneE164,
-        canonicalCustomerId: commerceCustomers.canonicalCustomerId,
-      })
+      .selectDistinct({ phoneE164: commerceCustomers.phoneE164, canonicalCustomerId: commerceCustomers.canonicalCustomerId })
       .from(commerceCustomers)
       .where(
         and(
@@ -643,12 +493,7 @@ export class IdentityResolutionService {
     for (const row of rows) {
       for (const other of sharing) {
         if (other.phoneE164 === row.phoneE164 && other.canonicalCustomerId) {
-          pairs.push({
-            a: row.canonicalCustomerId,
-            b: other.canonicalCustomerId,
-            signal: 'phone',
-            value: row.phoneE164,
-          });
+          pairs.push({ a: row.canonicalCustomerId, b: other.canonicalCustomerId, signal: 'phone', value: row.phoneE164 });
         }
       }
     }
@@ -672,21 +517,10 @@ export class IdentityResolutionService {
     }
 
     const owners = await db
-      .select({
-        id: canonicalCustomers.id,
-        primaryEmail: canonicalCustomers.primaryEmail,
-        mergedIntoId: canonicalCustomers.mergedIntoId,
-      })
+      .select({ id: canonicalCustomers.id, primaryEmail: canonicalCustomers.primaryEmail, mergedIntoId: canonicalCustomers.mergedIntoId })
       .from(canonicalCustomers)
-      .where(
-        and(
-          eq(canonicalCustomers.workspaceId, workspaceId),
-          inArray(canonicalCustomers.primaryEmail, [...new Set(rows.map((row) => row.email))]),
-        ),
-      );
-    const ownerByEmail = new Map(
-      owners.map((owner) => [owner.primaryEmail, owner.mergedIntoId ?? owner.id]),
-    );
+      .where(and(eq(canonicalCustomers.workspaceId, workspaceId), inArray(canonicalCustomers.primaryEmail, [...new Set(rows.map((row) => row.email))])));
+    const ownerByEmail = new Map(owners.map((owner) => [owner.primaryEmail, owner.mergedIntoId ?? owner.id]));
 
     const pairs: ReviewPair[] = [];
     for (const row of rows) {
@@ -705,11 +539,7 @@ export class IdentityResolutionService {
    * customers (e.g. a store's own number) can yield thousands of pairs,
    * past Postgres' 65,535 bind-parameter limit in one insert.
    */
-  private async recordReviewPairs(
-    db: NodePgDatabase,
-    workspaceId: string,
-    pairs: ReviewPair[],
-  ): Promise<void> {
+  private async recordReviewPairs(db: NodePgDatabase, workspaceId: string, pairs: ReviewPair[]): Promise<void> {
     const values = new Map<string, typeof canonicalCustomerDuplicates.$inferInsert>();
     for (const { a: first, b: second, signal, value } of pairs) {
       if (first === second) {

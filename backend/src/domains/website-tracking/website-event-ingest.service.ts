@@ -7,24 +7,16 @@ import { integrations } from '../../database/schema/integrations';
 import { websiteVisitors } from '../../database/schema/website-visitors';
 import { websiteSessions } from '../../database/schema/website-sessions';
 import { websiteEvents } from '../../database/schema/website-events';
-import {
-  ConflictError,
-  RateLimitError,
-  UnauthenticatedError,
-  UnauthorizedError,
-} from '../../common/errors/app-error';
-import {
-  IdempotencyService,
-  INGEST_IDEMPOTENCY_LEASE_MS,
-} from '../../common/idempotency/idempotency.service';
+import { ConflictError, RateLimitError, UnauthenticatedError, UnauthorizedError } from '../../common/errors/app-error';
+import { IdempotencyService, INGEST_IDEMPOTENCY_LEASE_MS } from '../../common/idempotency/idempotency.service';
 import { RedisService } from '../../common/rate-limit/redis.service';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import type { Env } from '../../config/env.schema';
 import { IntegrationService } from '../integration/integration.service';
 import { IdentityResolutionService } from '../identity-resolution/identity-resolution.service';
 import type { IngestWebsiteEventInput } from './dto/ingest-website-event.schema';
-import { ErasedIdentifierService, emailIdentifier } from '../commerce/erased-identifier.service';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { ErasedIdentifierService, emailIdentifier } from '../commerce/erased-identifier.service';
 
 export type WebsiteEventIngestResult = { status: 'accepted' } | { status: 'duplicate' };
 
@@ -101,11 +93,7 @@ export class WebsiteEventIngestService {
     this.environment = config.get('BRAYN_ENV', { infer: true });
   }
 
-  async ingest(
-    workspaceId: string,
-    input: IngestWebsiteEventInput,
-    context: WebsiteEventRequestContext,
-  ): Promise<WebsiteEventIngestResult> {
+  async ingest(workspaceId: string, input: IngestWebsiteEventInput, context: WebsiteEventRequestContext): Promise<WebsiteEventIngestResult> {
     await this.enforceRateLimit('website-ip', context.ip, this.ipMax);
 
     const credentials = await this.authenticate(workspaceId, context.writeKey);
@@ -114,9 +102,7 @@ export class WebsiteEventIngestService {
     await this.enforceRateLimit('website-workspace', workspaceId, this.workspaceMax);
 
     const idempotencyKey = `website-event:${workspaceId}:${input.eventId}`;
-    const reserved = await this.idempotency.reserve(idempotencyKey, {
-      leaseMs: INGEST_IDEMPOTENCY_LEASE_MS,
-    });
+    const reserved = await this.idempotency.reserve(idempotencyKey, { leaseMs: INGEST_IDEMPOTENCY_LEASE_MS });
     if (!reserved) {
       // Completed, or another attempt holds it — either way the SDK never
       // retries, so there's nothing to signal back beyond "not accepted twice".
@@ -138,11 +124,7 @@ export class WebsiteEventIngestService {
   }
 
   /** Every write here is retry-safe: upserts, plus a conflict-tolerant event insert (a failed attempt may already have written the row). */
-  private async persist(
-    workspaceId: string,
-    input: IngestWebsiteEventInput,
-    identitySecret: string | undefined,
-  ): Promise<void> {
+  private async persist(workspaceId: string, input: IngestWebsiteEventInput, identitySecret: string | undefined): Promise<void> {
     const now = new Date();
 
     const [visitor] = await this.database.client
@@ -170,14 +152,8 @@ export class WebsiteEventIngestService {
       throw new ConflictError('This session belongs to a different visitor.');
     }
 
-    const identity =
-      input.eventType === 'identity_signal'
-        ? this.verifyIdentitySignal(input.payload ?? {}, identitySecret)
-        : null;
+    const identity = input.eventType === 'identity_signal' ? this.verifyIdentitySignal(input.payload ?? {}, identitySecret) : null;
 
-    // An identity signal for an erased customer's email is kept as an anonymous event: the email is never stored
-    // and never linked. Checked under the shared customer-erasure lock in the same transaction as the insert, so a
-    // concurrent erasure either sees this event (and deletes it) or this check sees the erasure.
     const insertEvent = (db: NodePgDatabase, payload: unknown) =>
       db
         .insert(websiteEvents)
@@ -192,36 +168,27 @@ export class WebsiteEventIngestService {
         })
         .onConflictDoNothing({ target: [websiteEvents.workspaceId, websiteEvents.eventId] });
 
-    // Only identity signals carry personal data: they alone pay for the transaction + erasure lock.
+    // An identity signal for an erased customer's email is kept as an anonymous event: the email is never stored
+    // and never linked. Checked under the shared customer-erasure lock in the same transaction as the insert, so a
+    // concurrent erasure either sees this event (and deletes it) or this check sees the erasure. Only identity
+    // signals carry personal data, so only they pay for the transaction + lock.
     const erased = identity
       ? await this.database.transaction(async (tx) => {
           await this.erasedIdentifiers.lockShared(tx, workspaceId);
-          const isBlocked = await this.erasedIdentifiers.findBlocked(tx, workspaceId, [
-            emailIdentifier(identity.email),
-          ]);
+          const isBlocked = await this.erasedIdentifiers.findBlocked(tx, workspaceId, [emailIdentifier(identity.email)]);
           const blocked = isBlocked(emailIdentifier(identity.email));
-          await insertEvent(
-            tx,
-            blocked ? null : { email: identity.email, verified: identity.verified },
-          );
+          await insertEvent(tx, blocked ? null : { email: identity.email, verified: identity.verified });
           return blocked;
         })
       : (await insertEvent(this.database.client, input.payload ?? null), false);
 
     if (identity?.verified && !erased) {
-      await this.identityResolutionService.resolveWebsiteVisitor(
-        workspaceId,
-        visitor.id,
-        identity.email,
-      );
+      await this.identityResolutionService.resolveWebsiteVisitor(workspaceId, visitor.id, identity.email);
     }
   }
 
   /** DTO validation already guarantees `payload.email` is a valid email and `signature`, if present, a string. */
-  private verifyIdentitySignal(
-    payload: Record<string, unknown>,
-    identitySecret: string | undefined,
-  ): { email: string; verified: boolean } {
+  private verifyIdentitySignal(payload: Record<string, unknown>, identitySecret: string | undefined): { email: string; verified: boolean } {
     const email = identitySignaturePayload(payload.email as string);
     const signature = payload.signature;
     if (!identitySecret || typeof signature !== 'string') {
@@ -230,21 +197,14 @@ export class WebsiteEventIngestService {
 
     const expected = createHmac('sha256', identitySecret).update(email).digest();
     const supplied = Buffer.from(signature, 'hex');
-    return {
-      email,
-      verified: supplied.length === expected.length && timingSafeEqual(supplied, expected),
-    };
+    return { email, verified: supplied.length === expected.length && timingSafeEqual(supplied, expected) };
   }
 
-  private async authenticate(
-    workspaceId: string,
-    writeKey: string | null,
-  ): Promise<{ allowedOrigins?: string; identitySecret?: string }> {
+  private async authenticate(workspaceId: string, writeKey: string | null): Promise<{ allowedOrigins?: string; identitySecret?: string }> {
     const integration = await this.findIntegration(workspaceId);
-    const credentials =
-      integration && integration.status !== 'disconnected'
-        ? await this.integrationService.getCredentials(workspaceId, 'website_tracking')
-        : null;
+    const credentials = integration && integration.status !== 'disconnected'
+      ? await this.integrationService.getCredentials(workspaceId, 'website_tracking')
+      : null;
     const expected = credentials?.writeKey;
 
     if (!expected || !writeKey) {
@@ -254,10 +214,7 @@ export class WebsiteEventIngestService {
     const expectedBuffer = Buffer.from(expected);
     const suppliedBuffer = Buffer.from(writeKey);
     // timingSafeEqual throws on a length mismatch rather than returning false.
-    if (
-      expectedBuffer.length !== suppliedBuffer.length ||
-      !timingSafeEqual(expectedBuffer, suppliedBuffer)
-    ) {
+    if (expectedBuffer.length !== suppliedBuffer.length || !timingSafeEqual(expectedBuffer, suppliedBuffer)) {
       throw new UnauthenticatedError('Missing or invalid write key.');
     }
 
@@ -279,30 +236,17 @@ export class WebsiteEventIngestService {
     const bucket = Math.floor(Date.now() / 1000 / this.windowSeconds);
     let count: number;
     try {
-      count = await this.redis.incrementWithExpiry(
-        `ratelimit:${this.environment}:${scope}:${identity}:${bucket}`,
-        this.windowSeconds,
-      );
+      count = await this.redis.incrementWithExpiry(`ratelimit:${this.environment}:${scope}:${identity}:${bucket}`, this.windowSeconds);
     } catch (error) {
-      this.logger.event(
-        'error',
-        'Website event rate limit check failed — failing open',
-        'WebsiteEventIngestService',
-        {
-          errorType: error instanceof Error ? error.constructor.name : typeof error,
-          scope,
-        },
-      );
+      this.logger.event('error', 'Website event rate limit check failed — failing open', 'WebsiteEventIngestService', {
+        errorType: error instanceof Error ? error.constructor.name : typeof error,
+        scope,
+      });
       return;
     }
 
     if (count > max) {
-      this.logger.event('warn', 'Website event rate limit exceeded', 'WebsiteEventIngestService', {
-        scope,
-        identity,
-        count,
-        max,
-      });
+      this.logger.event('warn', 'Website event rate limit exceeded', 'WebsiteEventIngestService', { scope, identity, count, max });
       throw new RateLimitError();
     }
   }
@@ -311,12 +255,7 @@ export class WebsiteEventIngestService {
     const [integration] = await this.database.client
       .select({ id: integrations.id, status: integrations.status })
       .from(integrations)
-      .where(
-        and(
-          eq(integrations.workspaceId, workspaceId),
-          eq(integrations.provider, 'website_tracking'),
-        ),
-      )
+      .where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, 'website_tracking')))
       .limit(1);
 
     return integration ?? null;
