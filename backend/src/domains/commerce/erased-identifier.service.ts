@@ -33,6 +33,16 @@ export function orderIdentifier(provider: string, externalId: string): ErasedIde
   return { kind: 'order', value: `${provider}${SEP}${externalId}` };
 }
 
+/**
+ * The per-workspace erasure lock, shared side — see ErasedIdentifierService. A plain function so services that
+ * only need the lock (identity resolution, website ingest) don't take a new constructor dependency.
+ */
+export async function lockErasureShared(tx: NodePgDatabase, workspaceId: string): Promise<void> {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock_shared(hashtextextended(${`customer-erasure:${workspaceId}`}, 0))`,
+  );
+}
+
 const keyOf = (identifier: ErasedIdentifier) => `${identifier.kind}${SEP}${identifier.value}`;
 
 /**
@@ -54,9 +64,7 @@ export class ErasedIdentifierService {
   constructor(private readonly config: ConfigService<Env, true>) {}
 
   async lockShared(tx: NodePgDatabase, workspaceId: string): Promise<void> {
-    await tx.execute(
-      sql`select pg_advisory_xact_lock_shared(hashtextextended(${`customer-erasure:${workspaceId}`}, 0))`,
-    );
+    await lockErasureShared(tx, workspaceId);
   }
 
   async lockExclusive(tx: NodePgDatabase, workspaceId: string): Promise<void> {
