@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
@@ -5,6 +6,8 @@ import { and, eq, gte, inArray, or } from 'drizzle-orm';
 import { DatabaseModule } from '../../database/database.module';
 import { DatabaseService } from '../../database/database.service';
 import { intelligenceDailyRuns } from '../../database/schema/intelligence-daily-runs';
+import { workspaces } from '../../database/schema/workspaces';
+import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { loadConfiguration } from '../../config/configuration';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import { CustomerIntelligenceService } from '../customer-intelligence/customer-intelligence.service';
@@ -140,12 +143,34 @@ describe('IntelligenceDailyRunService run lock (real DB)', () => {
     expect((await service.getLatest()).id).toBe(newest.id);
   });
 
-  it('listActiveCustomerKeys() pages by (workspaceId, id) without gaps or repeats', async () => {
-    const page1 = await customerIntelligence.listActiveCustomerKeys(null, 3);
-    if (page1.length < 3) return; // dev DB too small to page — nothing to assert
-    const page2 = await customerIntelligence.listActiveCustomerKeys(page1[2], 3);
-    const both = await customerIntelligence.listActiveCustomerKeys(null, 6);
+  it('listActiveCustomerKeys() pages by (workspaceId, id) without gaps or repeats, skipping merged customers', async () => {
+    // Own workspace, paged from a cursor at its very start: rows sort by (workspaceId, id), so rows other specs insert
+    // concurrently in other workspaces sort before the cursor or after these rows — never inside the pages read here.
+    const workspaceId = randomUUID();
+    await db.client.insert(workspaces).values({ id: workspaceId, name: 'Daily Run Paging Test' });
+    try {
+      const rows = await db.client
+        .insert(canonicalCustomers)
+        .values(Array.from({ length: 7 }, (_, i) => ({ workspaceId, primaryEmail: `paging-${i}@example.com` })))
+        .returning({ id: canonicalCustomers.id });
+      const [survivor, merged] = rows;
+      await db.client.update(canonicalCustomers).set({ mergedIntoId: survivor.id }).where(eq(canonicalCustomers.id, merged.id));
+      const expected = rows
+        .filter((row) => row.id !== merged.id)
+        .map((row) => ({ workspaceId, id: row.id }))
+        .sort((a, b) => (a.id < b.id ? -1 : 1));
+      const start = { workspaceId, id: '00000000-0000-0000-0000-000000000000' };
 
-    expect([...page1, ...page2]).toEqual(both);
+      const page1 = await customerIntelligence.listActiveCustomerKeys(start, 3);
+      const page2 = await customerIntelligence.listActiveCustomerKeys(page1[2], 3);
+      const both = await customerIntelligence.listActiveCustomerKeys(start, 6);
+
+      expect([...page1, ...page2]).toEqual(expected);
+      expect(both).toEqual(expected);
+    } finally {
+      await db.client.update(canonicalCustomers).set({ mergedIntoId: null }).where(eq(canonicalCustomers.workspaceId, workspaceId));
+      await db.client.delete(canonicalCustomers).where(eq(canonicalCustomers.workspaceId, workspaceId));
+      await db.client.delete(workspaces).where(eq(workspaces.id, workspaceId));
+    }
   });
 });

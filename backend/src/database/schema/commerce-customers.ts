@@ -53,6 +53,15 @@ export const commerceCustomers = pgTable(
      * a full re-import (or a changed record via sync) rewrites them.
      */
     sourceCreatedAt: timestamp('source_created_at', { withTimezone: true }),
+    /**
+     * Guest-checkout rows only (`externalId` `guest:<email>`, built from order billing data): per field, the placed-at
+     * time of the order the stored value came from. A later write replaces a field only with a non-empty value from an
+     * order at least as new (ties broken by value), so the result does not depend on the order orders arrive in, and an
+     * order without a name or phone never clears one. Null on provider customer rows and when no order time is known.
+     */
+    guestFirstNameSourceAt: timestamp('guest_first_name_source_at', { withTimezone: true }),
+    guestLastNameSourceAt: timestamp('guest_last_name_source_at', { withTimezone: true }),
+    guestPhoneSourceAt: timestamp('guest_phone_source_at', { withTimezone: true }),
     canonicalCustomerId: uuid('canonical_customer_id').references(() => canonicalCustomers.id),
     ...timestamps(),
   },

@@ -351,6 +351,13 @@
       "when": 1793631586086,
       "tag": "0049_elite_robbie_robertson",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1795021007270,
+      "tag": "0050_striped_yellow_claw",
+      "breakpoints": true
     }
   ]
 }

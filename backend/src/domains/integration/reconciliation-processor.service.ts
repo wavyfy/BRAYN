@@ -12,6 +12,7 @@ import { IntegrationService } from './integration.service';
 import { ProviderRegistry } from './provider-registry.service';
 import type { IntegrationProvider } from './dto/connect-integration.schema';
 import type { ProviderAdapter } from './provider-adapter.interface';
+import { upsertGuestCustomers } from './guest-customers';
 
 export interface ReconciliationRequestedPayload {
   provider: IntegrationProvider;
@@ -221,7 +222,10 @@ export class ReconciliationProcessorService {
       const discrepancies = page.orders.filter((o) => isDiscrepancy(existing.get(o.externalId), o.sourceUpdatedAt)).length;
 
       try {
-        await withRetry(() => this.orderService.upsertMany(workspaceId, integrationId, provider, page.orders));
+        await withRetry(async () => {
+          await upsertGuestCustomers(this.customerService, this.identityResolutionService, workspaceId, integrationId, provider, page.orders);
+          await this.orderService.upsertMany(workspaceId, integrationId, provider, page.orders);
+        });
         repaired += discrepancies;
       } catch {
         // Leave `found` counted but not repaired — mirrors ImportProcessorService's per-page failure tolerance.

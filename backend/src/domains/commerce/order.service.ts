@@ -13,6 +13,7 @@ import { commerceFulfillments } from '../../database/schema/commerce-fulfillment
 import { DatabaseService } from '../../database/database.service';
 import type { IntegrationProvider } from '../integration/dto/connect-integration.schema';
 import type { OrderEventPayload, RefundProcessedPayload } from './commerce-events';
+import type { NormalizedGuestCustomer } from './customer.service';
 
 export interface NormalizedOrderLineItem {
   externalId: string;
@@ -57,8 +58,15 @@ export interface NormalizedFulfillment {
 /** A provider's order record, already mapped into BRAYN's shape (doc 06 — Normalization output). */
 export interface NormalizedOrder {
   externalId: string;
-  /** The customer's provider id, or null for a guest-checkout order. */
+  /** The customer's provider id, or null for a guest-checkout order with no `guestCustomer`. */
   customerExternalId: string | null;
+  /**
+   * A guest checkout's source customer record, built by the adapter from the order's own billing data, keyed
+   * `guest:<normalized email>` (and `customerExternalId` set to the same key). Integration upserts and resolves it
+   * like any other source customer before writing the order — see integration/guest-customers.ts. Absent for a
+   * registered customer and for a guest with no usable email (phone alone never identifies a customer).
+   */
+  guestCustomer?: NormalizedGuestCustomer;
   totalPrice: string | null;
   sourceUpdatedAt: Date | null;
   /** When the order was placed at the source — see commerce_orders.sourceCreatedAt. */

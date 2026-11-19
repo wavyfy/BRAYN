@@ -613,6 +613,74 @@ describe('WooCommerceAdapter', () => {
       });
     });
 
+    describe('guest checkout identity (customer_id 0)', () => {
+      const parseOrder = (order: object) =>
+        (adapter: WooCommerceAdapter) =>
+          adapter.parseWebhookEvent(JSON.stringify({ id: 910, total: '5.00', line_items: [], ...order }), {
+            'x-wc-webhook-topic': 'order.created',
+            'x-wc-webhook-delivery-id': `wh_evt_${JSON.stringify(order)}`,
+          })?.payload as { data: Record<string, unknown> } | undefined;
+
+      it('builds a guest source customer keyed on the normalized billing email and links the order to it', () => {
+        const data = parseOrder({
+          customer_id: 0,
+          date_created_gmt: '2026-03-01T10:00:00',
+          date_modified_gmt: '2026-03-05T00:00:00',
+          billing: { first_name: ' Gia ', last_name: 'Guest', email: '  Gia.Guest@Example.COM ', phone: '+1 415 555 0100' },
+        })(new WooCommerceAdapter(makeRegistry()))?.data;
+
+        expect(data?.customerExternalId).toBe('guest:gia.guest@example.com');
+        expect(data?.guestCustomer).toEqual({
+          externalId: 'guest:gia.guest@example.com',
+          email: 'gia.guest@example.com',
+          firstName: 'Gia',
+          lastName: 'Guest',
+          phone: '+1 415 555 0100',
+          sourceUpdatedAt: null,
+          sourceCreatedAt: null,
+          billingAt: new Date('2026-03-01T10:00:00Z'),
+        });
+      });
+
+      it('billing time is the placed time, falling back to last-modified, else null; blank name/phone parts are absent', () => {
+        const adapter = new WooCommerceAdapter(makeRegistry());
+        const guest = (extra: object) =>
+          parseOrder({ customer_id: 0, billing: { email: 'g@example.com', first_name: '  ', last_name: '', phone: ' ' }, ...extra })(adapter)?.data.guestCustomer as Record<string, unknown>;
+
+        expect(guest({ date_modified_gmt: '2026-03-05T00:00:00' })).toMatchObject({ billingAt: new Date('2026-03-05T00:00:00Z'), firstName: null, lastName: null, phone: null });
+        expect(guest({})).toMatchObject({ billingAt: null });
+      });
+
+      it.each([
+        ['missing billing', {}],
+        ['empty email', { billing: { email: '', phone: '+14155550100' } }],
+        ['whitespace email', { billing: { email: '   ' } }],
+        ['not an email', { billing: { email: 'guest at example.com' } }],
+        ['phone only', { billing: { first_name: 'P', phone: '+14155550100' } }],
+        ['WordPress-anonymized email (erased personal data)', { billing: { email: 'deleted@site.invalid', phone: '+14155550100' } }],
+        ['any .invalid domain, any case', { billing: { email: 'Someone@Shop.INVALID' } }],
+        ['bare .invalid domain', { billing: { email: 'x@invalid' } }],
+      ])('%s: no guest customer and the order stays unlinked (phone alone never identifies)', (_label, extra) => {
+        const data = parseOrder({ customer_id: 0, ...extra })(new WooCommerceAdapter(makeRegistry()))?.data;
+
+        expect(data?.customerExternalId).toBeNull();
+        expect(data).not.toHaveProperty('guestCustomer');
+      });
+
+      it('a domain merely containing "invalid" is still a real email', () => {
+        const data = parseOrder({ customer_id: 0, billing: { email: 'a@invalid-shop.com' } })(new WooCommerceAdapter(makeRegistry()))?.data;
+
+        expect(data?.customerExternalId).toBe('guest:a@invalid-shop.com');
+      });
+
+      it('a registered customer order keeps its provider id and builds no guest customer, even with a billing email', () => {
+        const data = parseOrder({ customer_id: 7, billing: { email: 'reg@example.com' } })(new WooCommerceAdapter(makeRegistry()))?.data;
+
+        expect(data?.customerExternalId).toBe('7');
+        expect(data).not.toHaveProperty('guestCustomer');
+      });
+    });
+
     it('returns null for an unrecognized topic (e.g. a delete event) — doc 21 "process only relevant events"', () => {
       const adapter = new WooCommerceAdapter(makeRegistry());
 

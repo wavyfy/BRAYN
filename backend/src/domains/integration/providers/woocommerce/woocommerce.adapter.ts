@@ -11,7 +11,7 @@ import type {
   ProviderAdapter,
   WebhookResourceEvent,
 } from '../../provider-adapter.interface';
-import type { NormalizedCustomer } from '../../../commerce/customer.service';
+import type { NormalizedCustomer, NormalizedGuestCustomer } from '../../../commerce/customer.service';
 import type { NormalizedProduct } from '../../../commerce/product.service';
 import type { NormalizedOrder, NormalizedRefund } from '../../../commerce/order.service';
 
@@ -74,6 +74,8 @@ interface WooCommerceOrder {
   line_items: WooCommerceLineItem[];
   /** Absent in older fixtures/payloads — read as no refunds. */
   refunds?: WooCommerceRefundSummary[];
+  /** Billing address; the only identity a guest checkout (`customer_id` 0) carries. */
+  billing?: { first_name?: string | null; last_name?: string | null; email?: string | null; phone?: string | null };
 }
 
 /**
@@ -500,9 +502,11 @@ function normalizeProduct(product: WooCommerceProduct): NormalizedProduct {
  * `commerce_product_variants` row for a variable-product line.
  */
 function normalizeOrder(order: WooCommerceOrder): NormalizedOrder {
+  const guestCustomer = order.customer_id === 0 ? normalizeGuestCustomer(order) : null;
   return {
     externalId: String(order.id),
-    customerExternalId: order.customer_id !== 0 ? String(order.customer_id) : null,
+    customerExternalId: order.customer_id !== 0 ? String(order.customer_id) : (guestCustomer?.externalId ?? null),
+    ...(guestCustomer ? { guestCustomer } : {}),
     totalPrice: order.total,
     sourceUpdatedAt: order.date_modified_gmt ? parseGmtDate(order.date_modified_gmt) : null,
     sourceCreatedAt: order.date_created_gmt ? parseGmtDate(order.date_created_gmt) : null,
@@ -516,6 +520,34 @@ function normalizeOrder(order: WooCommerceOrder): NormalizedOrder {
     })),
     refunds: (order.refunds ?? []).map(normalizeRefund),
     fulfillments: [],
+  };
+}
+
+const GUEST_EMAIL = /^[^\s@]+@[^\s@]+$/;
+
+/**
+ * A guest checkout's source customer, from the order's billing data. Keyed on the normalized billing email
+ * (`guest:<email>`) so every guest order with that email shares one source record, which Identity Resolution then
+ * links by the same exact-email rule as a registered customer. No usable email: null — the order stays unlinked
+ * (a billing phone alone never identifies a customer). Dates stay null: a guest has no customer record at the source.
+ */
+function normalizeGuestCustomer(order: WooCommerceOrder): NormalizedGuestCustomer | null {
+  const email = order.billing?.email?.trim().toLowerCase();
+  // `.invalid` is reserved (RFC 2606) and never a real mailbox; WordPress's personal-data eraser anonymizes order emails
+  // to `deleted@site.invalid`, which would otherwise join every erased guest into one customer.
+  if (!email || !GUEST_EMAIL.test(email) || /(^|\.)invalid$/.test(email.slice(email.lastIndexOf('@') + 1))) {
+    return null;
+  }
+  return {
+    externalId: `guest:${email}`,
+    email,
+    firstName: order.billing?.first_name?.trim() || null,
+    lastName: order.billing?.last_name?.trim() || null,
+    phone: order.billing?.phone?.trim() || null,
+    sourceUpdatedAt: null,
+    sourceCreatedAt: null,
+    // The order's placed time — its billing details are as of then (last-modified only when that is unknown).
+    billingAt: order.date_created_gmt ? parseGmtDate(order.date_created_gmt) : order.date_modified_gmt ? parseGmtDate(order.date_modified_gmt) : null,
   };
 }
 

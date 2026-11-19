@@ -16,6 +16,7 @@ import { CollectionService } from '../commerce/collection.service';
 import { IdentityResolutionService } from '../identity-resolution/identity-resolution.service';
 import { isWebhookResourceEvent, type WebhookResourceEvent } from './provider-adapter.interface';
 import type { IntegrationProvider } from './dto/connect-integration.schema';
+import { upsertGuestCustomers } from './guest-customers';
 
 /** Claims (processing attempts) before a delivery is dead-lettered. */
 export const WEBHOOK_MAX_ATTEMPTS = 5;
@@ -312,6 +313,7 @@ export class WebhookEventProcessorService implements OnModuleDestroy {
         await this.productService.upsertMany(workspaceId, integrationId, provider, [payload.data]);
         break;
       case 'order':
+        await upsertGuestCustomers(this.customerService, this.identityResolutionService, workspaceId, integrationId, provider, [payload.data]);
         await this.orderService.upsertMany(workspaceId, integrationId, provider, [payload.data], { emitDomainEvents: true });
         break;
       case 'fulfillment':
