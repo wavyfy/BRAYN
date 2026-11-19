@@ -5,7 +5,10 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { Env } from '../../config/env.schema';
 import { ServiceUnavailableError } from '../../common/errors/app-error';
-import { erasedCustomerIdentifiers, type ErasedIdentifierKind } from '../../database/schema/erased-customer-identifiers';
+import {
+  erasedCustomerIdentifiers,
+  type ErasedIdentifierKind,
+} from '../../database/schema/erased-customer-identifiers';
 
 /** One identifier of an erased customer, before hashing. `value` is already normalized (see the builders below). */
 export interface ErasedIdentifier {
@@ -51,11 +54,15 @@ export class ErasedIdentifierService {
   constructor(private readonly config: ConfigService<Env, true>) {}
 
   async lockShared(tx: NodePgDatabase, workspaceId: string): Promise<void> {
-    await tx.execute(sql`select pg_advisory_xact_lock_shared(hashtextextended(${`customer-erasure:${workspaceId}`}, 0))`);
+    await tx.execute(
+      sql`select pg_advisory_xact_lock_shared(hashtextextended(${`customer-erasure:${workspaceId}`}, 0))`,
+    );
   }
 
   async lockExclusive(tx: NodePgDatabase, workspaceId: string): Promise<void> {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`customer-erasure:${workspaceId}`}, 0))`);
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`customer-erasure:${workspaceId}`}, 0))`,
+    );
   }
 
   /** Throws 503 when erasure can't run here (no secret) — checked before an erasure touches anything. */
@@ -64,16 +71,29 @@ export class ErasedIdentifierService {
   }
 
   /** Adds identifiers to the block list (idempotent). Returns how many distinct identifiers were given. */
-  async record(tx: NodePgDatabase, workspaceId: string, identifiers: ErasedIdentifier[]): Promise<number> {
+  async record(
+    tx: NodePgDatabase,
+    workspaceId: string,
+    identifiers: ErasedIdentifier[],
+  ): Promise<number> {
     const secret = this.requireSecret();
-    const unique = [...new Map(identifiers.map((identifier) => [keyOf(identifier), identifier])).values()];
+    const unique = [
+      ...new Map(identifiers.map((identifier) => [keyOf(identifier), identifier])).values(),
+    ];
     if (unique.length === 0) {
       return 0;
     }
     const keyId = fingerprint(secret);
     await tx
       .insert(erasedCustomerIdentifiers)
-      .values(unique.map((identifier) => ({ workspaceId, kind: identifier.kind, valueHmac: hmac(secret, workspaceId, identifier), keyId })))
+      .values(
+        unique.map((identifier) => ({
+          workspaceId,
+          kind: identifier.kind,
+          valueHmac: hmac(secret, workspaceId, identifier),
+          keyId,
+        })),
+      )
       .onConflictDoNothing();
     return unique.length;
   }
@@ -82,8 +102,14 @@ export class ErasedIdentifierService {
    * Which of `identifiers` are blocked in this workspace, as a predicate. Call inside the writing transaction, after
    * `lockShared`. Costs one indexed query for a workspace with nothing erased (the common case) — no hashing.
    */
-  async findBlocked(tx: NodePgDatabase, workspaceId: string, identifiers: Array<ErasedIdentifier | null>): Promise<(identifier: ErasedIdentifier | null) => boolean> {
-    const present = identifiers.filter((identifier): identifier is ErasedIdentifier => identifier !== null);
+  async findBlocked(
+    tx: NodePgDatabase,
+    workspaceId: string,
+    identifiers: Array<ErasedIdentifier | null>,
+  ): Promise<(identifier: ErasedIdentifier | null) => boolean> {
+    const present = identifiers.filter(
+      (identifier): identifier is ErasedIdentifier => identifier !== null,
+    );
     if (present.length === 0) {
       return () => false;
     }
@@ -96,20 +122,33 @@ export class ErasedIdentifierService {
     }
     const secret = this.config.get('ERASURE_HMAC_SECRET', { infer: true });
     if (!secret) {
-      throw new Error('This workspace has erased customers but ERASURE_HMAC_SECRET is not configured — refusing to write customer data.');
+      throw new Error(
+        'This workspace has erased customers but ERASURE_HMAC_SECRET is not configured — refusing to write customer data.',
+      );
     }
     const keyId = fingerprint(secret);
     if (keyIds.some((row) => row.keyId !== keyId)) {
-      throw new Error('Erased-customer identifiers were written under a different ERASURE_HMAC_SECRET — refusing to write customer data.');
+      throw new Error(
+        'Erased-customer identifiers were written under a different ERASURE_HMAC_SECRET — refusing to write customer data.',
+      );
     }
 
-    const hashByKey = new Map(present.map((identifier) => [keyOf(identifier), hmac(secret, workspaceId, identifier)]));
+    const hashByKey = new Map(
+      present.map((identifier) => [keyOf(identifier), hmac(secret, workspaceId, identifier)]),
+    );
     const rows = await tx
       .select({ valueHmac: erasedCustomerIdentifiers.valueHmac })
       .from(erasedCustomerIdentifiers)
-      .where(and(eq(erasedCustomerIdentifiers.workspaceId, workspaceId), inArray(erasedCustomerIdentifiers.valueHmac, [...new Set(hashByKey.values())])));
+      .where(
+        and(
+          eq(erasedCustomerIdentifiers.workspaceId, workspaceId),
+          inArray(erasedCustomerIdentifiers.valueHmac, [...new Set(hashByKey.values())]),
+        ),
+      );
     const blocked = new Set(rows.map((row) => row.valueHmac));
-    return (identifier) => identifier !== null && blocked.has(hashByKey.get(keyOf(identifier)) ?? hmac(secret, workspaceId, identifier));
+    return (identifier) =>
+      identifier !== null &&
+      blocked.has(hashByKey.get(keyOf(identifier)) ?? hmac(secret, workspaceId, identifier));
   }
 
   private requireSecret(): string {
@@ -123,9 +162,14 @@ export class ErasedIdentifierService {
 
 /** Workspace, kind and value are all in the message: equal values in different workspaces or kinds never collide. */
 function hmac(secret: string, workspaceId: string, identifier: ErasedIdentifier): string {
-  return createHmac('sha256', secret).update([HMAC_CONTEXT, workspaceId, identifier.kind, identifier.value].join(SEP)).digest('hex');
+  return createHmac('sha256', secret)
+    .update([HMAC_CONTEXT, workspaceId, identifier.kind, identifier.value].join(SEP))
+    .digest('hex');
 }
 
 function fingerprint(secret: string): string {
-  return createHmac('sha256', secret).update(`${HMAC_CONTEXT}${SEP}key-id`).digest('hex').slice(0, 16);
+  return createHmac('sha256', secret)
+    .update(`${HMAC_CONTEXT}${SEP}key-id`)
+    .digest('hex')
+    .slice(0, 16);
 }

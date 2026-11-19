@@ -290,30 +290,7 @@ export class IntegrationService {
         return { found: false, canonicalCustomerRemoved: false };
       }
 
-      const orderRows = await tx
-        .select({ id: commerceOrders.id })
-        .from(commerceOrders)
-        .where(and(eq(commerceOrders.workspaceId, workspaceId), eq(commerceOrders.customerId, customerRow.id)));
-      const orderIds = orderRows.map((row) => row.id);
-
-      if (orderIds.length > 0) {
-        const refundRows = await tx
-          .select({ id: commerceRefunds.id })
-          .from(commerceRefunds)
-          .where(and(eq(commerceRefunds.workspaceId, workspaceId), inArray(commerceRefunds.orderId, orderIds)));
-        const refundIds = refundRows.map((row) => row.id);
-
-        // Same relative order as purgeIntegrationCommerceData's order-scoped block, just scoped by this customer's order ids instead of the whole integration.
-        await tx.delete(commerceOrderLineItems).where(and(eq(commerceOrderLineItems.workspaceId, workspaceId), inArray(commerceOrderLineItems.orderId, orderIds)));
-        if (refundIds.length > 0) {
-          await tx.delete(commerceRefundLineItems).where(and(eq(commerceRefundLineItems.workspaceId, workspaceId), inArray(commerceRefundLineItems.refundId, refundIds)));
-        }
-        await tx.delete(commerceFulfillments).where(and(eq(commerceFulfillments.workspaceId, workspaceId), inArray(commerceFulfillments.orderId, orderIds)));
-        await tx.delete(commerceRefunds).where(and(eq(commerceRefunds.workspaceId, workspaceId), inArray(commerceRefunds.orderId, orderIds)));
-        await tx.delete(commerceOrders).where(and(eq(commerceOrders.workspaceId, workspaceId), inArray(commerceOrders.id, orderIds)));
-      }
-
-      await tx.delete(commerceCustomers).where(and(eq(commerceCustomers.workspaceId, workspaceId), eq(commerceCustomers.id, customerRow.id)));
+      await this.deleteSourceCustomerWithOrders(tx, workspaceId, customerRow.id);
 
       const canonicalCustomerRemoved = customerRow.canonicalCustomerId
         ? await this.purgeCanonicalCustomerIfOrphaned(tx, workspaceId, customerRow.canonicalCustomerId)
@@ -321,6 +298,40 @@ export class IntegrationService {
 
       return { found: true, canonicalCustomerRemoved };
     });
+  }
+
+  /**
+   * Deletes one source customer row and its orders (line items, refunds, fulfillments), inside the caller's
+   * transaction. Returns the deleted orders' provider ids. Building block shared by `purgeCommerceCustomer` (Shopify
+   * `customers/redact`) and person-level erasure (CustomerErasureService) — not a standalone erasure: the caller
+   * decides what happens to the canonical customer afterwards.
+   */
+  async deleteSourceCustomerWithOrders(tx: NodePgDatabase, workspaceId: string, commerceCustomerId: string): Promise<string[]> {
+    const orderRows = await tx
+      .select({ id: commerceOrders.id, externalId: commerceOrders.externalId })
+      .from(commerceOrders)
+      .where(and(eq(commerceOrders.workspaceId, workspaceId), eq(commerceOrders.customerId, commerceCustomerId)));
+    const orderIds = orderRows.map((row) => row.id);
+
+    if (orderIds.length > 0) {
+      const refundRows = await tx
+        .select({ id: commerceRefunds.id })
+        .from(commerceRefunds)
+        .where(and(eq(commerceRefunds.workspaceId, workspaceId), inArray(commerceRefunds.orderId, orderIds)));
+      const refundIds = refundRows.map((row) => row.id);
+
+      // Same relative order as purgeIntegrationCommerceData's order-scoped block, just scoped by this customer's order ids instead of the whole integration.
+      await tx.delete(commerceOrderLineItems).where(and(eq(commerceOrderLineItems.workspaceId, workspaceId), inArray(commerceOrderLineItems.orderId, orderIds)));
+      if (refundIds.length > 0) {
+        await tx.delete(commerceRefundLineItems).where(and(eq(commerceRefundLineItems.workspaceId, workspaceId), inArray(commerceRefundLineItems.refundId, refundIds)));
+      }
+      await tx.delete(commerceFulfillments).where(and(eq(commerceFulfillments.workspaceId, workspaceId), inArray(commerceFulfillments.orderId, orderIds)));
+      await tx.delete(commerceRefunds).where(and(eq(commerceRefunds.workspaceId, workspaceId), inArray(commerceRefunds.orderId, orderIds)));
+      await tx.delete(commerceOrders).where(and(eq(commerceOrders.workspaceId, workspaceId), inArray(commerceOrders.id, orderIds)));
+    }
+
+    await tx.delete(commerceCustomers).where(and(eq(commerceCustomers.workspaceId, workspaceId), eq(commerceCustomers.id, commerceCustomerId)));
+    return orderRows.map((row) => row.externalId);
   }
 
   /**
@@ -438,7 +449,8 @@ export class IntegrationService {
    * preserve shared canonical data identically. Returns whether it was
    * actually removed.
    */
-  private async purgeCanonicalCustomerIfOrphaned(tx: NodePgDatabase, workspaceId: string, canonicalCustomerId: string): Promise<boolean> {
+  /** Tx-scoped building block, also used by CustomerErasureService — erases a canonical customer once no source row references it. */
+  async purgeCanonicalCustomerIfOrphaned(tx: NodePgDatabase, workspaceId: string, canonicalCustomerId: string): Promise<boolean> {
     const [remaining] = await tx
       .select({ count: sql<number>`count(*)` })
       .from(commerceCustomers)

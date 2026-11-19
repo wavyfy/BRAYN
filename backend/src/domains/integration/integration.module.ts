@@ -26,6 +26,8 @@ import { ShopifyUninstallController } from './providers/shopify/shopify-uninstal
 import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter';
 import { WooCommerceWebhookSetupService } from './providers/woocommerce/woocommerce-webhook-setup.service';
 import { WooCommerceWebhookSetupController } from './providers/woocommerce/woocommerce-webhook-setup.controller';
+import { CustomerErasureController } from './customer-erasure.controller';
+import { CustomerErasureService } from './customer-erasure.service';
 
 /**
  * Owns: external connections, provider auth, imports, sync, webhook intake,
@@ -55,9 +57,11 @@ import { WooCommerceWebhookSetupController } from './providers/woocommerce/wooco
     ShopifyComplianceController,
     ShopifyUninstallController,
     WooCommerceWebhookSetupController,
+    CustomerErasureController,
   ],
   providers: [
     IntegrationService,
+    CustomerErasureService,
     ProviderRegistry,
     ImportRunService,
     ImportProcessorService,
