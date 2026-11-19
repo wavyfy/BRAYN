@@ -33,6 +33,7 @@ import { integrationWebhookEvents } from '../../database/schema/integration-webh
 import { websiteVisitors } from '../../database/schema/website-visitors';
 import { websiteSessions } from '../../database/schema/website-sessions';
 import { websiteEvents } from '../../database/schema/website-events';
+import { aiActionRequests } from '../../database/schema/ai-action-requests';
 import { ConflictError, NotFoundError, ProviderError, UnauthenticatedError } from '../../common/errors/app-error';
 import {
   decryptCredential,
@@ -523,6 +524,13 @@ export class IntegrationService {
       await tx.delete(websiteSessions).where(and(eq(websiteSessions.workspaceId, workspaceId), inArray(websiteSessions.visitorId, visitorIds)));
       await tx.delete(websiteVisitors).where(and(eq(websiteVisitors.workspaceId, workspaceId), inArray(websiteVisitors.id, visitorIds)));
     }
+
+    // AI action audit records are metadata-only (no personal data) and stay as the audit trail; only their link to
+    // the erased customer is cleared — otherwise the customer_id foreign key blocks the whole erasure.
+    await tx
+      .update(aiActionRequests)
+      .set({ customerId: null })
+      .where(and(eq(aiActionRequests.workspaceId, workspaceId), eq(aiActionRequests.customerId, canonicalCustomerId)));
 
     await tx.delete(canonicalCustomers).where(and(eq(canonicalCustomers.workspaceId, workspaceId), eq(canonicalCustomers.id, canonicalCustomerId)));
     return true;

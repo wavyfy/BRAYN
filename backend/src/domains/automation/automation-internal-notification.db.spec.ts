@@ -170,4 +170,32 @@ describe('Automation internal notification (real DB)', { timeout: 120_000 }, () 
     expect(result).toEqual({ found: true, canonicalCustomerRemoved: true });
     expect(await db.client.select().from(internalNotifications).where(eq(internalNotifications.canonicalCustomerId, customer.id))).toHaveLength(0);
   });
+
+  it('erases a customer an automation has acted on: the audit records stay, only their customer reference is cleared', async () => {
+    const [integration] = await db.client.insert(integrations).values({ workspaceId: wsA, provider: 'woocommerce' }).returning();
+    await automations.create(wsA, { name: 'erasure notify A', actionType: 'internal_notification.create' });
+    await automations.create(wsB, { name: 'erasure notify B', actionType: 'internal_notification.create' });
+    const { customer, event } = await seedOpportunity(wsA);
+    await db.client.insert(commerceCustomers).values({ workspaceId: wsA, integrationId: integration.id, provider: 'woocommerce', externalId: 'erase-ai-1', canonicalCustomerId: customer.id });
+    await automations.handleRevenueOpportunityCreated(event);
+    const audits = await db.client.select().from(aiActionRequests).where(eq(aiActionRequests.customerId, customer.id));
+    expect(audits.length).toBeGreaterThan(0);
+    // Another workspace's audit records for its own customer must be untouched.
+    const other = await seedOpportunity(wsB);
+    await automations.handleRevenueOpportunityCreated(other.event);
+    const otherAudits = await db.client.select().from(aiActionRequests).where(eq(aiActionRequests.customerId, other.customer.id));
+    expect(otherAudits.length).toBeGreaterThan(0);
+
+    const result = await integrationService.purgeCommerceCustomer(wsA, integration.id, 'erase-ai-1');
+
+    expect(result).toEqual({ found: true, canonicalCustomerRemoved: true });
+    expect(await db.client.select().from(canonicalCustomers).where(eq(canonicalCustomers.id, customer.id))).toHaveLength(0);
+    const kept = await db.client.select().from(aiActionRequests).where(inArray(aiActionRequests.id, audits.map((audit) => audit.id)));
+    expect(kept).toHaveLength(audits.length);
+    for (const audit of kept) {
+      const before = audits.find((row) => row.id === audit.id)!;
+      expect(audit).toEqual({ ...before, customerId: null });
+    }
+    expect(await db.client.select().from(aiActionRequests).where(eq(aiActionRequests.customerId, other.customer.id))).toHaveLength(otherAudits.length);
+  });
 });
