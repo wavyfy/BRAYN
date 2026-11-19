@@ -17,6 +17,7 @@ const ALLOWED: Record<string, string> = {
   'website-tracking/website-event-ingest.service.ts': 'Website tracking owns website_visitors',
   'identity-resolution/identity-resolution.service.ts': 'Identity Resolution owns canonical customers, links and merge',
   'integration/integration.service.ts': 'Canonical erasure path (purgeCanonicalCustomerIfOrphaned)',
+  'integration/customer-erasure.service.ts': 'Person-level erasure: finds every source record of the canonical customer it erases',
   // The UCIR itself.
   'customer-intelligence/customer-intelligence.service.ts': 'Unified Customer Intelligence Record',
   // Allowed analytical read model (Slice 4.6 decision): product/line-item affinity UCIR does not carry; runs after getCustomer().

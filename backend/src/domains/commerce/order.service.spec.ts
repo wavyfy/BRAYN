@@ -2,11 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { OrderService, type NormalizedOrder } from './order.service';
 import type { DatabaseService } from '../../database/database.service';
 import type { EventBus } from '../../common/events/event-bus.service';
+import type { ErasedIdentifierService } from './erased-identifier.service';
 
 /** Transactions run their callback against the same mocked client; event emission is covered by the real-DB commerce-events spec. */
 function makeService(client: object) {
   const database = { client, transaction: (fn: (tx: unknown) => unknown) => fn(client) } as unknown as DatabaseService;
-  return new OrderService(database, { emit: vi.fn() } as unknown as EventBus);
+  const noErasures = { lockShared: vi.fn(async () => undefined), findBlocked: vi.fn(async () => () => false) } as unknown as ErasedIdentifierService;
+  return new OrderService(database, { emit: vi.fn() } as unknown as EventBus, noErasures);
 }
 
 function makeSelectChain(result: unknown) {

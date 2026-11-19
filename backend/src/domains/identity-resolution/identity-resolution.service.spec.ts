@@ -8,10 +8,18 @@ function makeSelectChain(result: unknown) {
     from: vi.fn(() => chain),
     leftJoin: vi.fn(() => chain),
     where: vi.fn(() => chain),
+    orderBy: vi.fn(() => chain),
+    for: vi.fn(() => chain),
     limit: vi.fn(async () => result),
     then: (resolve: (value: unknown) => void) => resolve(result),
   };
   return chain;
+}
+
+/** resolveMany runs in a transaction under the erasure lock — run it against the same mocked client, lock as a no-op. */
+function makeIdentityService(client: Record<string, unknown>) {
+  const tx = Object.assign(client, { execute: vi.fn(async () => undefined) });
+  return new IdentityResolutionService({ client, transaction: (fn: (t: unknown) => unknown) => fn(tx) } as unknown as DatabaseService);
 }
 
 function makeInsertChain(returned: { id: string; mergedIntoId?: string | null }) {
@@ -43,7 +51,7 @@ describe('IdentityResolutionService', () => {
   describe('resolveMany()', () => {
     it('does nothing for an empty batch', async () => {
       const client = { select: vi.fn(), insert: vi.fn(), update: vi.fn() };
-      const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
+      const service = makeIdentityService(client);
 
       await service.resolveMany('ws_1', 'shopify', []);
 
@@ -53,7 +61,7 @@ describe('IdentityResolutionService', () => {
     it('does nothing when every matched row is already resolved', async () => {
       const select = vi.fn(() => makeSelectChain([]));
       const client = { select, insert: vi.fn(), update: vi.fn() };
-      const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
+      const service = makeIdentityService(client);
 
       await service.resolveMany('ws_1', 'shopify', ['1']);
 
@@ -66,7 +74,7 @@ describe('IdentityResolutionService', () => {
       const insertChain = makeInsertChain({ id: 'canon_1' });
       const updateChain = makeUpdateChain();
       const client = { select, insert: vi.fn(() => insertChain), update: vi.fn(() => updateChain) };
-      const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
+      const service = makeIdentityService(client);
 
       await service.resolveMany('ws_1', 'shopify', ['1']);
 
@@ -79,7 +87,7 @@ describe('IdentityResolutionService', () => {
       const insertChain = makeInsertChain({ id: 'canon_2' });
       const updateChain = makeUpdateChain();
       const client = { select, insert: vi.fn(() => insertChain), update: vi.fn(() => updateChain) };
-      const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
+      const service = makeIdentityService(client);
 
       await service.resolveMany('ws_1', 'shopify', ['2']);
 
@@ -98,7 +106,7 @@ describe('IdentityResolutionService', () => {
       const insertChain = makeInsertChain({ id: 'canon_1' });
       const updateChain = makeUpdateChain();
       const client = { select, insert: vi.fn(() => insertChain), update: vi.fn(() => updateChain) };
-      const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
+      const service = makeIdentityService(client);
 
       await service.resolveMany('ws_1', 'shopify', ['1', '2']);
 
@@ -120,7 +128,7 @@ describe('IdentityResolutionService', () => {
       const updateChain = makeUpdateChain();
       const insert = vi.fn().mockReturnValueOnce(insertChain).mockReturnValueOnce(duplicateInsertChain);
       const client = { select, selectDistinct, insert, update: vi.fn(() => updateChain) };
-      const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
+      const service = makeIdentityService(client);
 
       await service.resolveMany('ws_1', 'shopify', ['2']);
 
@@ -142,7 +150,7 @@ describe('IdentityResolutionService', () => {
       const insert = vi.fn(() => duplicateInsertChain);
       const update = vi.fn();
       const client = { select, selectDistinct, insert, update };
-      const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
+      const service = makeIdentityService(client);
 
       await service.resolveMany('ws_1', 'shopify', ['2']);
 
@@ -163,7 +171,7 @@ describe('IdentityResolutionService', () => {
       const selectDistinct = vi.fn(() => makeSelectChain([{ phoneE164: '+14155552671', canonicalCustomerId: 'canon_1' }]));
       const insert = vi.fn();
       const client = { select, selectDistinct, insert, update: vi.fn() };
-      const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
+      const service = makeIdentityService(client);
 
       await service.resolveMany('ws_1', 'shopify', ['1', '2']);
 
@@ -175,7 +183,7 @@ describe('IdentityResolutionService', () => {
       const selectDistinct = vi.fn();
       const insertChain = makeInsertChain({ id: 'canon_1' });
       const client = { select, selectDistinct, insert: vi.fn(() => insertChain), update: vi.fn(() => makeUpdateChain()) };
-      const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
+      const service = makeIdentityService(client);
 
       await service.resolveMany('ws_1', 'shopify', ['1']);
 
@@ -188,7 +196,7 @@ describe('IdentityResolutionService', () => {
       const insertChain = makeInsertChain({ id: 'canon_1' });
       const insert = vi.fn().mockReturnValueOnce(insertChain);
       const client = { select, selectDistinct, insert, update: vi.fn(() => makeUpdateChain()) };
-      const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
+      const service = makeIdentityService(client);
 
       await service.resolveMany('ws_1', 'shopify', ['1']);
 
@@ -204,7 +212,7 @@ describe('IdentityResolutionService', () => {
       const insert = vi.fn();
       const updateChain = makeUpdateChain();
       const client = { select, insert, update: vi.fn(() => updateChain) };
-      const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
+      const service = makeIdentityService(client);
 
       await service.resolveWebsiteVisitor('ws_1', 'visitor_1', ' Shopper@Example.com ');
 
@@ -219,7 +227,7 @@ describe('IdentityResolutionService', () => {
         .mockReturnValueOnce(makeSelectChain([]));
       const insert = vi.fn();
       const update = vi.fn();
-      const service = new IdentityResolutionService({ client: { select, insert, update } } as unknown as DatabaseService);
+      const service = makeIdentityService({ select, insert, update });
 
       await service.resolveWebsiteVisitor('ws_1', 'visitor_1', 'nobody@example.com');
 
@@ -232,7 +240,7 @@ describe('IdentityResolutionService', () => {
       const insert = vi.fn();
       const update = vi.fn();
       const client = { select, insert, update };
-      const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
+      const service = makeIdentityService(client);
 
       await service.resolveWebsiteVisitor('ws_1', 'visitor_from_another_workspace', 'shopper@example.com');
 
@@ -248,7 +256,7 @@ describe('IdentityResolutionService', () => {
       const insert = vi.fn();
       const update = vi.fn();
       const client = { select, insert, update };
-      const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
+      const service = makeIdentityService(client);
 
       await service.resolveWebsiteVisitor('ws_1', 'visitor_1', 'a-different-email@example.com');
 
@@ -267,7 +275,7 @@ describe('IdentityResolutionService', () => {
         .mockReturnValueOnce(makeSelectChain([{ id: 'visitor_1', canonicalCustomerId: 'canon_1' }]))
         .mockReturnValueOnce(makeSelectChain([{ id: 'canon_1', primaryEmail: 'shopper@example.com', mergedIntoId: null }]));
       const client = { select, insert: vi.fn(), update };
-      const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
+      const service = makeIdentityService(client);
 
       await service.resolveWebsiteVisitor('ws_1', 'visitor_1', 'shopper@example.com');
       await service.resolveWebsiteVisitor('ws_1', 'visitor_1', 'shopper@example.com');
@@ -287,7 +295,7 @@ describe('IdentityResolutionService', () => {
       const insertChain = makeInsertChain({ id: 'canon_merged', mergedIntoId: 'canon_survivor' });
       const updateChain = makeUpdateChain();
       const client = { select, insert: vi.fn(() => insertChain), update: vi.fn(() => updateChain) };
-      const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
+      const service = makeIdentityService(client);
 
       await service.resolveMany('ws_1', 'shopify', ['9']);
 
@@ -302,7 +310,7 @@ describe('IdentityResolutionService', () => {
       const duplicateInsertChain = makeDuplicateInsertChain();
       const insert = vi.fn(() => duplicateInsertChain);
       const update = vi.fn();
-      const service = new IdentityResolutionService({ client: { select, insert, update } } as unknown as DatabaseService);
+      const service = makeIdentityService({ select, insert, update });
 
       await service.resolveMany('ws_1', 'shopify', ['1']);
 
@@ -323,7 +331,7 @@ describe('IdentityResolutionService', () => {
         )
         .mockReturnValueOnce(makeSelectChain([{ id: 'canon_merged', primaryEmail: 'alias@example.com', mergedIntoId: 'canon_a' }]));
       const insert = vi.fn();
-      const service = new IdentityResolutionService({ client: { select, insert, update: vi.fn() } } as unknown as DatabaseService);
+      const service = makeIdentityService({ select, insert, update: vi.fn() });
 
       await service.resolveMany('ws_1', 'shopify', ['1', '2']);
 
@@ -338,7 +346,7 @@ describe('IdentityResolutionService', () => {
       const duplicateInsertChain = makeDuplicateInsertChain();
       const insert = vi.fn(() => duplicateInsertChain);
       const update = vi.fn();
-      const service = new IdentityResolutionService({ client: { select, insert, update } } as unknown as DatabaseService);
+      const service = makeIdentityService({ select, insert, update });
 
       await service.resolveWebsiteVisitor('ws_1', 'visitor_1', 'Other@Example.com');
 
@@ -436,7 +444,7 @@ describe('IdentityResolutionService', () => {
       const rows = [{ id: 'dup_1', canonicalCustomerAId: 'canon_1', canonicalCustomerBId: 'canon_2', status: 'pending' }];
       const select = vi.fn(() => makeSelectChain(rows));
       const client = { select };
-      const service = new IdentityResolutionService({ client } as unknown as DatabaseService);
+      const service = makeIdentityService(client);
 
       const result = await service.listDuplicates('ws_1');
 

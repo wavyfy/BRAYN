@@ -15,6 +15,8 @@ import type { Env } from '../../config/env.schema';
 import { IntegrationService } from '../integration/integration.service';
 import { IdentityResolutionService } from '../identity-resolution/identity-resolution.service';
 import type { IngestWebsiteEventInput } from './dto/ingest-website-event.schema';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { ErasedIdentifierService, emailIdentifier } from '../commerce/erased-identifier.service';
 
 export type WebsiteEventIngestResult = { status: 'accepted' } | { status: 'duplicate' };
 
@@ -83,6 +85,7 @@ export class WebsiteEventIngestService {
     private readonly redis: RedisService,
     private readonly logger: StructuredLoggerService,
     config: ConfigService<Env, true>,
+    private readonly erasedIdentifiers: ErasedIdentifierService,
   ) {
     this.windowSeconds = config.get('RATE_LIMIT_WINDOW_SECONDS', { infer: true });
     this.ipMax = config.get('WEBSITE_EVENT_RATE_LIMIT_IP_MAX', { infer: true });
@@ -151,20 +154,35 @@ export class WebsiteEventIngestService {
 
     const identity = input.eventType === 'identity_signal' ? this.verifyIdentitySignal(input.payload ?? {}, identitySecret) : null;
 
-    await this.database.client
-      .insert(websiteEvents)
-      .values({
-        workspaceId,
-        visitorId: visitor.id,
-        sessionId: session.id,
-        eventId: input.eventId,
-        eventType: input.eventType,
-        payload: identity ? { email: identity.email, verified: identity.verified } : (input.payload ?? null),
-        occurredAt: input.occurredAt ? new Date(input.occurredAt) : now,
-      })
-      .onConflictDoNothing({ target: [websiteEvents.workspaceId, websiteEvents.eventId] });
+    const insertEvent = (db: NodePgDatabase, payload: unknown) =>
+      db
+        .insert(websiteEvents)
+        .values({
+          workspaceId,
+          visitorId: visitor.id,
+          sessionId: session.id,
+          eventId: input.eventId,
+          eventType: input.eventType,
+          payload,
+          occurredAt: input.occurredAt ? new Date(input.occurredAt) : now,
+        })
+        .onConflictDoNothing({ target: [websiteEvents.workspaceId, websiteEvents.eventId] });
 
-    if (identity?.verified) {
+    // An identity signal for an erased customer's email is kept as an anonymous event: the email is never stored
+    // and never linked. Checked under the shared customer-erasure lock in the same transaction as the insert, so a
+    // concurrent erasure either sees this event (and deletes it) or this check sees the erasure. Only identity
+    // signals carry personal data, so only they pay for the transaction + lock.
+    const erased = identity
+      ? await this.database.transaction(async (tx) => {
+          await this.erasedIdentifiers.lockShared(tx, workspaceId);
+          const isBlocked = await this.erasedIdentifiers.findBlocked(tx, workspaceId, [emailIdentifier(identity.email)]);
+          const blocked = isBlocked(emailIdentifier(identity.email));
+          await insertEvent(tx, blocked ? null : { email: identity.email, verified: identity.verified });
+          return blocked;
+        })
+      : (await insertEvent(this.database.client, input.payload ?? null), false);
+
+    if (identity?.verified && !erased) {
       await this.identityResolutionService.resolveWebsiteVisitor(workspaceId, visitor.id, identity.email);
     }
   }

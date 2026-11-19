@@ -1,8 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { DatabaseService } from '../../database/database.service';
 import { normalizePhoneE164 } from '../../common/identity/phone';
+import { ErasedIdentifierService, emailIdentifier, sourceIdentifier } from './erased-identifier.service';
 import type { IntegrationProvider } from '../integration/dto/connect-integration.schema';
 
 /** A provider's customer record, already mapped into BRAYN's shape (doc 06 — Normalization output). */
@@ -51,7 +53,26 @@ export function guestValueWins(candidate: GuestValue, current: GuestValue): bool
  */
 @Injectable()
 export class CustomerService {
-  constructor(private readonly database: DatabaseService) {}
+  constructor(
+    private readonly database: DatabaseService,
+    private readonly erasedIdentifiers: ErasedIdentifierService,
+  ) {}
+
+  /**
+   * Drops customers an erasure blocked (by provider id or email), inside the writing transaction and under the
+   * shared erasure lock — see ErasedIdentifierService. Shared by both upserts below.
+   */
+  private async withoutErased<T extends { externalId: string; email: string | null }>(
+    tx: NodePgDatabase,
+    workspaceId: string,
+    provider: IntegrationProvider,
+    customers: T[],
+  ): Promise<T[]> {
+    await this.erasedIdentifiers.lockShared(tx, workspaceId);
+    const candidates = customers.flatMap((customer) => [sourceIdentifier(provider, customer.externalId), emailIdentifier(customer.email)]);
+    const isBlocked = await this.erasedIdentifiers.findBlocked(tx, workspaceId, candidates);
+    return customers.filter((customer) => !isBlocked(sourceIdentifier(provider, customer.externalId)) && !isBlocked(emailIdentifier(customer.email)));
+  }
 
   /**
    * Inserts or updates customers keyed on (workspace, provider, externalId)
@@ -68,32 +89,38 @@ export class CustomerService {
       return 0;
     }
 
-    await this.database.client
-      .insert(commerceCustomers)
-      .values(
-        customers.map((customer) => ({
-          workspaceId,
-          integrationId,
-          provider,
-          ...customer,
-          phoneE164: normalizePhoneE164(customer.phone),
-        })),
-      )
-      .onConflictDoUpdate({
-        target: [commerceCustomers.workspaceId, commerceCustomers.provider, commerceCustomers.externalId],
-        set: {
-          email: sql`excluded.email`,
-          firstName: sql`excluded.first_name`,
-          lastName: sql`excluded.last_name`,
-          phone: sql`excluded.phone`,
-          phoneE164: sql`excluded.phone_e164`,
-          sourceUpdatedAt: sql`excluded.source_updated_at`,
-          sourceCreatedAt: sql`excluded.source_created_at`,
-          updatedAt: new Date(),
-        },
-      });
+    return this.database.transaction(async (tx) => {
+      const allowed = await this.withoutErased(tx, workspaceId, provider, customers);
+      if (allowed.length === 0) {
+        return 0;
+      }
+      await tx
+        .insert(commerceCustomers)
+        .values(
+          allowed.map((customer) => ({
+            workspaceId,
+            integrationId,
+            provider,
+            ...customer,
+            phoneE164: normalizePhoneE164(customer.phone),
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [commerceCustomers.workspaceId, commerceCustomers.provider, commerceCustomers.externalId],
+          set: {
+            email: sql`excluded.email`,
+            firstName: sql`excluded.first_name`,
+            lastName: sql`excluded.last_name`,
+            phone: sql`excluded.phone`,
+            phoneE164: sql`excluded.phone_e164`,
+            sourceUpdatedAt: sql`excluded.source_updated_at`,
+            sourceCreatedAt: sql`excluded.source_created_at`,
+            updatedAt: new Date(),
+          },
+        });
 
-    return customers.length;
+      return allowed.length;
+    });
   }
 
   /**
@@ -140,10 +167,15 @@ export class CustomerService {
       }
     }
 
-    await this.database.client
+    await this.database.transaction(async (tx) => {
+      const allowed = await this.withoutErased(tx, workspaceId, provider, [...merged].map(([externalId, guest]) => ({ externalId, email: guest.email, guest })));
+      if (allowed.length === 0) {
+        return;
+      }
+      await tx
       .insert(commerceCustomers)
       .values(
-        [...merged].map(([externalId, guest]) => ({
+        allowed.map(({ externalId, guest }) => ({
           workspaceId,
           integrationId,
           provider,
@@ -162,6 +194,7 @@ export class CustomerService {
         target: [commerceCustomers.workspaceId, commerceCustomers.provider, commerceCustomers.externalId],
         set,
       });
+    });
   }
 
   /** This workspace/provider's current `sourceUpdatedAt` for each existing externalId (doc 06/20 — Reconciliation: detect missing/changed records before repairing). Absent from the map means no such row exists yet. */

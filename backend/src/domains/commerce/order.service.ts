@@ -14,6 +14,7 @@ import { DatabaseService } from '../../database/database.service';
 import type { IntegrationProvider } from '../integration/dto/connect-integration.schema';
 import type { OrderEventPayload, RefundProcessedPayload } from './commerce-events';
 import type { NormalizedGuestCustomer } from './customer.service';
+import { ErasedIdentifierService, orderIdentifier, sourceIdentifier } from './erased-identifier.service';
 
 export interface NormalizedOrderLineItem {
   externalId: string;
@@ -173,6 +174,7 @@ export class OrderService {
   constructor(
     private readonly database: DatabaseService,
     private readonly eventBus: EventBus,
+    private readonly erasedIdentifiers: ErasedIdentifierService,
   ) {}
 
   /**
@@ -228,9 +230,25 @@ export class OrderService {
     workspaceId: string,
     integrationId: string,
     provider: IntegrationProvider,
-    orders: NormalizedOrder[],
+    batch: NormalizedOrder[],
     emitDomainEvents: boolean,
   ) {
+    // Erased orders stay deleted, and an erased customer is never linked again (ErasedIdentifierService).
+    await this.erasedIdentifiers.lockShared(db, workspaceId);
+    const isBlocked = await this.erasedIdentifiers.findBlocked(db, workspaceId, [
+      ...batch.map((order) => orderIdentifier(provider, order.externalId)),
+      ...batch.map((order) => (order.customerExternalId ? sourceIdentifier(provider, order.customerExternalId) : null)),
+    ]);
+    const orders = batch
+      .filter((order) => !isBlocked(orderIdentifier(provider, order.externalId)))
+      .map((order) => (order.customerExternalId && isBlocked(sourceIdentifier(provider, order.customerExternalId)) ? { ...order, customerExternalId: null } : order));
+    if (orders.length === 0) {
+      return {
+        result: { ordersWritten: 0, lineItemsWritten: 0, refundsWritten: 0, fulfillmentsWritten: 0, newOrderCanonicalCustomerIds: [] as string[] },
+        events: [] as DomainEvent<OrderEventPayload>[],
+      };
+    }
+
     const customerIdByExternalId = await this.lookupIds(
       db,
       commerceCustomers,

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CustomerService, guestValueWins, type NormalizedCustomer } from './customer.service';
 import type { DatabaseService } from '../../database/database.service';
+import type { ErasedIdentifierService } from './erased-identifier.service';
 
 function makeInsertChain() {
   const chain: Record<string, unknown> = {
@@ -8,6 +9,12 @@ function makeInsertChain() {
     onConflictDoUpdate: vi.fn(async () => undefined),
   };
   return chain;
+}
+
+/** Transactions run against the same mocked client; the erasure block list is a pass-through (covered by real-DB specs). */
+const noErasures = { lockShared: vi.fn(async () => undefined), findBlocked: vi.fn(async () => () => false) } as unknown as ErasedIdentifierService;
+function makeCustomerService(client: object, erased: ErasedIdentifierService = noErasures) {
+  return new CustomerService({ client, transaction: (fn: (tx: unknown) => unknown) => fn(client) } as unknown as DatabaseService, erased);
 }
 
 function makeSelectChain(result: unknown) {
@@ -33,7 +40,7 @@ describe('CustomerService', () => {
   describe('upsertMany()', () => {
     it('does nothing and returns 0 for an empty batch', async () => {
       const client = { insert: vi.fn() };
-      const service = new CustomerService({ client } as unknown as DatabaseService);
+      const service = makeCustomerService(client);
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', []);
 
@@ -44,7 +51,7 @@ describe('CustomerService', () => {
     it('inserts rows tagged with workspace/integration/provider and upserts on the dedupe key', async () => {
       const insertChain = makeInsertChain();
       const client = { insert: vi.fn(() => insertChain) };
-      const service = new CustomerService({ client } as unknown as DatabaseService);
+      const service = makeCustomerService(client);
 
       const result = await service.upsertMany('ws_1', 'int_1', 'shopify', [customer]);
 
@@ -65,7 +72,7 @@ describe('CustomerService', () => {
     it('stores the raw phone unchanged alongside its E.164 form, and null E.164 for a national-only number', async () => {
       const insertChain = makeInsertChain();
       const client = { insert: vi.fn(() => insertChain) };
-      const service = new CustomerService({ client } as unknown as DatabaseService);
+      const service = makeCustomerService(client);
 
       await service.upsertMany('ws_1', 'int_1', 'woocommerce', [
         { ...customer, externalId: '1', phone: '+91 98765-43210' },
@@ -83,7 +90,7 @@ describe('CustomerService', () => {
   describe('findExistingUpdatedAt()', () => {
     it('returns an empty map without querying for an empty batch', async () => {
       const client = { select: vi.fn() };
-      const service = new CustomerService({ client } as unknown as DatabaseService);
+      const service = makeCustomerService(client);
 
       const result = await service.findExistingUpdatedAt('ws_1', 'shopify', []);
 
@@ -93,7 +100,7 @@ describe('CustomerService', () => {
 
     it('maps each existing externalId to its stored sourceUpdatedAt', async () => {
       const client = { select: vi.fn(() => makeSelectChain([{ externalId: '123', sourceUpdatedAt: customer.sourceUpdatedAt }])) };
-      const service = new CustomerService({ client } as unknown as DatabaseService);
+      const service = makeCustomerService(client);
 
       const result = await service.findExistingUpdatedAt('ws_1', 'shopify', ['123', 'missing']);
 

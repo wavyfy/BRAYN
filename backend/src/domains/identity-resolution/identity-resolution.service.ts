@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { and, eq, inArray, isNotNull, notInArray, or, sql } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { conversations } from '../../database/schema/conversations';
 import { customerHealthStates } from '../../database/schema/customer-health-states';
@@ -19,6 +20,7 @@ import {
 } from '../../database/schema/canonical-customer-duplicates';
 import { websiteVisitors } from '../../database/schema/website-visitors';
 import { DatabaseService } from '../../database/database.service';
+import { lockErasureShared } from '../commerce/erased-identifier.service';
 import { RequestContext } from '../../common/logging/request-context';
 import { ConflictError, NotFoundError, UnauthenticatedError, ValidationError } from '../../common/errors/app-error';
 import type { IntegrationProvider } from '../integration/dto/connect-integration.schema';
@@ -102,48 +104,57 @@ export class IdentityResolutionService {
       return;
     }
 
-    const rows = await this.database.client
-      .select({
-        id: commerceCustomers.id,
-        email: commerceCustomers.email,
-        phoneE164: commerceCustomers.phoneE164,
-        canonicalCustomerId: commerceCustomers.canonicalCustomerId,
-        canonicalEmail: canonicalCustomers.primaryEmail,
-      })
-      .from(commerceCustomers)
-      .leftJoin(canonicalCustomers, eq(canonicalCustomers.id, commerceCustomers.canonicalCustomerId))
-      .where(
-        and(
-          eq(commerceCustomers.workspaceId, workspaceId),
-          eq(commerceCustomers.provider, provider),
-          inArray(commerceCustomers.externalId, externalIds),
-        ),
-      );
+    // One transaction under the shared customer-erasure lock (ErasedIdentifierService): a person-level erasure
+    // either finishes before this reads its rows (they are gone — nothing to resolve) or waits until it commits
+    // (and then erases what it linked). Without it, a row read just before an erasure could re-create a canonical
+    // customer with the erased email after it. Rows are re-read FOR UPDATE so two resolutions of the same row serialize.
+    await this.database.transaction(async (tx) => {
+      await lockErasureShared(tx, workspaceId);
+      const rows = await tx
+        .select({
+          id: commerceCustomers.id,
+          email: commerceCustomers.email,
+          phoneE164: commerceCustomers.phoneE164,
+          canonicalCustomerId: commerceCustomers.canonicalCustomerId,
+          canonicalEmail: canonicalCustomers.primaryEmail,
+        })
+        .from(commerceCustomers)
+        .leftJoin(canonicalCustomers, eq(canonicalCustomers.id, commerceCustomers.canonicalCustomerId))
+        .where(
+          and(
+            eq(commerceCustomers.workspaceId, workspaceId),
+            eq(commerceCustomers.provider, provider),
+            inArray(commerceCustomers.externalId, externalIds),
+          ),
+        )
+        .orderBy(commerceCustomers.id)
+        .for('update', { of: commerceCustomers });
 
-    const withPhone: { canonicalCustomerId: string; phoneE164: string }[] = [];
-    const changedEmail: { canonicalCustomerId: string; email: string }[] = [];
-    for (const row of rows) {
-      let canonicalCustomerId = row.canonicalCustomerId;
-      if (!canonicalCustomerId) {
-        canonicalCustomerId = await this.resolveOne(workspaceId, row.email);
-        await this.database.client
-          .update(commerceCustomers)
-          .set({ canonicalCustomerId, updatedAt: new Date() })
-          .where(eq(commerceCustomers.id, row.id));
-      } else {
-        const email = normalizeEmail(row.email);
-        if (email && email !== row.canonicalEmail) {
-          changedEmail.push({ canonicalCustomerId, email });
+      const withPhone: { canonicalCustomerId: string; phoneE164: string }[] = [];
+      const changedEmail: { canonicalCustomerId: string; email: string }[] = [];
+      for (const row of rows) {
+        let canonicalCustomerId = row.canonicalCustomerId;
+        if (!canonicalCustomerId) {
+          canonicalCustomerId = await this.resolveOne(tx, workspaceId, row.email);
+          await tx
+            .update(commerceCustomers)
+            .set({ canonicalCustomerId, updatedAt: new Date() })
+            .where(eq(commerceCustomers.id, row.id));
+        } else {
+          const email = normalizeEmail(row.email);
+          if (email && email !== row.canonicalEmail) {
+            changedEmail.push({ canonicalCustomerId, email });
+          }
+        }
+
+        if (row.phoneE164) {
+          withPhone.push({ canonicalCustomerId, phoneE164: row.phoneE164 });
         }
       }
 
-      if (row.phoneE164) {
-        withPhone.push({ canonicalCustomerId, phoneE164: row.phoneE164 });
-      }
-    }
-
-    await this.flagPhoneDuplicates(workspaceId, withPhone);
-    await this.flagEmailConflicts(workspaceId, changedEmail, 'email_conflict');
+      await this.flagPhoneDuplicates(tx, workspaceId, withPhone);
+      await this.flagEmailConflicts(tx, workspaceId, changedEmail, 'email_conflict');
+    });
   }
 
   /**
@@ -184,7 +195,7 @@ export class IdentityResolutionService {
 
     const normalizedEmail = email.trim().toLowerCase();
     if (visitor.canonicalCustomerId) {
-      await this.flagEmailConflicts(workspaceId, [{ canonicalCustomerId: visitor.canonicalCustomerId, email: normalizedEmail }], 'website_email_conflict');
+      await this.flagEmailConflicts(this.database.client, workspaceId, [{ canonicalCustomerId: visitor.canonicalCustomerId, email: normalizedEmail }], 'website_email_conflict');
       return;
     }
 
@@ -443,8 +454,8 @@ export class IdentityResolutionService {
    * `resolveMany` only ever reaches an unresolved row once. A match on a
    * merged customer returns its survivor.
    */
-  private async resolveOne(workspaceId: string, email: string | null): Promise<string> {
-    const [row] = await this.database.client
+  private async resolveOne(db: NodePgDatabase, workspaceId: string, email: string | null): Promise<string> {
+    const [row] = await db
       .insert(canonicalCustomers)
       .values({ workspaceId, primaryEmail: normalizeEmail(email) })
       .onConflictDoUpdate({
@@ -462,12 +473,12 @@ export class IdentityResolutionService {
    * pairing as a `medium`-confidence candidate (`matchedValue` = the E.164
    * value). One lookup for the whole batch rather than one per row.
    */
-  private async flagPhoneDuplicates(workspaceId: string, rows: { canonicalCustomerId: string; phoneE164: string }[]): Promise<void> {
+  private async flagPhoneDuplicates(db: NodePgDatabase, workspaceId: string, rows: { canonicalCustomerId: string; phoneE164: string }[]): Promise<void> {
     if (rows.length === 0) {
       return;
     }
 
-    const sharing = await this.database.client
+    const sharing = await db
       .selectDistinct({ phoneE164: commerceCustomers.phoneE164, canonicalCustomerId: commerceCustomers.canonicalCustomerId })
       .from(commerceCustomers)
       .where(
@@ -486,7 +497,7 @@ export class IdentityResolutionService {
         }
       }
     }
-    await this.recordReviewPairs(workspaceId, pairs);
+    await this.recordReviewPairs(db, workspaceId, pairs);
   }
 
   /**
@@ -496,6 +507,7 @@ export class IdentityResolutionService {
    * re-linked; an email no customer has is not a conflict.
    */
   private async flagEmailConflicts(
+    db: NodePgDatabase,
     workspaceId: string,
     rows: { canonicalCustomerId: string; email: string }[],
     signal: 'email_conflict' | 'website_email_conflict',
@@ -504,7 +516,7 @@ export class IdentityResolutionService {
       return;
     }
 
-    const owners = await this.database.client
+    const owners = await db
       .select({ id: canonicalCustomers.id, primaryEmail: canonicalCustomers.primaryEmail, mergedIntoId: canonicalCustomers.mergedIntoId })
       .from(canonicalCustomers)
       .where(and(eq(canonicalCustomers.workspaceId, workspaceId), inArray(canonicalCustomers.primaryEmail, [...new Set(rows.map((row) => row.email))])));
@@ -517,7 +529,7 @@ export class IdentityResolutionService {
         pairs.push({ a: row.canonicalCustomerId, b: owner, signal, value: row.email });
       }
     }
-    await this.recordReviewPairs(workspaceId, pairs);
+    await this.recordReviewPairs(db, workspaceId, pairs);
   }
 
   /**
@@ -527,7 +539,7 @@ export class IdentityResolutionService {
    * customers (e.g. a store's own number) can yield thousands of pairs,
    * past Postgres' 65,535 bind-parameter limit in one insert.
    */
-  private async recordReviewPairs(workspaceId: string, pairs: ReviewPair[]): Promise<void> {
+  private async recordReviewPairs(db: NodePgDatabase, workspaceId: string, pairs: ReviewPair[]): Promise<void> {
     const values = new Map<string, typeof canonicalCustomerDuplicates.$inferInsert>();
     for (const { a: first, b: second, signal, value } of pairs) {
       if (first === second) {
@@ -546,7 +558,7 @@ export class IdentityResolutionService {
 
     const rows = [...values.values()];
     for (let i = 0; i < rows.length; i += REVIEW_INSERT_CHUNK) {
-      await this.database.client
+      await db
         .insert(canonicalCustomerDuplicates)
         .values(rows.slice(i, i + REVIEW_INSERT_CHUNK))
         .onConflictDoNothing();

@@ -3,6 +3,7 @@ import { CustomerService } from './customer.service';
 import { ProductService } from './product.service';
 import { OrderService } from './order.service';
 import { CollectionService } from './collection.service';
+import { ErasedIdentifierService } from './erased-identifier.service';
 
 /**
  * Owns normalized commerce data (doc 22 — Commerce data area): customers,
@@ -14,7 +15,7 @@ import { CollectionService } from './collection.service';
  * all written by Integration's import pipeline.
  */
 @Module({
-  providers: [CustomerService, ProductService, OrderService, CollectionService],
-  exports: [CustomerService, ProductService, OrderService, CollectionService],
+  providers: [CustomerService, ProductService, OrderService, CollectionService, ErasedIdentifierService],
+  exports: [CustomerService, ProductService, OrderService, CollectionService, ErasedIdentifierService],
 })
 export class CommerceModule {}
