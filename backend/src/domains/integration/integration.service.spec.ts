@@ -15,6 +15,7 @@ import { identityMergeHistory } from '../../database/schema/identity-merge-histo
 import { customerMemoryEntries } from '../../database/schema/customer-memory-entries';
 import { customerMemoryEntryHistory } from '../../database/schema/customer-memory-entry-history';
 import { customerPreferenceHistory, customerPreferences } from '../../database/schema/customer-preferences';
+import { aiActionRequests } from '../../database/schema/ai-action-requests';
 import { websiteVisitors } from '../../database/schema/website-visitors';
 import { websiteSessions } from '../../database/schema/website-sessions';
 import { websiteEvents } from '../../database/schema/website-events';
@@ -764,6 +765,7 @@ describe('IntegrationService', () => {
             whereArgsSink?.push(args);
             return c;
           }),
+          set: vi.fn(() => c),
           returning: vi.fn(async () => result ?? []),
           then: (resolve: (v: unknown) => void) => resolve(result ?? []),
         };
@@ -783,14 +785,20 @@ describe('IntegrationService', () => {
         return chain(table === commerceCustomers ? commerceCustomersDeleted : [], whereArgsSink);
       });
 
-      return { select, delete: del, deleteCalls, deleteWhereArgsByTable };
+      const updateCalls: unknown[] = [];
+      const update = vi.fn((table: unknown) => {
+        updateCalls.push(table);
+        return chain([]);
+      });
+
+      return { select, delete: del, update, deleteCalls, updateCalls, deleteWhereArgsByTable };
     }
 
     function makeService(existingIntegration: Record<string, unknown> | null, tx: ReturnType<typeof makeTx>) {
       const client = { select: makeSelectQueue([existingIntegration ? [existingIntegration] : []]) };
       const database = {
         client,
-        transaction: vi.fn((fn: (tx: unknown) => unknown) => fn({ select: tx.select, delete: tx.delete })),
+        transaction: vi.fn((fn: (tx: unknown) => unknown) => fn({ select: tx.select, delete: tx.delete, update: tx.update })),
       };
       return new IntegrationService(
         database as unknown as DatabaseService,
@@ -934,11 +942,16 @@ describe('IntegrationService', () => {
         deleteCalls.push(table);
         return makeChain([]);
       });
-      return { select, delete: del, deleteCalls };
+      const updateCalls: unknown[] = [];
+      const update = vi.fn((table: unknown) => {
+        updateCalls.push(table);
+        return makeChain([]);
+      });
+      return { select, delete: del, update, deleteCalls, updateCalls };
     }
 
     function makeService(tx: ReturnType<typeof makeTx>) {
-      const database = { transaction: vi.fn((fn: (tx: unknown) => unknown) => fn({ select: tx.select, delete: tx.delete })) };
+      const database = { transaction: vi.fn((fn: (tx: unknown) => unknown) => fn({ select: tx.select, delete: tx.delete, update: tx.update })) };
       return new IntegrationService(database as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
     }
 
@@ -989,6 +1002,9 @@ describe('IntegrationService', () => {
       expect(tx.deleteCalls).toContain(commerceCustomers);
       expect(tx.deleteCalls).toContain(canonicalCustomers);
       expect(tx.deleteCalls).toContain(identityMergeHistory);
+      // AI action audit records are kept: their customer reference is cleared (an update, never a delete).
+      expect(tx.updateCalls).toEqual([aiActionRequests]);
+      expect(tx.deleteCalls).not.toContain(aiActionRequests);
       // Memory history before memory, both before the canonical customer (FK order).
       const order = [customerMemoryEntryHistory, customerMemoryEntries, canonicalCustomers].map((table) => tx.deleteCalls.indexOf(table));
       expect(order.every((index) => index >= 0)).toBe(true);
