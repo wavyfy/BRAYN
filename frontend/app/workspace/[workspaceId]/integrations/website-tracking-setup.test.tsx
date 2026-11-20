@@ -117,3 +117,112 @@ describe('WebsiteTrackingSetup', () => {
     expect(screen.queryByText('None yet')).toBeNull();
   });
 });
+
+describe('WebsiteTrackingSetup — one-time values stay until saved (regression)', () => {
+  const writeText = vi.fn();
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    writeText.mockResolvedValue(undefined);
+  });
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  const cases = [
+    {
+      name: 'identity secret',
+      generate: generateWebsiteTrackingIdentitySecret,
+      result: { identitySecret: 'secret_once' },
+      shown: 'secret_once',
+      before: 'Generate identity secret',
+      after: 'Rotate identity secret',
+      configured: { identitySecretConfigured: true },
+      region: 'New identity secret',
+    },
+    {
+      name: 'write key snippet',
+      generate: generateWebsiteTrackingWriteKey,
+      result: { writeKey: 'fresh_key' },
+      shown: /data-write-key="fresh_key"/,
+      before: 'Generate write key',
+      after: 'Rotate write key',
+      configured: { writeKeyConfigured: true },
+      region: 'New install snippet',
+    },
+  ] as const;
+
+  for (const c of cases) {
+    it(`${c.name}: no automatic refresh; status updates locally; survives a re-render with fresh settings; Copy; hidden only by "I've saved it"`, async () => {
+      vi.mocked(c.generate).mockResolvedValue(c.result as never);
+      const { rerender } = render(<WebsiteTrackingSetup workspaceId="ws_1" settings={unconfigured} />);
+
+      fireEvent.click(screen.getByRole('button', { name: c.before }));
+      await waitFor(() => expect(screen.getByText(c.shown)).toBeTruthy());
+
+      expect(refresh).not.toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: c.after })).toBeTruthy();
+      const region = screen.getByRole('region', { name: c.region });
+      expect(region.textContent).toContain("can't be shown or retrieved again");
+
+      // What a later refresh would deliver: the server now reports it configured. The value must still be on screen.
+      rerender(<WebsiteTrackingSetup workspaceId="ws_1" settings={{ ...unconfigured, ...c.configured }} />);
+      expect(screen.getByText(c.shown)).toBeTruthy();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Copied' })).toBeTruthy());
+      expect(writeText).toHaveBeenCalledWith(screen.getByRole('region', { name: c.region }).querySelector('pre')!.textContent);
+
+      fireEvent.click(screen.getByRole('button', { name: "I've saved it" }));
+      expect(screen.queryByText(c.shown)).toBeNull();
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+  }
+
+  it('nothing refreshes the page on a timer while a value is on screen', async () => {
+    generateWebsiteTrackingWriteKey.mockResolvedValue({ writeKey: 'fresh_key' });
+    render(<WebsiteTrackingSetup workspaceId="ws_1" settings={unconfigured} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Generate write key' }));
+    await waitFor(() => expect(screen.getByText(/data-write-key="fresh_key"/)).toBeTruthy());
+
+    vi.useFakeTimers();
+    vi.advanceTimersByTime(60_000);
+
+    expect(refresh).not.toHaveBeenCalled();
+    expect(screen.getByText(/data-write-key="fresh_key"/)).toBeTruthy();
+  });
+
+  it('a failed copy keeps the value on screen and says to copy it manually', async () => {
+    generateWebsiteTrackingIdentitySecret.mockResolvedValue({ identitySecret: 'secret_once' });
+    writeText.mockRejectedValue(new Error('denied'));
+    render(<WebsiteTrackingSetup workspaceId="ws_1" settings={unconfigured} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Generate identity secret' }));
+    await waitFor(() => expect(screen.getByText('secret_once')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('copy it manually'));
+    expect(screen.getByText('secret_once')).toBeTruthy();
+  });
+
+  it('a failed generation shows an error and no value', async () => {
+    generateWebsiteTrackingIdentitySecret.mockRejectedValue(new Error('500'));
+    render(<WebsiteTrackingSetup workspaceId="ws_1" settings={unconfigured} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Generate identity secret' }));
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Could not generate an identity secret.'));
+    expect(screen.queryByRole('region', { name: 'New identity secret' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Generate identity secret' })).toBeTruthy();
+  });
+
+  it('saving origins still refreshes (only one-time values skip it)', async () => {
+    setWebsiteTrackingAllowedOrigins.mockResolvedValue({ allowedOrigins: ['https://a.example'] });
+    render(<WebsiteTrackingSetup workspaceId="ws_1" settings={unconfigured} />);
+    fireEvent.change(screen.getByLabelText('Allowed storefront origins'), { target: { value: 'https://a.example' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save origins' }));
+
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+  });
+});
