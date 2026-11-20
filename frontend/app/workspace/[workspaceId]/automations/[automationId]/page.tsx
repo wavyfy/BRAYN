@@ -46,8 +46,8 @@ function Step({ label, children }: { label: string; children: React.ReactNode })
 }
 
 /** Doc19 Phase 15 UI — execution history, "from trigger to completed action." */
-export default async function AutomationDetailPage({ params }: { params: { workspaceId: string; automationId: string } }) {
-  const { workspaceId, automationId } = params;
+export default async function AutomationDetailPage({ params }: { params: Promise<{ workspaceId: string; automationId: string }> }) {
+  const { workspaceId, automationId } = await params;
   const base = `/api/v1/workspaces/${workspaceId}/automations/${automationId}`;
 
   let automation: Automation, runs: AutomationRun[], memberships: WorkspaceSummary[];

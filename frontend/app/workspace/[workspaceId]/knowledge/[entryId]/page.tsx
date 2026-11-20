@@ -12,8 +12,8 @@ type HistoryEntry = { version: number; title: string; content: string; changedAt
 type WorkspaceSummary = { id: string; name: string; role: string };
 
 /** Doc19 Phase 10 — versioning verification: editing shows the resulting version history. */
-export default async function KnowledgeEntryPage({ params }: { params: { workspaceId: string; entryId: string } }) {
-  const { workspaceId, entryId } = params;
+export default async function KnowledgeEntryPage({ params }: { params: Promise<{ workspaceId: string; entryId: string }> }) {
+  const { workspaceId, entryId } = await params;
   const base = `/api/v1/workspaces/${workspaceId}/knowledge/${entryId}`;
 
   let entry: Entry, history: HistoryEntry[], memberships: WorkspaceSummary[];

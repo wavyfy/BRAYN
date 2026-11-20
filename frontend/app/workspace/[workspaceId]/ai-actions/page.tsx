@@ -78,8 +78,8 @@ function describeOutcome(request: AiActionRequest): string {
  * expected to read empty/unused until one exists — see this slice's
  * completion report.
  */
-export default async function AiActionsPage({ params }: { params: { workspaceId: string } }) {
-  const { workspaceId } = params;
+export default async function AiActionsPage({ params }: { params: Promise<{ workspaceId: string }> }) {
+  const { workspaceId } = await params;
 
   let requests: AiActionRequest[];
   try {

@@ -74,9 +74,9 @@ function When({ value }: { value: string | null }) {
 export default async function CustomerDetailPage({
   params,
 }: {
-  params: { workspaceId: string; canonicalCustomerId: string };
+  params: Promise<{ workspaceId: string; canonicalCustomerId: string }>;
 }) {
-  const { workspaceId, canonicalCustomerId } = params;
+  const { workspaceId, canonicalCustomerId } = await params;
   const base = `/api/v1/workspaces/${workspaceId}/customers/${canonicalCustomerId}`;
 
   let customer: CustomerRecord, activity: ActivityEntry[];

@@ -38,7 +38,7 @@ describe('AiActionsPage', () => {
   it('renders an empty state when no AI actions have been requested yet', async () => {
     apiFetch.mockResolvedValueOnce([]);
 
-    render(await AiActionsPage({ params: { workspaceId: 'ws_1' } }));
+    render(await AiActionsPage({ params: Promise.resolve({ workspaceId: 'ws_1' }) }));
 
     expect(screen.getByText('No AI actions have been requested yet.')).toBeTruthy();
   });
@@ -57,7 +57,7 @@ describe('AiActionsPage', () => {
       },
     ]);
 
-    render(await AiActionsPage({ params: { workspaceId: 'ws_1' } }));
+    render(await AiActionsPage({ params: Promise.resolve({ workspaceId: 'ws_1' }) }));
 
     expect(screen.getByText('recommendation dismiss')).toBeTruthy();
     expect(screen.getByText('Executed')).toBeTruthy();
@@ -78,7 +78,7 @@ describe('AiActionsPage', () => {
       },
     ]);
 
-    render(await AiActionsPage({ params: { workspaceId: 'ws_1' } }));
+    render(await AiActionsPage({ params: Promise.resolve({ workspaceId: 'ws_1' }) }));
 
     expect(screen.getByText('Blocked — permission denied')).toBeTruthy();
   });
@@ -97,7 +97,7 @@ describe('AiActionsPage', () => {
       },
     ]);
 
-    render(await AiActionsPage({ params: { workspaceId: 'ws_1' } }));
+    render(await AiActionsPage({ params: Promise.resolve({ workspaceId: 'ws_1' }) }));
 
     expect(screen.getByText('Blocked — approval required')).toBeTruthy();
     expect(screen.getByText('high risk')).toBeTruthy();
@@ -117,7 +117,7 @@ describe('AiActionsPage', () => {
       },
     ]);
 
-    render(await AiActionsPage({ params: { workspaceId: 'ws_1' } }));
+    render(await AiActionsPage({ params: Promise.resolve({ workspaceId: 'ws_1' }) }));
 
     expect(screen.getByText('Execution failed')).toBeTruthy();
     expect(screen.getByText('Recommendation is already completed.')).toBeTruthy();
@@ -137,7 +137,7 @@ describe('AiActionsPage', () => {
       },
     ]);
 
-    render(await AiActionsPage({ params: { workspaceId: 'ws_1' } }));
+    render(await AiActionsPage({ params: Promise.resolve({ workspaceId: 'ws_1' }) }));
 
     expect(screen.getByText('Duplicate — already requested')).toBeTruthy();
     expect(screen.getByText('This action was already requested with the same idempotency key.')).toBeTruthy();
@@ -146,7 +146,7 @@ describe('AiActionsPage', () => {
   it('renders the inline access-denied state for a non-owner/admin caller (403), not a crash', async () => {
     apiFetch.mockRejectedValueOnce(new ApiError(403, 'UNAUTHORIZED', 'Your role does not permit this action.'));
 
-    render(await AiActionsPage({ params: { workspaceId: 'ws_1' } }));
+    render(await AiActionsPage({ params: Promise.resolve({ workspaceId: 'ws_1' }) }));
 
     expect(screen.getByText('Access denied')).toBeTruthy();
     expect(screen.getByText('Your role does not permit this action.')).toBeTruthy();
@@ -156,7 +156,7 @@ describe('AiActionsPage', () => {
     it('shows Approve and Deny controls for a pending request', async () => {
       apiFetch.mockResolvedValueOnce([pendingRequest]);
 
-      render(await AiActionsPage({ params: { workspaceId: 'ws_1' } }));
+      render(await AiActionsPage({ params: Promise.resolve({ workspaceId: 'ws_1' }) }));
 
       expect(screen.getByRole('button', { name: 'Approve' })).toBeTruthy();
       expect(screen.getByRole('button', { name: 'Deny' })).toBeTruthy();
@@ -176,7 +176,7 @@ describe('AiActionsPage', () => {
         },
       ]);
 
-      render(await AiActionsPage({ params: { workspaceId: 'ws_1' } }));
+      render(await AiActionsPage({ params: Promise.resolve({ workspaceId: 'ws_1' }) }));
 
       expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull();
@@ -187,7 +187,7 @@ describe('AiActionsPage', () => {
       approveAiActionRequest.mockResolvedValueOnce(undefined);
       vi.spyOn(window, 'confirm').mockReturnValue(true);
 
-      render(await AiActionsPage({ params: { workspaceId: 'ws_1' } }));
+      render(await AiActionsPage({ params: Promise.resolve({ workspaceId: 'ws_1' }) }));
       fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
       await screen.findByRole('button', { name: 'Approve' });
 
@@ -199,7 +199,7 @@ describe('AiActionsPage', () => {
       apiFetch.mockResolvedValueOnce([pendingRequest]);
       denyAiActionRequest.mockRejectedValueOnce(new Error('network down'));
 
-      render(await AiActionsPage({ params: { workspaceId: 'ws_1' } }));
+      render(await AiActionsPage({ params: Promise.resolve({ workspaceId: 'ws_1' }) }));
       fireEvent.click(screen.getByRole('button', { name: 'Deny' }));
 
       expect(await screen.findByText('Could not deny right now. Please try again.')).toBeTruthy();
@@ -230,7 +230,7 @@ describe('AiActionsPage — order.refund_request (#8, Phase 1 simulation)', () =
   it('labels an approved simulated refund as simulated, never as executed or refunded', async () => {
     apiFetch.mockResolvedValueOnce([refund({ resultSummary: { mode: 'simulated', orderId: 'o1', amount: '24.50' } })]);
 
-    render(await AiActionsPage({ params: { workspaceId: 'ws_1' } }));
+    render(await AiActionsPage({ params: Promise.resolve({ workspaceId: 'ws_1' }) }));
 
     expect(screen.getByText('Approved — simulated, not processed with the store')).toBeTruthy();
     expect(screen.queryByText('Executed')).toBeNull();
@@ -244,7 +244,7 @@ describe('AiActionsPage — order.refund_request (#8, Phase 1 simulation)', () =
       refund({ id: 'f', executionStatus: 'failed', failureReason: 'The order is cancelled.' }),
     ]);
 
-    render(await AiActionsPage({ params: { workspaceId: 'ws_1' } }));
+    render(await AiActionsPage({ params: Promise.resolve({ workspaceId: 'ws_1' }) }));
 
     expect(screen.getByText('Blocked — approval required')).toBeTruthy();
     expect(screen.getAllByRole('button', { name: 'Approve' })).toHaveLength(1);
@@ -260,7 +260,7 @@ describe('AiActionsPage — order.refund_request (#8, Phase 1 simulation)', () =
       { ...pendingRequest, id: 'other' },
     ]);
 
-    render(await AiActionsPage({ params: { workspaceId: 'ws_1' } }));
+    render(await AiActionsPage({ params: Promise.resolve({ workspaceId: 'ws_1' }) }));
     const [refundApprove, otherApprove] = screen.getAllByRole('button', { name: 'Approve' });
 
     fireEvent.click(refundApprove!);

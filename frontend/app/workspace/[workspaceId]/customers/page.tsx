@@ -18,13 +18,11 @@ function customerName(customer: CustomerListItem): string {
 }
 
 /** Doc19 Phase 8 — canonical UI scope: "Customer list, Search/filter". Shows only what the list endpoint returns (identity + email). */
-export default async function CustomersPage({
-  params,
-  searchParams,
-}: {
-  params: { workspaceId: string };
-  searchParams: { search?: string; page?: string; erased?: string };
+export default async function CustomersPage(props: {
+  params: Promise<{ workspaceId: string }>;
+  searchParams: Promise<{ search?: string; page?: string; erased?: string }>;
 }) {
+  const [params, searchParams] = await Promise.all([props.params, props.searchParams]);
   const search = searchParams.search ?? '';
   const page = Number(searchParams.page ?? '1') || 1;
 

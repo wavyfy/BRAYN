@@ -5,13 +5,9 @@ import { WorkspaceShell } from './workspace-shell';
 type WorkspaceSummary = { id: string; name: string; role: string };
 
 /** Shared shell for every workspace route — sidebar/top nav wraps each page's own content unchanged. */
-export default async function WorkspaceLayout({
-  children,
-  params,
-}: {
-  children: React.ReactNode;
-  params: { workspaceId: string };
-}) {
+export default async function WorkspaceLayout(props: { children: React.ReactNode; params: Promise<{ workspaceId: string }> }) {
+  const { children } = props;
+  const params = await props.params;
   let memberships: WorkspaceSummary[];
   try {
     memberships = await apiFetch('/api/v1/users/me/workspaces');
