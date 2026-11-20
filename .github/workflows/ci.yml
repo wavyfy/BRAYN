@@ -1,0 +1,160 @@
+# PR validation (Stage 12 Slice 5). Runs on PRs into main and pushes to development.
+#
+# Database tests run against a throwaway PostgreSQL 18 + pgvector service container created for each job —
+# never Neon (production or development). No repository secrets are used: test-only encryption/erasure
+# secrets are generated per run, and no .env file exists in a CI checkout (all .env files are gitignored;
+# the guard step below fails the job if one appears).
+#
+# Versions: backend Node 26 (Render production runs 26.13.1); frontend Node 24 LTS (Next 15 / @clerk/nextjs
+# need >= 20.9, pnpm 11 needs >= 22.13). pnpm comes from package.json "packageManager".
+# Actions and the database image are pinned by commit SHA / digest.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [development]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Throwaway container credentials, reachable only inside the job's runner.
+  CI_DATABASE_URL: postgres://brayn_ci:brayn_ci@localhost:5432/brayn_ci
+
+jobs:
+  backend:
+    name: backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg18@sha256:2ba9ca5f2e7daa0f0e7723cba1ee9167bab54efd3640516a44ac1a928dd67e7a
+        env:
+          POSTGRES_USER: brayn_ci
+          POSTGRES_PASSWORD: brayn_ci
+          POSTGRES_DB: brayn_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U brayn_ci -d brayn_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.x
+          cache: pnpm
+      - name: Isolated test environment
+        run: bash ../.github/scripts/ci-test-env.sh
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+      - run: pnpm run lint
+      - run: pnpm run build
+      - name: Migrate the CI database
+        run: node node_modules/drizzle-kit/bin.cjs migrate
+      - name: Backend tests (unit + real-DB)
+        # No retries: an intermittent failure is reported, not hidden. Two workers keep the shared CI database
+        # contention close to what the suite was written for.
+        run: pnpm exec vitest run --maxWorkers=2
+
+  security-db-redaction:
+    name: security-db-redaction
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg18@sha256:2ba9ca5f2e7daa0f0e7723cba1ee9167bab54efd3640516a44ac1a928dd67e7a
+        env:
+          POSTGRES_USER: brayn_ci
+          POSTGRES_PASSWORD: brayn_ci
+          POSTGRES_DB: brayn_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U brayn_ci -d brayn_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.x
+          cache: pnpm
+      - name: Isolated test environment
+        run: bash ../.github/scripts/ci-test-env.sh
+      - run: pnpm install --frozen-lockfile
+      - name: Migrate the CI database
+        run: node node_modules/drizzle-kit/bin.cjs migrate
+      - name: Database errors never leak SQL or customer data
+        run: pnpm exec vitest run src/database/safe-db-error.spec.ts src/database/safe-db-error.db.spec.ts
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.x
+          cache: pnpm
+      - name: No env files in the checkout
+        run: |
+          if find .. -name '.env' -o -name '.env.*' ! -name '.env.example' | grep -q .; then
+            echo "::error::An .env file is present in the checkout; CI must not load local or production credentials."
+            exit 1
+          fi
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+      - run: pnpm run lint
+      - run: pnpm run test
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: frontend/.next/cache
+          key: next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('frontend/app/**', 'frontend/components/**', 'frontend/lib/**', 'frontend/middleware.ts', 'frontend/next.config.*') }}
+          restore-keys: next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+      - name: Production build (no Clerk or API variables needed)
+        run: pnpm run build
+
+  audit:
+    name: audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.x
+      - name: Production dependencies have no critical or high advisories
+        run: pnpm audit --prod --audit-level=high
