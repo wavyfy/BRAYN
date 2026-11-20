@@ -4,6 +4,8 @@ import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { ProviderError } from '../common/errors/app-error';
 import type { Env } from '../config/env.schema';
+// Side effect: every drizzle query error reaching application code is the sanitized driver error (no SQL/params).
+import './safe-db-error';
 
 /**
  * Thin wrapper around the Drizzle/node-postgres connection. Lazily
