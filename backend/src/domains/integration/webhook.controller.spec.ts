@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
@@ -10,6 +11,7 @@ import { AllExceptionsFilter } from '../../common/errors/all-exceptions.filter';
 import { registerHttpLogging } from '../../common/logging/http-logging.hook';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import { ConflictError, NotFoundError, UnauthenticatedError } from '../../common/errors/app-error';
+import { verifyShopifyHmac } from './providers/shopify/shopify.adapter';
 
 describe('WebhookController (e2e)', () => {
   let app: NestFastifyApplication;
@@ -64,6 +66,26 @@ describe('WebhookController (e2e)', () => {
     expect(provider).toBe('shopify');
     expect(rawBody).toBe('{"id":1}');
     expect(headers['x-shopify-topic']).toBe('customers/update');
+  });
+
+  // Nest 11 / Fastify 5 regression guard: provider HMACs are computed over the exact bytes sent, so the raw body must
+  // reach the ingest service byte-for-byte (whitespace, key order, non-ASCII, charset parameter), not re-serialized.
+  it('passes the exact request bytes through, so a real Shopify HMAC over them verifies', async () => {
+    const body = '{ "b": 2,\n  "a":"Zoë — ✓",   "n": 1.50 }';
+    const secret = 'whsec_test';
+    const hmac = createHmac('sha256', secret).update(body, 'utf8').digest('base64');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/ws_1/integrations/shopify/webhooks',
+      headers: { 'content-type': 'application/json; charset=utf-8', 'x-shopify-topic': 'orders/create', 'x-shopify-hmac-sha256': hmac },
+      payload: Buffer.from(body, 'utf8'),
+    });
+
+    expect(res.statusCode).toBe(200);
+    const [, , rawBody, headers] = webhookIngestService.ingest.mock.calls[0] as unknown as [string, string, string, Record<string, string>];
+    expect(rawBody).toBe(body);
+    expect(verifyShopifyHmac(rawBody, headers, secret)).toBe(true);
+    expect(verifyShopifyHmac(rawBody, headers, 'other-secret')).toBe(false);
   });
 
   it('surfaces a bad signature as 401', async () => {

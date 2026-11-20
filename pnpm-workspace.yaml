@@ -12,7 +12,6 @@ allowBuilds:
   esbuild: true
 # Security: patched transitive versions within the same major (Stage 12 Slice 1).
 overrides:
-  'fastify@4': '4.29.1'
   proxy-addr: '^2.0.8'
   lodash: '^4.17.24'
   js-cookie: '^3.0.6'
