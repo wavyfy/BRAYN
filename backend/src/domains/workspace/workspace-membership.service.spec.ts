@@ -13,11 +13,6 @@ function asOwner<T>(fn: () => Promise<T>): Promise<T> {
   return RequestContext.run({ correlationId: 'corr-1', userId: 'clerk_1', workspaceId: 'ws_1', actorUserId: 'user_1', actorRole: 'owner' }, fn);
 }
 
-/** A no-op insert for tests that don't care about the audit write's own content — just lets `recordAudit` resolve cleanly instead of throwing on a missing `insert` mock. */
-function noopInsert() {
-  return vi.fn(() => makeChain(undefined));
-}
-
 function makeChain(finalResult: unknown) {
   const chain: Record<string, unknown> = {
     values: vi.fn(() => chain),
