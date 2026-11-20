@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { FastifyServerOptions } from 'fastify';
+import type { Env } from '../../config/env.schema';
 
 /**
  * CORS for the API (`main.ts`): only the frontend origin, with credentials. `methods` is explicit because
@@ -10,7 +11,6 @@ import type { FastifyServerOptions } from 'fastify';
 export function corsOptions(frontendUrl: string): Parameters<NestFastifyApplication['enableCors']>[0] {
   return { origin: frontendUrl, credentials: true, methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'] };
 }
-import type { Env } from '../../config/env.schema';
 
 /**
  * Fastify server options for the API (`main.ts`). Kept out of `main.ts`
