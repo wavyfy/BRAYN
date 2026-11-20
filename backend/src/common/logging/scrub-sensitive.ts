@@ -10,7 +10,12 @@
  * lightweight control is meant to be.
  */
 
-const EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+/**
+ * drizzle-orm's `DrizzleQueryError` text (`Failed query: <sql>\nparams: <values>`) — backstop only; the database
+ * layer already unwraps these (`database/safe-db-error.ts`). Everything from the marker to the end is dropped.
+ */
+const FAILED_QUERY_PATTERN = /Failed query:[\s\S]*/g;
+const EMAIL_PATTERN =/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const BEARER_TOKEN_PATTERN = /\bBearer\s+\S+/gi;
 /** Shopify access-token prefixes (shopify.dev — shpat_/shpca_/shpss_ + custom-app equivalents). */
 const SHOPIFY_TOKEN_PATTERN = /\bshp(?:at|ca|ss|ua)_[A-Za-z0-9]+/gi;
@@ -28,6 +33,7 @@ const LONG_TOKEN_PATTERN = /\b[A-Za-z0-9+/]{32,}={0,2}\b/g;
  */
 export function scrubSensitive(text: string): string {
   return text
+    .replace(FAILED_QUERY_PATTERN, 'Failed query: [redacted-sql]')
     .replace(EMAIL_PATTERN, '[redacted-email]')
     .replace(BEARER_TOKEN_PATTERN, 'Bearer [redacted-token]')
     .replace(SHOPIFY_TOKEN_PATTERN, '[redacted-shopify-token]')
