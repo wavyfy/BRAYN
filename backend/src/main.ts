@@ -5,7 +5,7 @@ import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fa
 import { AppModule } from './app.module';
 import { warnOnMissingProductionSecrets } from './common/config/startup-checks';
 import { registerHttpLogging } from './common/logging/http-logging.hook';
-import { fastifyAdapterOptions } from './common/http/fastify-adapter-options';
+import { corsOptions, fastifyAdapterOptions } from './common/http/fastify-adapter-options';
 import { StructuredLoggerService } from './common/logging/structured-logger.service';
 import { initSentry } from './common/observability/sentry';
 import { loadConfiguration } from './config/configuration';
@@ -24,7 +24,7 @@ async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, adapter, { rawBody: true });
 
   const configService = app.get(ConfigService<Env, true>);
-  app.enableCors({ origin: configService.get('FRONTEND_URL', { infer: true }), credentials: true });
+  app.enableCors(corsOptions(configService.get('FRONTEND_URL', { infer: true })));
 
   // doc 29 §6 — REST API is versioned under /api/v1. health stays
   // unversioned: it's an infrastructure liveness check, not a business API.

@@ -40,4 +40,17 @@ describe('fastifyAdapterOptions trustProxy', () => {
   it('with no X-Forwarded-For header falls back to the socket peer', async () => {
     expect(await ipFor(1, PROXY)).toBe(PROXY);
   });
+
+  // Fastify 5 regression guard: production runs TRUST_PROXY_HOPS=3 (Cloudflare → Render edge appends 3 entries).
+  it('with 3 hops (production topology) resolves the real client and ignores forged entries', async () => {
+    const edgeA = '172.68.10.1';
+    const edgeB = '10.200.0.7';
+    expect(await ipFor(3, PROXY, `${CLIENT}, ${edgeA}, ${edgeB}`)).toBe(CLIENT);
+    expect(await ipFor(3, PROXY, `9.9.9.9, 8.8.8.8, ${CLIENT}, ${edgeA}, ${edgeB}`)).toBe(CLIENT);
+  });
+
+  it('never trusts more hops than configured (a client cannot add hops to pick its own IP)', async () => {
+    expect(await ipFor(1, PROXY, `9.9.9.9, ${CLIENT}`)).toBe(CLIENT);
+    expect(await ipFor(2, PROXY, `9.9.9.9, 8.8.8.8, ${CLIENT}, 172.70.1.1`)).toBe(CLIENT);
+  });
 });
