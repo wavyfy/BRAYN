@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   connectIntegration,
@@ -59,6 +59,42 @@ export function trackingSnippet(scriptOrigin: string, apiBase: string, workspace
 }
 
 /**
+ * A value the API returns exactly once (write-key snippet, identity secret). Stays on screen until the merchant
+ * clicks "I've saved it" — nothing on this page refreshes it away — and only then calls `onDone`.
+ */
+function OneTimeSecret({ label, value, instructions, children, onDone }: { label: string; value: string; instructions: string; children?: ReactNode; onDone: () => void }) {
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  return (
+    <div className="space-y-1.5 rounded-md bg-subtle px-3 py-2" role="region" aria-label={label}>
+      <p className="text-xs font-medium text-foreground">{instructions}</p>
+      <p className="text-xs font-medium text-warning">This can&apos;t be shown or retrieved again. Copy it and store it securely before you continue.</p>
+      <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-surface p-2 text-xs text-foreground ring-1 ring-inset ring-border">{value}</pre>
+      {children}
+      <div className="flex flex-wrap items-center gap-2 pt-1">
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(value);
+              setCopyState('copied');
+            } catch {
+              setCopyState('failed');
+            }
+          }}
+        >
+          {copyState === 'copied' ? 'Copied' : 'Copy'}
+        </Button>
+        <Button size="sm" onClick={onDone}>
+          I&apos;ve saved it
+        </Button>
+      </div>
+      {copyState === 'failed' && <ErrorText>Couldn&apos;t copy automatically — select the text above and copy it manually.</ErrorText>}
+    </div>
+  );
+}
+
+/**
  * Connected-state setup: allowed storefront origins, write key + install
  * snippet, and whether events are arriving. The write key exists in the
  * browser only right after generation (the API never returns it again), so
@@ -68,26 +104,25 @@ export function WebsiteTrackingSetup({ workspaceId, settings }: { workspaceId: s
   const [originsText, setOriginsText] = useState(settings.allowedOrigins.join('\n'));
   const [snippet, setSnippet] = useState<string | null>(null);
   const [identitySecret, setIdentitySecret] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  // Set once a value was generated here, so the status and labels update without refreshing the page (which could hide it).
+  const [writeKeyGenerated, setWriteKeyGenerated] = useState(false);
+  const [identitySecretGenerated, setIdentitySecretGenerated] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const router = useRouter();
 
-  // While a fresh snippet is on screen the merchant is installing it — poll so "Last event received" updates without a reload.
-  useEffect(() => {
-    if (!snippet) return;
-    const timer = setInterval(() => router.refresh(), 10_000);
-    return () => clearInterval(timer);
-  }, [snippet, router]);
+  const writeKeyConfigured = settings.writeKeyConfigured || writeKeyGenerated;
+  const identitySecretConfigured = settings.identitySecretConfigured || identitySecretGenerated;
 
-  async function run(action: () => Promise<void>, failureMessage: string) {
+  /** `refresh: false` for actions that reveal a one-time value — a refresh must never be what hides it. */
+  async function run(action: () => Promise<void>, failureMessage: string, { refresh = true }: { refresh?: boolean } = {}) {
     setPending(true);
     setError(null);
     setNotice(null);
     try {
       await action();
-      router.refresh();
+      if (refresh) router.refresh();
     } catch {
       setError(failureMessage);
     } finally {
@@ -109,7 +144,7 @@ export function WebsiteTrackingSetup({ workspaceId, settings }: { workspaceId: s
         </div>
         <div>
           <dt className="text-muted-foreground">Write key</dt>
-          <dd className="mt-0.5 text-foreground">{settings.writeKeyConfigured ? 'Configured' : 'Not generated'}</dd>
+          <dd className="mt-0.5 text-foreground">{writeKeyConfigured ? 'Configured' : 'Not generated'}</dd>
         </div>
       </dl>
 
@@ -139,34 +174,33 @@ export function WebsiteTrackingSetup({ workspaceId, settings }: { workspaceId: s
           size="sm"
           disabled={pending}
           onClick={() => {
-            if (settings.writeKeyConfigured && !window.confirm('Generate a new write key? The current key stops working immediately — any installed snippet must be replaced.')) {
+            if (writeKeyConfigured && !window.confirm('Generate a new write key? The current key stops working immediately — any installed snippet must be replaced.')) {
               return;
             }
-            void run(async () => {
-              const { writeKey } = await generateWebsiteTrackingWriteKey(workspaceId);
-              setSnippet(trackingSnippet(window.location.origin, env.NEXT_PUBLIC_API_URL ?? '', workspaceId, writeKey));
-              setCopied(false);
-            }, 'Could not generate a write key.');
+            void run(
+              async () => {
+                const { writeKey } = await generateWebsiteTrackingWriteKey(workspaceId);
+                setSnippet(trackingSnippet(window.location.origin, env.NEXT_PUBLIC_API_URL ?? '', workspaceId, writeKey));
+                setWriteKeyGenerated(true);
+              },
+              'Could not generate a write key.',
+              { refresh: false },
+            );
           }}
         >
-          {settings.writeKeyConfigured ? 'Rotate write key' : 'Generate write key'}
+          {writeKeyConfigured ? 'Rotate write key' : 'Generate write key'}
         </Button>
 
         {snippet && (
-          <div className="space-y-1.5 rounded-md bg-subtle px-3 py-2">
-            <p className="text-xs font-medium text-foreground">Paste this before &lt;/head&gt; on every storefront page. It is shown only once.</p>
-            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-surface p-2 text-xs text-foreground ring-1 ring-inset ring-border">{snippet}</pre>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={async () => {
-                await navigator.clipboard.writeText(snippet);
-                setCopied(true);
-              }}
-            >
-              {copied ? 'Copied' : 'Copy snippet'}
-            </Button>
-          </div>
+          <OneTimeSecret
+            label="New install snippet"
+            value={snippet}
+            instructions="Paste this before </head> on every storefront page. It contains your new write key."
+            onDone={() => {
+              setSnippet(null);
+              router.refresh();
+            }}
+          />
         )}
       </div>
 
@@ -180,24 +214,35 @@ export function WebsiteTrackingSetup({ workspaceId, settings }: { workspaceId: s
           variant="secondary"
           disabled={pending}
           onClick={() => {
-            if (settings.identitySecretConfigured && !window.confirm('Generate a new identity secret? Signatures made with the current secret stop linking immediately.')) {
+            if (identitySecretConfigured && !window.confirm('Generate a new identity secret? Signatures made with the current secret stop linking immediately.')) {
               return;
             }
-            void run(async () => {
-              const { identitySecret: secret } = await generateWebsiteTrackingIdentitySecret(workspaceId);
-              setIdentitySecret(secret);
-            }, 'Could not generate an identity secret.');
+            void run(
+              async () => {
+                const { identitySecret: secret } = await generateWebsiteTrackingIdentitySecret(workspaceId);
+                setIdentitySecret(secret);
+                setIdentitySecretGenerated(true);
+              },
+              'Could not generate an identity secret.',
+              { refresh: false },
+            );
           }}
         >
-          {settings.identitySecretConfigured ? 'Rotate identity secret' : 'Generate identity secret'}
+          {identitySecretConfigured ? 'Rotate identity secret' : 'Generate identity secret'}
         </Button>
 
         {identitySecret && (
-          <div className="space-y-1.5 rounded-md bg-subtle px-3 py-2">
-            <p className="text-xs font-medium text-foreground">Store this on your server only — never in page HTML or JavaScript. It is shown only once.</p>
-            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-surface p-2 text-xs text-foreground ring-1 ring-inset ring-border">{identitySecret}</pre>
+          <OneTimeSecret
+            label="New identity secret"
+            value={identitySecret}
+            instructions="Store this on your server only — never in page HTML or JavaScript."
+            onDone={() => {
+              setIdentitySecret(null);
+              router.refresh();
+            }}
+          >
             <p className="text-xs text-muted-foreground">signature = hex(HMAC-SHA256(identity secret, lowercase(trim(email))))</p>
-          </div>
+          </OneTimeSecret>
         )}
       </div>
 
