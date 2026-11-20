@@ -18,8 +18,8 @@ const typeTone: Record<Entry['type'], BadgeTone> = {
 };
 
 /** Doc19 Phase 10 — "Merchant can add business knowledge/policies and see them available to BRAYN." */
-export default async function KnowledgePage({ params }: { params: { workspaceId: string } }) {
-  const { workspaceId } = params;
+export default async function KnowledgePage({ params }: { params: Promise<{ workspaceId: string }> }) {
+  const { workspaceId } = await params;
 
   let entries: Entry[], memberships: WorkspaceSummary[];
   try {

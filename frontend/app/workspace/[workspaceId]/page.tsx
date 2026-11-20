@@ -81,7 +81,8 @@ function OpportunityBreakdown({ workspaceId, opportunities }: { workspaceId: str
 }
 
 /** Doc 19 Phase 2 Visible Result — "See workspace state" and "manage basic workspace settings"; doc11 Merchant Dashboard. */
-export default async function WorkspacePage({ params }: { params: { workspaceId: string } }) {
+export default async function WorkspacePage(props: { params: Promise<{ workspaceId: string }> }) {
+  const params = await props.params;
   let workspace: Workspace, memberships: WorkspaceSummary[], members: Membership[], currentUser: CurrentUser, dashboard: DashboardSummary;
   let notifications: NotificationsPage | null;
   try {

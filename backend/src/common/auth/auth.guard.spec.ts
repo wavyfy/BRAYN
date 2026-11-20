@@ -142,3 +142,51 @@ describe('AuthGuard (e2e) — Clerk not configured', () => {
     expect(res.json()).toEqual({ ok: true });
   });
 });
+
+/**
+ * Stage 12 dependency hardening: Fastify 4 / @nestjs/platform-fastify 10 have known *middleware* bypasses
+ * (trailing slash, URL encoding, HEAD, absolute-form targets, duplicate slashes). BRAYN authenticates with a
+ * route guard, not middleware — these pin that no request-target variant reaches a guarded handler unauthenticated.
+ */
+describe('AuthGuard (e2e) — request-target variants never bypass the guard (regression)', () => {
+  let app: NestFastifyApplication;
+  const originalSecret = process.env.CLERK_SECRET_KEY;
+
+  beforeAll(async () => {
+    process.env.CLERK_SECRET_KEY = 'test-secret';
+    app = await buildApp();
+  });
+
+  afterAll(async () => {
+    process.env.CLERK_SECRET_KEY = originalSecret;
+    await app.close();
+  });
+
+  const variants: Array<{ method: 'GET' | 'HEAD'; url: string }> = [
+    { method: 'GET', url: '/test/secure/' },
+    { method: 'GET', url: '/test/%73ecure' },
+    { method: 'GET', url: '/test/secure%2F' },
+    { method: 'GET', url: '//test/secure' },
+    { method: 'GET', url: '/test//secure' },
+    { method: 'GET', url: '/TEST/SECURE' },
+    { method: 'GET', url: '/test/secure?x=1' },
+    { method: 'GET', url: '/test/secure;x=1' },
+    { method: 'GET', url: '/test/./secure' },
+    { method: 'GET', url: '/test/open/../secure' },
+    { method: 'GET', url: 'http://localhost/test/secure' },
+    { method: 'HEAD', url: '/test/secure' },
+  ];
+
+  for (const { method, url } of variants) {
+    it(`${method} ${url} without a token is refused`, async () => {
+      const res = await app.inject({ method, url });
+      expect([401, 404]).toContain(res.statusCode);
+      if (method === 'GET') expect(res.body).not.toContain('"ok":true');
+    });
+  }
+
+  it('the canonical path still works with a valid token (control)', async () => {
+    const res = await app.inject({ method: 'GET', url: '/test/secure', headers: { authorization: 'Bearer valid-token' } });
+    expect(res.statusCode).toBe(200);
+  });
+});

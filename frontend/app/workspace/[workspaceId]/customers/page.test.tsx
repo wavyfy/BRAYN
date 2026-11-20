@@ -25,7 +25,7 @@ describe('CustomersPage', () => {
       hasMore: false,
     });
 
-    render(await CustomersPage({ params: { workspaceId: 'ws_1' }, searchParams: { search: 'jane' } }));
+    render(await CustomersPage({ params: Promise.resolve({ workspaceId: 'ws_1' }), searchParams: Promise.resolve({ search: 'jane' }) }));
 
     expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('search=jane'));
     expect(screen.getByText('Jane Doe')).toBeTruthy();
@@ -41,7 +41,7 @@ describe('CustomersPage', () => {
       hasMore: true,
     });
 
-    render(await CustomersPage({ params: { workspaceId: 'ws_1' }, searchParams: { page: '2' } }));
+    render(await CustomersPage({ params: Promise.resolve({ workspaceId: 'ws_1' }), searchParams: Promise.resolve({ page: '2' }) }));
 
     expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('page=2'));
     const previous = screen.getByRole('link', { name: /Previous/ });
@@ -60,7 +60,7 @@ describe('CustomersPage', () => {
       hasMore: false,
     });
 
-    render(await CustomersPage({ params: { workspaceId: 'ws_1' }, searchParams: {} }));
+    render(await CustomersPage({ params: Promise.resolve({ workspaceId: 'ws_1' }), searchParams: Promise.resolve({}) }));
 
     expect(screen.queryByRole('link', { name: /Previous/ })).toBeNull();
     expect(screen.queryByRole('link', { name: /Next/ })).toBeNull();
@@ -69,7 +69,7 @@ describe('CustomersPage', () => {
   it('renders the no-customers empty state when the workspace has no customers and no search is active', async () => {
     apiFetch.mockResolvedValueOnce({ customers: [], page: 1, limit: 20, hasMore: false });
 
-    render(await CustomersPage({ params: { workspaceId: 'ws_1' }, searchParams: {} }));
+    render(await CustomersPage({ params: Promise.resolve({ workspaceId: 'ws_1' }), searchParams: Promise.resolve({}) }));
 
     expect(screen.getByText('No customers yet — connect an integration and run an import to get started.')).toBeTruthy();
   });
@@ -77,7 +77,7 @@ describe('CustomersPage', () => {
   it('renders the no-search-results empty state when a search returns nothing', async () => {
     apiFetch.mockResolvedValueOnce({ customers: [], page: 1, limit: 20, hasMore: false });
 
-    render(await CustomersPage({ params: { workspaceId: 'ws_1' }, searchParams: { search: 'nobody' } }));
+    render(await CustomersPage({ params: Promise.resolve({ workspaceId: 'ws_1' }), searchParams: Promise.resolve({ search: 'nobody' }) }));
 
     expect(screen.getByText('No customers match that search.')).toBeTruthy();
   });
@@ -85,7 +85,7 @@ describe('CustomersPage', () => {
   it('renders the inline API error state instead of crashing when the request fails', async () => {
     apiFetch.mockRejectedValueOnce(new ApiError(403, 'UNAUTHORIZED', 'Your role does not permit this action.'));
 
-    render(await CustomersPage({ params: { workspaceId: 'ws_1' }, searchParams: {} }));
+    render(await CustomersPage({ params: Promise.resolve({ workspaceId: 'ws_1' }), searchParams: Promise.resolve({}) }));
 
     expect(screen.getByText('Access denied')).toBeTruthy();
     expect(screen.getByText('Your role does not permit this action.')).toBeTruthy();
@@ -93,14 +93,14 @@ describe('CustomersPage', () => {
 
   it('after an erasure, shows a confirmation that names no one; without the flag it shows nothing', async () => {
     apiFetch.mockResolvedValueOnce({ customers: [], page: 1, limit: 20, hasMore: false });
-    render(await CustomersPage({ params: { workspaceId: 'ws_1' }, searchParams: { erased: '1' } }));
+    render(await CustomersPage({ params: Promise.resolve({ workspaceId: 'ws_1' }), searchParams: Promise.resolve({ erased: '1' }) }));
     expect(screen.getByRole('status').textContent).toBe(
       'Customer erased. Their records and orders were permanently deleted, and their identifiers are blocked from re-import.',
     );
     cleanup();
 
     apiFetch.mockResolvedValueOnce({ customers: [], page: 1, limit: 20, hasMore: false });
-    render(await CustomersPage({ params: { workspaceId: 'ws_1' }, searchParams: {} }));
+    render(await CustomersPage({ params: Promise.resolve({ workspaceId: 'ws_1' }), searchParams: Promise.resolve({}) }));
     expect(screen.queryByText(/Customer erased/)).toBeNull();
   });
 });

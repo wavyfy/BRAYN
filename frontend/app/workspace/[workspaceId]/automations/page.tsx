@@ -14,8 +14,8 @@ type Automation = { id: string; name: string; triggerType: string; actionType: s
 type WorkspaceSummary = { id: string; name: string; role: string };
 
 /** Doc19 Phase 15 UI — "Merchant can create and observe a real automation from trigger to completed action." */
-export default async function AutomationsPage({ params }: { params: { workspaceId: string } }) {
-  const { workspaceId } = params;
+export default async function AutomationsPage({ params }: { params: Promise<{ workspaceId: string }> }) {
+  const { workspaceId } = await params;
 
   let automations: Automation[], memberships: WorkspaceSummary[];
   try {

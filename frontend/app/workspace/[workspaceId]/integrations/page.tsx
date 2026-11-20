@@ -111,14 +111,11 @@ const OAUTH_ERROR_REASONS: Record<string, string> = {
 };
 
 /** Doc19 Phase 8 — Integration Connection UI: Shopify + WooCommerce connect/status/import/disconnect. */
-export default async function IntegrationsPage({
-  params,
-  searchParams,
-}: {
-  params: { workspaceId: string };
-  searchParams: { shopify?: string; reason?: string };
+export default async function IntegrationsPage(props: {
+  params: Promise<{ workspaceId: string }>;
+  searchParams: Promise<{ shopify?: string; reason?: string }>;
 }) {
-  const { workspaceId } = params;
+  const [{ workspaceId }, searchParams] = await Promise.all([props.params, props.searchParams]);
 
   let integrations: Integration[], memberships: WorkspaceSummary[];
   try {

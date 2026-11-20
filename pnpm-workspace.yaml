@@ -10,3 +10,13 @@ allowBuilds:
   '@clerk/shared': true
   '@nestjs/core': true
   esbuild: true
+# Security: patched transitive versions within the same major (Stage 12 Slice 1).
+overrides:
+  'fastify@4': '4.29.1'
+  proxy-addr: '^2.0.8'
+  lodash: '^4.17.24'
+  js-cookie: '^3.0.6'
+  'fast-uri@2': '^2.4.8'
+  'fast-uri@3': '^3.1.9'
+  postcss: '^8.5.18'
+  source-map-js: '^1.2.2'

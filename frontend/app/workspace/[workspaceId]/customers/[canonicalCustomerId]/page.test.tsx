@@ -39,7 +39,7 @@ function renderPage(customer: TestCustomer, activity: unknown[] = []) {
   apiFetch.mockResolvedValueOnce([]); // opportunities
   apiFetch.mockResolvedValueOnce([]); // recommendations
   apiFetch.mockRejectedValueOnce(new ApiError(404, 'NOT_FOUND', 'Not calculated yet.')); // health (not yet calculated)
-  return CustomerDetailPage({ params: { workspaceId: 'ws_1', canonicalCustomerId: 'cust_1' } });
+  return CustomerDetailPage({ params: Promise.resolve({ workspaceId: 'ws_1', canonicalCustomerId: 'cust_1' }) });
 }
 
 describe('CustomerDetailPage — Website Behaviour (Phase 8)', () => {
@@ -139,7 +139,7 @@ describe('CustomerDetailPage — Risk & engagement (Phase 3 CIV redesign)', () =
       lastCalculatedAt: '2026-01-05T10:00:00.000Z',
     }); // health
 
-    render(await CustomerDetailPage({ params: { workspaceId: 'ws_1', canonicalCustomerId: 'cust_1' } }));
+    render(await CustomerDetailPage({ params: Promise.resolve({ workspaceId: 'ws_1', canonicalCustomerId: 'cust_1' }) }));
 
     expect(screen.getByText('Score withheld')).toBeTruthy();
     expect(screen.getByText('Overall score withheld — only 65% of signal weight is available.')).toBeTruthy();
@@ -159,7 +159,7 @@ describe('CustomerDetailPage — Risk & engagement (Phase 3 CIV redesign)', () =
       lastCalculatedAt: '2026-01-05T10:00:00.000Z',
     });
 
-    render(await CustomerDetailPage({ params: { workspaceId: 'ws_1', canonicalCustomerId: 'cust_1' } }));
+    render(await CustomerDetailPage({ params: Promise.resolve({ workspaceId: 'ws_1', canonicalCustomerId: 'cust_1' }) }));
 
     expect(screen.getByText('82/100')).toBeTruthy();
     expect(screen.getByText(/Trend: improving/)).toBeTruthy();
@@ -239,7 +239,7 @@ describe('CustomerDetailPage — Revenue opportunities & risk (Phase 6)', () => 
     apiFetch.mockResolvedValueOnce(recommendations);
     if (health) apiFetch.mockResolvedValueOnce(health);
     else apiFetch.mockRejectedValueOnce(new ApiError(404, 'NOT_FOUND', 'Not calculated yet.'));
-    render(await CustomerDetailPage({ params: { workspaceId: 'ws_1', canonicalCustomerId: 'cust_1' } }));
+    render(await CustomerDetailPage({ params: Promise.resolve({ workspaceId: 'ws_1', canonicalCustomerId: 'cust_1' }) }));
   }
 
   it('loads health history from the backend and shows it in the Risk & Engagement card', async () => {
