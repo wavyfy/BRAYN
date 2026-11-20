@@ -12,7 +12,9 @@ let enabled = false;
  * Same DLP backstop as logs: exception messages (including linked `cause`s) and the event message go through
  * `scrubSensitive` before leaving the process — SQL text from a database error, emails and tokens never reach Sentry.
  */
-export function scrubSentryEvent<T extends { message?: string; exception?: { values?: Array<{ value?: string }> } }>(event: T): T {
+export function scrubSentryEvent<
+  T extends { message?: string; exception?: { values?: Array<{ value?: string }> } },
+>(event: T): T {
   if (typeof event.message === 'string') event.message = scrubSensitive(event.message);
   for (const exception of event.exception?.values ?? []) {
     if (typeof exception.value === 'string') exception.value = scrubSensitive(exception.value);

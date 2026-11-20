@@ -49,10 +49,16 @@ describe('database errors never carry SQL or customer data (real DB, drizzle-orm
 
   beforeAll(async () => {
     moduleRef = await Test.createTestingModule({
-      imports: [ConfigModule.forRoot({ isGlobal: true, load: [loadConfiguration] }), DatabaseModule],
+      imports: [
+        ConfigModule.forRoot({ isGlobal: true, load: [loadConfiguration] }),
+        DatabaseModule,
+      ],
     }).compile();
     db = moduleRef.get(DatabaseService);
-    if (!db.isConfigured()) throw new Error('DATABASE_URL is not configured — this integration test requires the real dev database.');
+    if (!db.isConfigured())
+      throw new Error(
+        'DATABASE_URL is not configured — this integration test requires the real dev database.',
+      );
   });
 
   afterAll(async () => {
@@ -73,7 +79,9 @@ describe('database errors never carry SQL or customer data (real DB, drizzle-orm
     const error = await caught(() =>
       db.transaction(async (tx) => {
         await tx.insert(workspaces).values({ name: marker });
-        await tx.execute(sql`create temporary table safe_db_error_probe (email text unique, phone text) on commit drop`);
+        await tx.execute(
+          sql`create temporary table safe_db_error_probe (email text unique, phone text) on commit drop`,
+        );
         await tx.execute(sql`insert into safe_db_error_probe values (${EMAIL}, ${PHONE})`);
         await tx.execute(sql`insert into safe_db_error_probe values (${EMAIL}, ${PHONE})`);
       }),
@@ -82,12 +90,16 @@ describe('database errors never carry SQL or customer data (real DB, drizzle-orm
     expect(error).not.toBeInstanceOf(DrizzleQueryError);
     expect(error.code).toBe('23505');
     expect(error.constraint).toBe('safe_db_error_probe_email_key');
-    expect(error.message).toBe('duplicate key value violates unique constraint "safe_db_error_probe_email_key"');
+    expect(error.message).toBe(
+      'duplicate key value violates unique constraint "safe_db_error_probe_email_key"',
+    );
     expect(error.detail).toBe('Key (email)=([redacted]) already exists.');
     for (const text of sinkRenderings(error)) expectNoLeak(text);
 
     // Rolled back: the workspace inserted earlier in the same transaction is gone.
-    expect(await db.client.select().from(workspaces).where(eq(workspaces.name, marker))).toEqual([]);
+    expect(await db.client.select().from(workspaces).where(eq(workspaces.name, marker))).toEqual(
+      [],
+    );
   });
 
   it('an invalid-input error from a top-level query does not echo the bound value', async () => {
@@ -98,7 +110,12 @@ describe('database errors never carry SQL or customer data (real DB, drizzle-orm
   });
 
   it('a builder query (select … where email = $1) failing keeps the code and no values', async () => {
-    const error = await caught(() => db.client.select().from(workspaces).where(sql`${workspaces.id} = ${EMAIL}::uuid`));
+    const error = await caught(() =>
+      db.client
+        .select()
+        .from(workspaces)
+        .where(sql`${workspaces.id} = ${EMAIL}::uuid`),
+    );
     expect(error.code).toBe('22P02');
     for (const text of sinkRenderings(error)) expectNoLeak(text);
   });

@@ -23,7 +23,11 @@ type PgLikeError = Error & {
 const REDACTED = '[redacted]';
 
 function isPgError(error: unknown): error is PgLikeError {
-  return error instanceof Error && typeof (error as PgLikeError).code === 'string' && typeof (error as PgLikeError).severity === 'string';
+  return (
+    error instanceof Error &&
+    typeof (error as PgLikeError).code === 'string' &&
+    typeof (error as PgLikeError).severity === 'string'
+  );
 }
 
 /**
@@ -66,10 +70,14 @@ let installed = false;
  */
 export function installSafeDbErrors(): void {
   if (installed) return;
-  const proto = PgPreparedQuery.prototype as unknown as { queryWithCache?: (...args: unknown[]) => Promise<unknown> };
+  const proto = PgPreparedQuery.prototype as unknown as {
+    queryWithCache?: (...args: unknown[]) => Promise<unknown>;
+  };
   const original = proto.queryWithCache;
   if (typeof original !== 'function') {
-    throw new Error('drizzle-orm internals changed: PgPreparedQuery.prototype.queryWithCache is missing — database errors would expose SQL parameters.');
+    throw new Error(
+      'drizzle-orm internals changed: PgPreparedQuery.prototype.queryWithCache is missing — database errors would expose SQL parameters.',
+    );
   }
   proto.queryWithCache = async function (this: unknown, ...args: unknown[]) {
     try {

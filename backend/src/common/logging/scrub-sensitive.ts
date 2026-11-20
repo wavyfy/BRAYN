@@ -15,7 +15,7 @@
  * layer already unwraps these (`database/safe-db-error.ts`). Everything from the marker to the end is dropped.
  */
 const FAILED_QUERY_PATTERN = /Failed query:[\s\S]*/g;
-const EMAIL_PATTERN =/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+const EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const BEARER_TOKEN_PATTERN = /\bBearer\s+\S+/gi;
 /** Shopify access-token prefixes (shopify.dev — shpat_/shpca_/shpss_ + custom-app equivalents). */
 const SHOPIFY_TOKEN_PATTERN = /\bshp(?:at|ca|ss|ua)_[A-Za-z0-9]+/gi;
