@@ -1,4 +1,4 @@
-# PR validation (Stage 12 Slice 5). Runs on PRs into main and pushes to development.
+# PR validation (Stage 12 Slice 5). Runs on PRs into main and pushes to development and main.
 #
 # Database tests run against a throwaway PostgreSQL 18 + pgvector service container created for each job —
 # never Neon (production or development). No repository secrets are used: test-only encryption/erasure
@@ -15,14 +15,17 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [development]
+    branches: [development, main]
 
 permissions:
   contents: read
 
+# Groups: PR runs by PR number and development pushes by branch (superseded runs cancelled); main pushes by
+# commit SHA — a group holds one pending run and replaces it with a newer one even without cancellation, so a
+# per-commit group is what guarantees every main commit its own CI run.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event.pull_request.number || (github.ref == 'refs/heads/main' && github.sha) || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   # Throwaway container credentials, reachable only inside the job's runner.
