@@ -31,7 +31,7 @@ describe('IdentityResolutionController (e2e)', () => {
   const identityResolutionService = {
     listDuplicates: vi.fn(async () => [{ id: 'dup_1', matchedSignal: 'phone', matchedValue: '555-1234', status: 'pending' }]),
     dismiss: vi.fn(async (_workspaceId: string, duplicateId: string) => ({ id: duplicateId, status: 'dismissed' })),
-    merge: vi.fn(async (_workspaceId: string, _duplicateId: string, _reason?: string) => ({ survivingCanonicalCustomerId: 'canon_1', mergedCanonicalCustomerId: 'canon_2', mergeHistoryId: 'h_1' })),
+    merge: vi.fn(async () => ({ survivingCanonicalCustomerId: 'canon_1', mergedCanonicalCustomerId: 'canon_2', mergeHistoryId: 'h_1' })),
   };
   const userService = {
     findOrCreateByClerkId: vi.fn(async (clerkUserId: string) => ({ id: 'user_1', clerkUserId })),

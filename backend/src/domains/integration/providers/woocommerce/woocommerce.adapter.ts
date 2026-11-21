@@ -390,8 +390,8 @@ function resolveWcUrl(baseUrl: URL, relativePath: string): URL {
  * Only meaningful on the first page (`cursor` undefined) — `fetchPage`
  * ignores the relative-path argument once a cursor exists, since the
  * `Link` header's next-page URL already carries every original query
- * param forward (doc 06/20 — Incremental Synchronization). Same
- * convention as ShopifyAdapter's `updatedAtMinParam`.
+ * param forward (doc 06/20 — Incremental Synchronization). Shopify's
+ * equivalent is the GraphQL `shopifyUpdatedAtQueryFilter`.
  */
 function modifiedAfterParam(options?: FetchOptions): string {
   return options?.updatedAtMin ? `&modified_after=${encodeURIComponent(options.updatedAtMin.toISOString())}` : '';

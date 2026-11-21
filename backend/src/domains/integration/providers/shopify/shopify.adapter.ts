@@ -1735,16 +1735,6 @@ const SHOPIFY_WEBHOOK_TOPICS: Record<string, 'customer' | 'product' | 'order' | 
 };
 
 /** Shared with fetchCustomers (list) and the customers/* webhooks (single record) — same Shopify payload shape either way. */
-/**
- * Only meaningful on the first page (`cursor` undefined) — `fetchPage`
- * ignores the relative-URL argument once a cursor exists, since Shopify's
- * own `Link` header already carries every original query param forward
- * (doc 06/20 — Incremental Synchronization).
- */
-function updatedAtMinParam(options?: FetchOptions): string {
-  return options?.updatedAtMin ? `&updated_at_min=${encodeURIComponent(options.updatedAtMin.toISOString())}` : '';
-}
-
 /** Shopify's search-syntax equivalent of REST's `updated_at_min` param — quoted, since the DSL tokenizes on the colons in an ISO timestamp otherwise. */
 function shopifyUpdatedAtQueryFilter(options?: FetchOptions): string | undefined {
   return options?.updatedAtMin ? `updated_at:>='${options.updatedAtMin.toISOString()}'` : undefined;
