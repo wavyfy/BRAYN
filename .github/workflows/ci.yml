@@ -20,10 +20,11 @@ on:
 permissions:
   contents: read
 
-# PR runs group by PR number, pushes by ref, so a merge's main run never cancels a PR run. Superseded PR and
-# development runs are cancelled; main runs are not, so every commit on main gets a CI result.
+# Groups: PR runs by PR number and development pushes by branch (superseded runs cancelled); main pushes by
+# commit SHA — a group holds one pending run and replaces it with a newer one even without cancellation, so a
+# per-commit group is what guarantees every main commit its own CI run.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || (github.ref == 'refs/heads/main' && github.sha) || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
