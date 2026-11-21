@@ -30,7 +30,7 @@ import { CustomerErasureController } from './customer-erasure.controller';
 import { CustomerErasureService } from './customer-erasure.service';
 import { ShopifyWebhookMigrationService } from './providers/shopify/shopify-webhook-migration.service';
 import { ShopifyWebhookMigrationController } from './providers/shopify/shopify-webhook-migration.controller';
-import { InternalCronGuard } from '../../common/auth/internal-cron.guard';
+import { ShopifyWebhookMigrationGuard } from './providers/shopify/shopify-webhook-migration.guard';
 
 /**
  * Owns: external connections, provider auth, imports, sync, webhook intake,
@@ -84,7 +84,7 @@ import { InternalCronGuard } from '../../common/auth/internal-cron.guard';
     WooCommerceAdapter,
     WooCommerceWebhookSetupService,
     ShopifyWebhookMigrationService,
-    InternalCronGuard,
+    ShopifyWebhookMigrationGuard,
   ],
   exports: [
     IntegrationService,

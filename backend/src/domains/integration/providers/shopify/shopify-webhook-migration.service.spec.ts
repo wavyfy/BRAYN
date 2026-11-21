@@ -103,12 +103,21 @@ function makeService(opts: {
   backendUrl: string;
   shops: Record<string, FakeShop | Error>;
   workspaces?: string[];
+  lockFree?: boolean;
 }) {
   const workspaces = opts.workspaces ?? Object.keys(opts.shops);
   let currentWorkspace = '';
   const where = vi.fn(async () => workspaces.map((workspaceId) => ({ workspaceId })));
+  const lockQueries: unknown[] = [];
   const database = {
     client: { select: () => ({ from: () => ({ where }) }) },
+    transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        execute: async (query: unknown) => {
+          lockQueries.push(query);
+          return { rows: [{ locked: opts.lockFree ?? true }] };
+        },
+      }),
   } as unknown as DatabaseService;
   const integrationService = {
     getCredentials: vi.fn(async (workspaceId: string) => {
@@ -150,6 +159,7 @@ function makeService(opts: {
       logger,
     ),
     where,
+    lockQueries,
   };
 }
 
@@ -208,7 +218,11 @@ describe('ShopifyWebhookMigrationService', () => {
     const shop = new FakeShop(managed(OLD, WS_A));
     const { service } = makeService({ backendUrl: NEW, shops: { [WS_A]: shop } });
 
-    const report = await service.migrate({ fromBackendUrl: OLD, apply: false });
+    const report = await service.migrate({
+      fromBackendUrl: OLD,
+      apply: false,
+      allWorkspaces: true,
+    });
 
     expect(shop.mutations).toBe(0);
     expect(report.applied).toBe(false);
@@ -226,7 +240,7 @@ describe('ShopifyWebhookMigrationService', () => {
     const shop = new FakeShop(subs);
     const { service } = makeService({ backendUrl: NEW, shops: { [WS_A]: shop } });
 
-    const report = await service.migrate({ fromBackendUrl: OLD, apply: true });
+    const report = await service.migrate({ fromBackendUrl: OLD, apply: true, allWorkspaces: true });
 
     expect(report.ok).toBe(true);
     expect(report.workspaces[0].verified).toBe(true);
@@ -242,7 +256,7 @@ describe('ShopifyWebhookMigrationService', () => {
     });
 
     const mutationsAfterFirst = shop.mutations;
-    const again = await service.migrate({ fromBackendUrl: OLD, apply: true });
+    const again = await service.migrate({ fromBackendUrl: OLD, apply: true, allWorkspaces: true });
     expect(shop.mutations).toBe(mutationsAfterFirst); // idempotent: only `keep`
     expect(again.workspaces[0].actions.every((a) => a.kind === 'keep')).toBe(true);
     expect(again.ok).toBe(true);
@@ -254,11 +268,13 @@ describe('ShopifyWebhookMigrationService', () => {
     await makeService({ backendUrl: NEW, shops: { [WS_A]: shop } }).service.migrate({
       fromBackendUrl: OLD,
       apply: true,
+      allWorkspaces: true,
     });
 
     const back = await makeService({ backendUrl: OLD, shops: { [WS_A]: shop } }).service.migrate({
       fromBackendUrl: NEW,
       apply: true,
+      allWorkspaces: true,
     });
 
     expect(back.ok).toBe(true);
@@ -277,7 +293,7 @@ describe('ShopifyWebhookMigrationService', () => {
     ]);
     const { service } = makeService({ backendUrl: NEW, shops: { [WS_A]: shop } });
 
-    const report = await service.migrate({ fromBackendUrl: OLD, apply: true });
+    const report = await service.migrate({ fromBackendUrl: OLD, apply: true, allWorkspaces: true });
 
     expect(report.ok).toBe(true);
     const ordersCreate = shop.subs.filter((s) => s.topic === 'ORDERS_CREATE');
@@ -291,7 +307,7 @@ describe('ShopifyWebhookMigrationService', () => {
     shop.failUpdateFor.add('ORDERS_CREATE');
     const { service } = makeService({ backendUrl: NEW, shops: { [WS_A]: shop } });
 
-    const report = await service.migrate({ fromBackendUrl: OLD, apply: true });
+    const report = await service.migrate({ fromBackendUrl: OLD, apply: true, allWorkspaces: true });
 
     expect(report.ok).toBe(false);
     expect(report.workspaces[0].verified).toBe(false);
@@ -307,7 +323,7 @@ describe('ShopifyWebhookMigrationService', () => {
     expect(shop.subs.filter((s) => s.uri.startsWith(NEW))).toHaveLength(TOPIC_COUNT - 1);
 
     shop.failUpdateFor.clear();
-    const retry = await service.migrate({ fromBackendUrl: OLD, apply: true });
+    const retry = await service.migrate({ fromBackendUrl: OLD, apply: true, allWorkspaces: true });
     expect(retry.ok).toBe(true);
     expect(new Set(shop.subs.map((s) => s.uri))).toEqual(managedUris(NEW, WS_A));
   });
@@ -322,7 +338,7 @@ describe('ShopifyWebhookMigrationService', () => {
       shops: { [WS_A]: new Error('decrypt failed'), [WS_B]: shopB },
     });
 
-    const report = await service.migrate({ fromBackendUrl: OLD, apply: true });
+    const report = await service.migrate({ fromBackendUrl: OLD, apply: true, allWorkspaces: true });
 
     expect(report.ok).toBe(false);
     expect(report.workspaces.find((w) => w.workspaceId === WS_A)!.error).toBe('decrypt failed');
@@ -332,10 +348,62 @@ describe('ShopifyWebhookMigrationService', () => {
     );
   });
 
+  it('never deletes a copy whose configuration differs (e.g. a filtered subscription): it is reported for review and the run is not ok', async () => {
+    const target = `${NEW}/api/v1/workspaces/${WS_A}/integrations/shopify/webhooks`;
+    const shop = new FakeShop([
+      ...managed(OLD, WS_A),
+      sub('gid://filtered', 'orders/create', target, { filter: 'total_price:>100' }),
+    ]);
+    const { service } = makeService({ backendUrl: NEW, shops: { [WS_A]: shop } });
+
+    const report = await service.migrate({ fromBackendUrl: OLD, apply: true, allWorkspaces: true });
+
+    expect(report.ok).toBe(false);
+    expect(report.workspaces[0].verified).toBe(false);
+    expect(shop.subs.find((s) => s.id === 'gid://filtered')).toBeDefined(); // the filtered one survives
+    expect(report.workspaces[0].actions).toContainEqual(
+      expect.objectContaining({
+        topic: 'orders/create',
+        kind: 'review',
+        status: 'skipped',
+        error: expect.stringContaining('manual review'),
+      }),
+    );
+  });
+
+  it('requires an explicit scope: exactly one of workspaceId or allWorkspaces', async () => {
+    const { service } = makeService({ backendUrl: NEW, shops: {} });
+    await expect(service.migrate({ fromBackendUrl: OLD, apply: false })).rejects.toThrow(
+      'exactly one of workspaceId or allWorkspaces',
+    );
+    await expect(
+      service.migrate({
+        fromBackendUrl: OLD,
+        apply: false,
+        workspaceId: WS_A,
+        allWorkspaces: true,
+      }),
+    ).rejects.toThrow('exactly one of workspaceId or allWorkspaces');
+  });
+
+  it('apply runs only under the shared advisory lock; a concurrent apply gets a conflict and changes nothing (dry run takes no lock)', async () => {
+    const shop = new FakeShop(managed(OLD, WS_A));
+    const busy = makeService({ backendUrl: NEW, shops: { [WS_A]: shop }, lockFree: false });
+    await expect(
+      busy.service.migrate({ fromBackendUrl: OLD, apply: true, allWorkspaces: true }),
+    ).rejects.toThrow('Another Shopify webhook subscription migration is running');
+    expect(shop.mutations).toBe(0);
+    expect(busy.lockQueries).toHaveLength(1);
+
+    const dry = makeService({ backendUrl: NEW, shops: { [WS_A]: shop }, lockFree: false });
+    await dry.service.migrate({ fromBackendUrl: OLD, apply: false, allWorkspaces: true });
+    expect(dry.lockQueries).toHaveLength(0);
+  });
+
   it('refuses to "migrate" onto itself', async () => {
     const { service } = makeService({ backendUrl: NEW, shops: {} });
-    await expect(service.migrate({ fromBackendUrl: `${NEW}/`, apply: true })).rejects.toThrow(
-      'fromBackendUrl is this backend',
-    );
+    await expect(
+      service.migrate({ fromBackendUrl: `${NEW}/`, apply: true, allWorkspaces: true }),
+    ).rejects.toThrow('fromBackendUrl is this backend');
   });
 });

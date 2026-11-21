@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, eq, ne } from 'drizzle-orm';
-import { ValidationError } from '../../../../common/errors/app-error';
+import { and, eq, ne, sql } from 'drizzle-orm';
+import { ConflictError, ValidationError } from '../../../../common/errors/app-error';
 import { StructuredLoggerService } from '../../../../common/logging/structured-logger.service';
 import type { Env } from '../../../../config/env.schema';
 import { DatabaseService } from '../../../../database/database.service';
@@ -25,13 +25,27 @@ export type WebhookMigrationAction =
   | { kind: 'keep'; topic: string; subscriptionId: string }
   | { kind: 'update'; topic: string; subscription: ShopifyWebhookSubscription; toUri: string }
   | { kind: 'create'; topic: string; toUri: string }
-  | { kind: 'delete'; topic: string; subscriptionId: string; uri: string };
+  | { kind: 'delete'; topic: string; subscriptionId: string; uri: string }
+  /** A copy whose configuration differs from the one kept: never deleted automatically. */
+  | { kind: 'review'; topic: string; subscriptionId: string; uri: string };
+
+/** Delivery-relevant configuration; two subscriptions with the same values are interchangeable copies. */
+function sameConfiguration(a: ShopifyWebhookSubscription, b: ShopifyWebhookSubscription): boolean {
+  const list = (values: string[]) => JSON.stringify([...values].sort());
+  return (
+    a.filter === b.filter &&
+    a.format === b.format &&
+    list(a.includeFields) === list(b.includeFields) &&
+    list(a.metafieldNamespaces) === list(b.metafieldNamespaces)
+  );
+}
 
 /**
  * Pure plan for moving BRAYN's managed subscriptions from one backend address to another, given what the shop has.
  * Per managed topic it leaves exactly one subscription at `toUri`:
  * - one already there → keep it; extra copies at `toUri` and any left at `fromUri` are deleted;
  * - none there but one at `fromUri` → that one is updated in place (same id, same configuration); extras deleted;
+ * - a copy whose filter/format/fields differ from the kept one is never deleted — it is reported for review;
  * - neither → create one at `toUri`.
  * Subscriptions at any other uri (not this backend pair's route for this workspace) are never touched. Running the
  * plan again after it succeeded yields only `keep`; swapping from/to plans the rollback onto the same ids.
@@ -45,9 +59,9 @@ export function planWebhookSubscriptionMigration(
     const topicEnum = shopifyTopicEnum(move.topic);
     const atTarget = listed.filter((s) => s.topic === topicEnum && s.uri === move.toUri);
     const atSource = listed.filter((s) => s.topic === topicEnum && s.uri === move.fromUri);
-    const deletions = (subs: ShopifyWebhookSubscription[]) =>
+    const deletions = (kept: ShopifyWebhookSubscription, subs: ShopifyWebhookSubscription[]) =>
       subs.map((s): WebhookMigrationAction => ({
-        kind: 'delete',
+        kind: sameConfiguration(s, kept) ? 'delete' : 'review',
         topic: move.topic,
         subscriptionId: s.id,
         uri: s.uri,
@@ -55,7 +69,7 @@ export function planWebhookSubscriptionMigration(
 
     if (atTarget.length > 0) {
       actions.push({ kind: 'keep', topic: move.topic, subscriptionId: atTarget[0].id });
-      actions.push(...deletions([...atTarget.slice(1), ...atSource]));
+      actions.push(...deletions(atTarget[0], [...atTarget.slice(1), ...atSource]));
     } else if (atSource.length > 0) {
       actions.push({
         kind: 'update',
@@ -63,7 +77,7 @@ export function planWebhookSubscriptionMigration(
         subscription: atSource[0],
         toUri: move.toUri,
       });
-      actions.push(...deletions(atSource.slice(1)));
+      actions.push(...deletions(atSource[0], atSource.slice(1)));
     } else {
       actions.push({ kind: 'create', topic: move.topic, toUri: move.toUri });
     }
@@ -118,13 +132,31 @@ export class ShopifyWebhookMigrationService {
     fromBackendUrl: string;
     apply: boolean;
     workspaceId?: string;
+    allWorkspaces?: boolean;
   }): Promise<WebhookMigrationReport> {
     const toBackendUrl = this.config.get('BACKEND_URL', { infer: true });
     const fromBackendUrl = options.fromBackendUrl.replace(/\/+$/, '');
     if (new URL(fromBackendUrl).origin === new URL(toBackendUrl).origin) {
       throw new ValidationError('fromBackendUrl is this backend; nothing to migrate.');
     }
+    // Never "all stores" by omission.
+    if ((options.workspaceId === undefined) === (options.allWorkspaces !== true)) {
+      throw new ValidationError('Provide exactly one of workspaceId or allWorkspaces: true.');
+    }
+    // Only one apply at a time across every backend sharing this database (prevents racing creates/deletes and two
+    // backends pulling subscriptions in opposite directions). Dry runs never write, so they don't take the lock.
+    return options.apply
+      ? withExclusiveMigrationLock(this.database, () =>
+          this.run(fromBackendUrl, toBackendUrl, options),
+        )
+      : this.run(fromBackendUrl, toBackendUrl, options);
+  }
 
+  private async run(
+    fromBackendUrl: string,
+    toBackendUrl: string,
+    options: { apply: boolean; workspaceId?: string },
+  ): Promise<WebhookMigrationReport> {
     const rows = await this.database.client
       .select({ workspaceId: integrations.workspaceId })
       .from(integrations)
@@ -223,6 +255,14 @@ export class ShopifyWebhookMigrationService {
       ...plan.filter((a) => a.kind === 'delete'),
     ];
     for (const action of ordered) {
+      if (action.kind === 'review') {
+        results.push({
+          ...describe(action),
+          status: 'skipped',
+          error: 'Configuration differs from the kept subscription; left for manual review.',
+        });
+        continue;
+      }
       if (action.kind === 'delete' && failedTopics.has(action.topic)) {
         results.push({
           ...describe(action),
@@ -269,6 +309,29 @@ export class ShopifyWebhookMigrationService {
   }
 }
 
+const MIGRATION_LOCK_KEY = 'shopify-webhook-migration';
+
+/**
+ * Runs `work` while holding a transaction-scoped Postgres advisory lock shared by every backend on this database;
+ * a concurrent caller gets a ConflictError (409) instead of waiting. Released when the transaction ends.
+ */
+export async function withExclusiveMigrationLock<T>(
+  database: DatabaseService,
+  work: () => Promise<T>,
+): Promise<T> {
+  return database.transaction(async (tx) => {
+    const result = (await tx.execute(
+      sql`select pg_try_advisory_xact_lock(hashtextextended(${MIGRATION_LOCK_KEY}, 0)) as locked`,
+    )) as unknown as { rows: { locked: boolean }[] };
+    if (result.rows[0]?.locked !== true) {
+      throw new ConflictError(
+        'Another Shopify webhook subscription migration is running; retry when it has finished.',
+      );
+    }
+    return work();
+  });
+}
+
 function describe(action: WebhookMigrationAction): Omit<WebhookMigrationActionResult, 'status'> {
   switch (action.kind) {
     case 'keep':
@@ -276,6 +339,7 @@ function describe(action: WebhookMigrationAction): Omit<WebhookMigrationActionRe
     case 'update':
       return { topic: action.topic, kind: action.kind, subscriptionId: action.subscription.id };
     case 'delete':
+    case 'review':
       return { topic: action.topic, kind: action.kind, subscriptionId: action.subscriptionId };
     case 'create':
       return { topic: action.topic, kind: action.kind };

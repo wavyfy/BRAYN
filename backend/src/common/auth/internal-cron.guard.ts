@@ -24,24 +24,43 @@ export class InternalCronGuard implements CanActivate {
   ) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const secret = this.config.get('BRAYN_INTERNAL_CRON_SECRET', { infer: true });
-    if (!secret) {
-      throw new ServiceUnavailableError();
-    }
-
-    const request = context.switchToHttp().getRequest<FastifyRequest>();
-    const header = request.headers.authorization;
-    const presented = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : null;
-
-    if (!presented || !timingSafeEqual(digest(presented), digest(secret))) {
-      this.logger.event('warn', 'Rejected internal cron request', 'InternalCronGuard', {
-        reason: presented ? 'invalid_secret' : 'missing_secret',
-        ip: request.ip,
-        path: request.url,
-      });
-      throw new UnauthenticatedError();
-    }
+    verifyBearerSecret(
+      context,
+      this.config.get('BRAYN_INTERNAL_CRON_SECRET', { infer: true }),
+      this.logger,
+      'InternalCronGuard',
+      'Rejected internal cron request',
+    );
     return true;
+  }
+}
+
+/**
+ * Shared fail-closed bearer check for internal machine endpoints: no secret configured → 503; missing or wrong
+ * bearer → 401 (logged without the presented value).
+ */
+export function verifyBearerSecret(
+  context: ExecutionContext,
+  secret: string | undefined,
+  logger: StructuredLoggerService,
+  source: string,
+  rejectionMessage: string,
+): void {
+  if (!secret) {
+    throw new ServiceUnavailableError();
+  }
+
+  const request = context.switchToHttp().getRequest<FastifyRequest>();
+  const header = request.headers.authorization;
+  const presented = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : null;
+
+  if (!presented || !timingSafeEqual(digest(presented), digest(secret))) {
+    logger.event('warn', rejectionMessage, source, {
+      reason: presented ? 'invalid_secret' : 'missing_secret',
+      ip: request.ip,
+      path: request.url,
+    });
+    throw new UnauthenticatedError();
   }
 }
 
