@@ -55,6 +55,20 @@ export const SHOPIFY_REGISTERED_BUSINESS_TOPICS = [
 
 export const SHOPIFY_APP_UNINSTALLED_TOPIC = 'app/uninstalled';
 
+/**
+ * The per-shop subscriptions BRAYN manages, served by the backend at `backendUrl`: business topics to this
+ * workspace's webhook route, `app/uninstalled` to the app-level uninstall route. The single source for both
+ * connect-time registration and address migration.
+ */
+export function shopifyManagedWebhookSubscriptions(backendUrl: string, workspaceId: string): DesiredWebhookSubscription[] {
+  const apiBase = `${backendUrl}/api/v1`;
+  const businessUri = `${apiBase}/workspaces/${workspaceId}/integrations/shopify/webhooks`;
+  return [
+    ...SHOPIFY_REGISTERED_BUSINESS_TOPICS.map((topic) => ({ topic, uri: businessUri })),
+    { topic: SHOPIFY_APP_UNINSTALLED_TOPIC, uri: `${apiBase}/integrations/shopify/app-uninstalled` },
+  ];
+}
+
 /** REST-style header topic (`orders/updated`) → GraphQL `WebhookSubscriptionTopic` enum (`ORDERS_UPDATED`). */
 export function shopifyTopicEnum(topic: string): string {
   return topic.toUpperCase().replace('/', '_');
@@ -82,6 +96,78 @@ const SHOPIFY_WEBHOOK_SUBSCRIPTIONS_QUERY = `
     }
   }
 `;
+
+/** Everything the update mutation can carry, so a migration re-sends the subscription's own configuration. */
+const SHOPIFY_WEBHOOK_SUBSCRIPTIONS_DETAIL_QUERY = `
+  query ListWebhookSubscriptionDetails($first: Int!, $topics: [WebhookSubscriptionTopic!]) {
+    webhookSubscriptions(first: $first, topics: $topics) {
+      nodes {
+        id
+        topic
+        uri
+        filter
+        format
+        includeFields
+        metafieldNamespaces
+        name
+      }
+      pageInfo {
+        hasNextPage
+      }
+    }
+  }
+`;
+
+const SHOPIFY_WEBHOOK_SUBSCRIPTION_UPDATE_MUTATION = `
+  mutation UpdateWebhookSubscription($id: ID!, $webhookSubscription: WebhookSubscriptionInput!) {
+    webhookSubscriptionUpdate(id: $id, webhookSubscription: $webhookSubscription) {
+      webhookSubscription {
+        id
+        topic
+        uri
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+const SHOPIFY_WEBHOOK_SUBSCRIPTION_DELETE_MUTATION = `
+  mutation DeleteWebhookSubscription($id: ID!) {
+    webhookSubscriptionDelete(id: $id) {
+      deletedWebhookSubscriptionId
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+/** A shop's webhook subscription as read for a migration (GraphQL topic enum, e.g. `ORDERS_CREATE`). */
+export interface ShopifyWebhookSubscription {
+  id: string;
+  topic: string;
+  uri: string;
+  filter: string | null;
+  format: string;
+  includeFields: string[];
+  metafieldNamespaces: string[];
+  name: string | null;
+}
+
+/** True when two URIs are the same BRAYN route served from different origins — i.e. another BRAYN backend. */
+export function isSameRouteOnOtherOrigin(a: string, b: string): boolean {
+  try {
+    const left = new URL(a);
+    const right = new URL(b);
+    return left.origin !== right.origin && left.pathname === right.pathname;
+  } catch {
+    return false;
+  }
+}
 
 const SHOPIFY_WEBHOOK_SUBSCRIPTION_CREATE_MUTATION = `
   mutation CreateWebhookSubscription($topic: WebhookSubscriptionTopic!, $webhookSubscription: WebhookSubscriptionInput!) {
@@ -1559,6 +1645,12 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
    * subscription. Throws a ProviderError naming every topic Shopify
    * refused (e.g. a missing access scope) — the caller decides how to
    * surface it; nothing is swallowed.
+   *
+   * Never moves a subscription and never duplicates one that serves the same
+   * BRAYN route from another origin (another BRAYN backend during an address
+   * migration): such topics are reported as a conflict instead — moving them is
+   * the explicit job of ShopifyWebhookMigrationService. So two backends running
+   * side by side can't bounce subscriptions between their addresses.
    */
   async ensureWebhookSubscriptions(
     credentials: Record<string, string>,
@@ -1572,36 +1664,129 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
     if (!Array.isArray(nodes)) {
       throw new ProviderError('Shopify returned an unexpected webhook subscription list.');
     }
-    const existingKeys = new Set((nodes as { topic?: string; uri?: string }[]).map((node) => `${node.topic}|${node.uri}`));
+    const listedNodes = nodes as { topic?: string; uri?: string }[];
+    const existingKeys = new Set(listedNodes.map((node) => `${node.topic}|${node.uri}`));
 
     const result: EnsureWebhookSubscriptionsResult = { created: [], existing: [] };
     const failures: string[] = [];
+    const conflicts: string[] = [];
     for (const subscription of desired) {
       const topicEnum = shopifyTopicEnum(subscription.topic);
       if (existingKeys.has(`${topicEnum}|${subscription.uri}`)) {
         result.existing.push(subscription);
         continue;
       }
+      const otherBackend = listedNodes.find(
+        (node) => node.topic === topicEnum && typeof node.uri === 'string' && isSameRouteOnOtherOrigin(node.uri, subscription.uri),
+      );
+      if (otherBackend) {
+        conflicts.push(`${subscription.topic} (${new URL(otherBackend.uri!).origin})`);
+        continue;
+      }
 
-      const data = await this.graphqlRequest(credentials, SHOPIFY_WEBHOOK_SUBSCRIPTION_CREATE_MUTATION, {
-        topic: topicEnum,
-        webhookSubscription: { uri: subscription.uri },
-      });
-      const payload = data.webhookSubscriptionCreate as
-        | { webhookSubscription?: { id?: string } | null; userErrors?: { message?: string }[] }
-        | undefined;
-      const userErrors = payload?.userErrors ?? [];
-      if (userErrors.length > 0 || !payload?.webhookSubscription?.id) {
-        failures.push(`${subscription.topic} (${userErrors.map((e) => e.message).join('; ') || 'no subscription returned'})`);
+      const error = await this.createWebhookSubscription(credentials, topicEnum, subscription.uri);
+      if (error) {
+        failures.push(`${subscription.topic} (${error})`);
         continue;
       }
       result.created.push(subscription);
     }
 
-    if (failures.length > 0) {
-      throw new ProviderError(`Shopify refused webhook subscriptions: ${failures.join(', ')}`);
+    const problems = [
+      ...(failures.length > 0 ? [`Shopify refused webhook subscriptions: ${failures.join(', ')}`] : []),
+      ...(conflicts.length > 0
+        ? [`Webhook subscriptions point at another BRAYN backend: ${conflicts.join(', ')} — run the webhook subscription migration`]
+        : []),
+    ];
+    if (problems.length > 0) {
+      throw new ProviderError(problems.join('. '));
     }
     return result;
+  }
+
+  /** Creates one subscription; returns Shopify's refusal reason, or null on success. */
+  async createWebhookSubscription(credentials: Record<string, string>, topicEnum: string, uri: string): Promise<string | null> {
+    const data = await this.graphqlRequest(credentials, SHOPIFY_WEBHOOK_SUBSCRIPTION_CREATE_MUTATION, {
+      topic: topicEnum,
+      webhookSubscription: { uri },
+    });
+    const payload = data.webhookSubscriptionCreate as
+      | { webhookSubscription?: { id?: string } | null; userErrors?: { message?: string }[] }
+      | undefined;
+    const userErrors = payload?.userErrors ?? [];
+    if (userErrors.length > 0 || !payload?.webhookSubscription?.id) {
+      return userErrors.map((e) => e.message).join('; ') || 'no subscription returned';
+    }
+    return null;
+  }
+
+  /** Lists this shop's subscriptions for the given GraphQL topic enums, with the configuration an update must preserve. */
+  async listWebhookSubscriptions(credentials: Record<string, string>, topicEnums: string[]): Promise<ShopifyWebhookSubscription[]> {
+    const data = await this.graphqlRequest(credentials, SHOPIFY_WEBHOOK_SUBSCRIPTIONS_DETAIL_QUERY, { first: 100, topics: topicEnums });
+    const connection = data.webhookSubscriptions as { nodes?: unknown; pageInfo?: { hasNextPage?: boolean } } | undefined;
+    if (!Array.isArray(connection?.nodes)) {
+      throw new ProviderError('Shopify returned an unexpected webhook subscription list.');
+    }
+    // A handful of managed topics can't exceed one page; refuse rather than act on a partial picture.
+    if (connection.pageInfo?.hasNextPage) {
+      throw new ProviderError('Shopify returned more webhook subscriptions than one page; refusing to migrate on a partial list.');
+    }
+    return (connection.nodes as Partial<ShopifyWebhookSubscription>[]).map((node) => {
+      if (typeof node.id !== 'string' || typeof node.topic !== 'string' || typeof node.uri !== 'string') {
+        throw new ProviderError('Shopify returned a webhook subscription without an id, topic or uri.');
+      }
+      return {
+        id: node.id,
+        topic: node.topic,
+        uri: node.uri,
+        filter: node.filter ?? null,
+        format: node.format ?? 'JSON',
+        includeFields: node.includeFields ?? [],
+        metafieldNamespaces: node.metafieldNamespaces ?? [],
+        name: node.name ?? null,
+      };
+    });
+  }
+
+  /**
+   * Moves one subscription to a new uri in place (same id, so no gap and no second registration). Shopify doesn't
+   * document whether omitted input fields survive an update, so every configurable field is re-sent as read.
+   */
+  async updateWebhookSubscriptionUri(credentials: Record<string, string>, subscription: ShopifyWebhookSubscription, uri: string): Promise<void> {
+    const data = await this.graphqlRequest(credentials, SHOPIFY_WEBHOOK_SUBSCRIPTION_UPDATE_MUTATION, {
+      id: subscription.id,
+      webhookSubscription: {
+        uri,
+        filter: subscription.filter,
+        format: subscription.format,
+        includeFields: subscription.includeFields,
+        metafieldNamespaces: subscription.metafieldNamespaces,
+        name: subscription.name,
+      },
+    });
+    const payload = data.webhookSubscriptionUpdate as
+      | { webhookSubscription?: { id?: string; uri?: string } | null; userErrors?: { message?: string }[] }
+      | undefined;
+    const userErrors = payload?.userErrors ?? [];
+    if (userErrors.length > 0) {
+      throw new ProviderError(`Shopify refused the webhook subscription update: ${userErrors.map((e) => e.message).join('; ')}`);
+    }
+    if (payload?.webhookSubscription?.id !== subscription.id || payload.webhookSubscription.uri !== uri) {
+      throw new ProviderError('Shopify did not confirm the webhook subscription update.');
+    }
+  }
+
+  async deleteWebhookSubscription(credentials: Record<string, string>, id: string): Promise<void> {
+    const data = await this.graphqlRequest(credentials, SHOPIFY_WEBHOOK_SUBSCRIPTION_DELETE_MUTATION, { id });
+    const payload = data.webhookSubscriptionDelete as
+      | { deletedWebhookSubscriptionId?: string | null; userErrors?: { message?: string }[] }
+      | undefined;
+    const userErrors = payload?.userErrors ?? [];
+    if (userErrors.length > 0 || payload?.deletedWebhookSubscriptionId !== id) {
+      throw new ProviderError(
+        `Shopify refused to delete the webhook subscription: ${userErrors.map((e) => e.message).join('; ') || 'not confirmed'}`,
+      );
+    }
   }
 
   /**

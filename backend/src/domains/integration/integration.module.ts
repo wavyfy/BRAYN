@@ -28,6 +28,9 @@ import { WooCommerceWebhookSetupService } from './providers/woocommerce/woocomme
 import { WooCommerceWebhookSetupController } from './providers/woocommerce/woocommerce-webhook-setup.controller';
 import { CustomerErasureController } from './customer-erasure.controller';
 import { CustomerErasureService } from './customer-erasure.service';
+import { ShopifyWebhookMigrationService } from './providers/shopify/shopify-webhook-migration.service';
+import { ShopifyWebhookMigrationController } from './providers/shopify/shopify-webhook-migration.controller';
+import { ShopifyWebhookMigrationGuard } from './providers/shopify/shopify-webhook-migration.guard';
 
 /**
  * Owns: external connections, provider auth, imports, sync, webhook intake,
@@ -58,6 +61,7 @@ import { CustomerErasureService } from './customer-erasure.service';
     ShopifyUninstallController,
     WooCommerceWebhookSetupController,
     CustomerErasureController,
+    ShopifyWebhookMigrationController,
   ],
   providers: [
     IntegrationService,
@@ -79,6 +83,8 @@ import { CustomerErasureService } from './customer-erasure.service';
     ShopifyUninstallService,
     WooCommerceAdapter,
     WooCommerceWebhookSetupService,
+    ShopifyWebhookMigrationService,
+    ShopifyWebhookMigrationGuard,
   ],
   exports: [
     IntegrationService,

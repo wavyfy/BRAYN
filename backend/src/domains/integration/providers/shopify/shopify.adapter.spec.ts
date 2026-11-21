@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SHOPIFY_API_VERSION, SHOPIFY_REGISTERED_BUSINESS_TOPICS, ShopifyAdapter, shopifyTopicEnum } from './shopify.adapter';
+import { isSameRouteOnOtherOrigin, SHOPIFY_API_VERSION, SHOPIFY_REGISTERED_BUSINESS_TOPICS, ShopifyAdapter, shopifyTopicEnum } from './shopify.adapter';
 import type { ProviderRegistry } from '../../provider-registry.service';
 import type { ConfigService } from '@nestjs/config';
 import type { Env } from '../../../../config/env.schema';
@@ -1450,6 +1450,101 @@ describe('ShopifyAdapter', () => {
       const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
       await expect(adapter.ensureWebhookSubscriptions(credentials, desired)).rejects.toThrow('unexpected webhook subscription list');
+    });
+  });
+
+  describe('webhook subscriptions during a backend address migration', () => {
+    const credentials = { shopDomain: 'acme.myshopify.com', accessToken: 'shpat_x' };
+    const path = '/api/v1/workspaces/ws_1/integrations/shopify/webhooks';
+    const newUri = `https://new.example.com${path}`;
+    const oldUri = `https://old.example.com${path}`;
+    const bodies = (fetchMock: ReturnType<typeof vi.fn>) =>
+      fetchMock.mock.calls.map(([, init]) => JSON.parse((init as RequestInit).body as string) as { query: string; variables: Record<string, unknown> });
+
+    it('ensure never duplicates or moves a topic served by another BRAYN backend (same route, other origin); it reports the conflict and still creates missing topics', async () => {
+      const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+        const { query } = JSON.parse(init!.body as string) as { query: string };
+        return query.includes('webhookSubscriptionCreate')
+          ? jsonResponse(200, { data: { webhookSubscriptionCreate: { webhookSubscription: { id: 'gid://9' }, userErrors: [] } } })
+          : jsonResponse(200, { data: { webhookSubscriptions: { nodes: [{ id: 'gid://1', topic: 'ORDERS_CREATE', uri: oldUri }] } } });
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      await expect(
+        adapter.ensureWebhookSubscriptions(credentials, [
+          { topic: 'orders/create', uri: newUri },
+          { topic: 'orders/updated', uri: newUri },
+        ]),
+      ).rejects.toThrow('Webhook subscriptions point at another BRAYN backend: orders/create (https://old.example.com) — run the webhook subscription migration');
+      const creates = bodies(fetchMock).filter((b) => b.query.includes('webhookSubscriptionCreate'));
+      expect(creates.map((c) => c.variables.topic)).toEqual(['ORDERS_UPDATED']); // no second ORDERS_CREATE registration
+      expect(bodies(fetchMock).some((b) => b.query.includes('webhookSubscriptionUpdate') || b.query.includes('webhookSubscriptionDelete'))).toBe(false);
+    });
+
+    it('lists subscriptions with the configuration an update must preserve', async () => {
+      const fetchMock = vi.fn(async () =>
+        jsonResponse(200, {
+          data: {
+            webhookSubscriptions: {
+              nodes: [{ id: 'gid://1', topic: 'ORDERS_CREATE', uri: oldUri, filter: 'id:*', format: 'JSON', includeFields: ['id'], metafieldNamespaces: ['ns'], name: 'brayn' }],
+              pageInfo: { hasNextPage: false },
+            },
+          },
+        }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      const subs = await adapter.listWebhookSubscriptions(credentials, ['ORDERS_CREATE']);
+
+      expect(subs).toEqual([{ id: 'gid://1', topic: 'ORDERS_CREATE', uri: oldUri, filter: 'id:*', format: 'JSON', includeFields: ['id'], metafieldNamespaces: ['ns'], name: 'brayn' }]);
+      expect(bodies(fetchMock)[0].variables).toEqual({ first: 100, topics: ['ORDERS_CREATE'] });
+    });
+
+    it('refuses to act on a partial (paginated) or malformed subscription list', async () => {
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { data: { webhookSubscriptions: { nodes: [], pageInfo: { hasNextPage: true } } } })));
+      await expect(adapter.listWebhookSubscriptions(credentials, ['ORDERS_CREATE'])).rejects.toThrow('partial list');
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { data: { webhookSubscriptions: { nodes: [{ topic: 'ORDERS_CREATE', uri: oldUri }] } } })));
+      await expect(adapter.listWebhookSubscriptions(credentials, ['ORDERS_CREATE'])).rejects.toThrow('without an id');
+    });
+
+    it('updates a subscription in place via webhookSubscriptionUpdate, re-sending its configuration, and requires Shopify to confirm the same id and new uri', async () => {
+      const existing = { id: 'gid://1', topic: 'ORDERS_CREATE', uri: oldUri, filter: 'id:*', format: 'JSON', includeFields: ['id'], metafieldNamespaces: [], name: null };
+      const fetchMock = vi.fn(async () => jsonResponse(200, { data: { webhookSubscriptionUpdate: { webhookSubscription: { id: 'gid://1', uri: newUri }, userErrors: [] } } }));
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      await adapter.updateWebhookSubscriptionUri(credentials, existing, newUri);
+
+      const [body] = bodies(fetchMock);
+      expect(body.query).toContain('webhookSubscriptionUpdate(id: $id, webhookSubscription: $webhookSubscription)');
+      expect(body.variables).toEqual({ id: 'gid://1', webhookSubscription: { uri: newUri, filter: 'id:*', format: 'JSON', includeFields: ['id'], metafieldNamespaces: [], name: null } });
+
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { data: { webhookSubscriptionUpdate: { webhookSubscription: null, userErrors: [{ message: 'Address is invalid' }] } } })));
+      await expect(adapter.updateWebhookSubscriptionUri(credentials, existing, newUri)).rejects.toThrow('Address is invalid');
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { data: { webhookSubscriptionUpdate: { webhookSubscription: { id: 'gid://other', uri: newUri }, userErrors: [] } } })));
+      await expect(adapter.updateWebhookSubscriptionUri(credentials, existing, newUri)).rejects.toThrow('did not confirm');
+    });
+
+    it('deletes by id and requires Shopify to confirm the deleted id', async () => {
+      const fetchMock = vi.fn(async () => jsonResponse(200, { data: { webhookSubscriptionDelete: { deletedWebhookSubscriptionId: 'gid://1', userErrors: [] } } }));
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      await adapter.deleteWebhookSubscription(credentials, 'gid://1');
+      expect(bodies(fetchMock)[0].variables).toEqual({ id: 'gid://1' });
+
+      vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { data: { webhookSubscriptionDelete: { deletedWebhookSubscriptionId: null, userErrors: [] } } })));
+      await expect(adapter.deleteWebhookSubscription(credentials, 'gid://1')).rejects.toThrow('not confirmed');
+    });
+
+    it('isSameRouteOnOtherOrigin only matches the identical route on a different origin', () => {
+      expect(isSameRouteOnOtherOrigin(oldUri, newUri)).toBe(true);
+      expect(isSameRouteOnOtherOrigin(newUri, newUri)).toBe(false);
+      expect(isSameRouteOnOtherOrigin('https://old.example.com/hook', newUri)).toBe(false);
+      expect(isSameRouteOnOtherOrigin('not a url', newUri)).toBe(false);
     });
   });
 

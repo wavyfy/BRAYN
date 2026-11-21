@@ -114,6 +114,11 @@ export const envSchema = z.object({
   // fails closed (503). e.g. `openssl rand -hex 32`, distinct per environment.
   BRAYN_INTERNAL_CRON_SECRET: z.string().min(32).optional(),
 
+  // Bearer secret for the operator-only Shopify webhook-subscription migration endpoint (backend address moves).
+  // Deliberately separate from the cron secret and unset by default → the endpoint is disabled (503); set it on
+  // both backends only for a migration window, then remove it.
+  SHOPIFY_WEBHOOK_MIGRATION_SECRET: z.string().min(32).optional(),
+
   // Keys the HMACs of erased customers' identifiers (ErasedIdentifierService). Dedicated — never the credential
   // encryption key. Unset → customer erasure fails closed (503), and ingestion fails closed for any workspace that
   // already has erased identifiers. Do NOT rotate: stored HMACs can't be re-keyed, so a new value makes ingestion
