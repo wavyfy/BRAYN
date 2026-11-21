@@ -12,11 +12,10 @@ import { StructuredLoggerService } from '../../../../common/logging/structured-l
 import { IntegrationService } from '../../integration.service';
 import {
   requestShopifyClientCredentialsToken,
-  SHOPIFY_APP_UNINSTALLED_TOPIC,
   SHOPIFY_AUTHORIZATION_CODE_GRANT_TYPE,
   SHOPIFY_CLIENT_CREDENTIALS_GRANT_TYPE,
   SHOPIFY_DOMAIN_PATTERN,
-  SHOPIFY_REGISTERED_BUSINESS_TOPICS,
+  shopifyManagedWebhookSubscriptions,
   ShopifyAdapter,
 } from './shopify.adapter';
 import type { ShopifyConnectionCheckDiagnostic } from './shopify.adapter';
@@ -196,12 +195,7 @@ export class ShopifyOAuthService {
    * a previous setup error is cleared. Returns whether it succeeded.
    */
   private async ensureWebhookSubscriptions(workspaceId: string, credentials: Record<string, string>): Promise<boolean> {
-    const apiBase = `${this.config.get('BACKEND_URL', { infer: true })}/api/v1`;
-    const businessUri = `${apiBase}/workspaces/${workspaceId}/integrations/shopify/webhooks`;
-    const desired = [
-      ...SHOPIFY_REGISTERED_BUSINESS_TOPICS.map((topic) => ({ topic, uri: businessUri })),
-      { topic: SHOPIFY_APP_UNINSTALLED_TOPIC, uri: `${apiBase}/integrations/shopify/app-uninstalled` },
-    ];
+    const desired = shopifyManagedWebhookSubscriptions(this.config.get('BACKEND_URL', { infer: true }), workspaceId);
 
     try {
       const result = await this.shopifyAdapter.ensureWebhookSubscriptions(credentials, desired);
