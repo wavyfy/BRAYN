@@ -10,6 +10,7 @@ scopes = "read_customers,read_orders,read_products"
 redirect_urls = [
   "https://brayn-production.onrender.com/api/v1/integrations/shopify/oauth/callback",
   "https://brayn.onrender.com/api/v1/integrations/shopify/oauth/callback",
+  "https://brayn-api-production-new.onrender.com/api/v1/integrations/shopify/oauth/callback",
 ]
 
 [webhooks]
