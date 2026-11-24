@@ -19,7 +19,16 @@ export type ActivityEntry =
       shipmentStatus: string | null;
     }
   | { type: 'website_activity'; occurredAt: string; eventType: string }
-  | { type: 'checkout_abandoned'; occurredAt: string; provider: string; externalId: string; stage: string; completedOrderExternalId: string | null };
+  | {
+      type: 'checkout_abandoned';
+      occurredAt: string;
+      provider: string;
+      externalId: string;
+      stage: string;
+      completedOrderExternalId: string | null;
+      /** `order`: session id on this customer's own order; `email`: only the shopper-typed checkout email matched (unverified). */
+      attribution: 'order' | 'email';
+    };
 
 /** How many events show before the rest fold behind "Show earlier activity". */
 const VISIBLE_EVENTS = 12;
@@ -80,6 +89,9 @@ function ActivityLabel({ entry }: { entry: ActivityEntry }) {
           Checkout not completed in <span className="capitalize">{entry.provider}</span>
           <span className="text-muted-foreground"> · last step: {entry.stage.toLowerCase().replaceAll('_', ' ')}</span>
           {entry.completedOrderExternalId && <span className="text-muted-foreground"> · order placed later</span>}
+          {entry.attribution === 'email' && (
+            <span className="text-warning" title="Matched only by the email typed at checkout — not verified"> · matched by checkout email (unverified)</span>
+          )}
         </span>
       );
     case 'fulfillment':

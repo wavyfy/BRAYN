@@ -86,8 +86,8 @@ describe('CustomerDetailPage — Website Behaviour (Phase 8)', () => {
 
   it('renders abandoned checkout entries with the provider stage verbatim and a later order only when correlated', async () => {
     const activity = [
-      { type: 'checkout_abandoned', occurredAt: '2026-01-09T00:00:00.000Z', provider: 'flexype', externalId: 'sess_1', stage: 'PAYMENT_INITIATED', completedOrderExternalId: 'ext_9' },
-      { type: 'checkout_abandoned', occurredAt: '2026-01-08T00:00:00.000Z', provider: 'flexype', externalId: 'sess_2', stage: 'PHONE_ENTERED', completedOrderExternalId: null },
+      { type: 'checkout_abandoned', occurredAt: '2026-01-09T00:00:00.000Z', provider: 'flexype', externalId: 'sess_1', stage: 'PAYMENT_INITIATED', completedOrderExternalId: 'ext_9', attribution: 'order' },
+      { type: 'checkout_abandoned', occurredAt: '2026-01-08T00:00:00.000Z', provider: 'flexype', externalId: 'sess_2', stage: 'PHONE_ENTERED', completedOrderExternalId: null, attribution: 'email' },
     ];
 
     render(await renderPage(baseCustomer, activity));
@@ -96,6 +96,7 @@ describe('CustomerDetailPage — Website Behaviour (Phase 8)', () => {
     expect(screen.getByText(/last step: payment initiated/)).toBeTruthy();
     expect(screen.getByText(/last step: phone entered/)).toBeTruthy();
     expect(screen.getAllByText(/order placed later/)).toHaveLength(1);
+    expect(screen.getAllByText(/matched by checkout email \(unverified\)/)).toHaveLength(1);
     expect(screen.queryByText(/failed|succeeded|paid/i)).toBeNull();
   });
 
