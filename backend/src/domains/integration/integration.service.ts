@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, desc, eq, inArray, isNotNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DatabaseService } from '../../database/database.service';
 import { integrations } from '../../database/schema/integrations';
@@ -30,6 +30,7 @@ import { customerMemoryEntryHistory } from '../../database/schema/customer-memor
 import { customerPreferenceHistory, customerPreferences } from '../../database/schema/customer-preferences';
 import { customerSummaries } from '../../database/schema/customer-summaries';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
+import { checkoutSessions } from '../../database/schema/checkout-sessions';
 import { websiteVisitors } from '../../database/schema/website-visitors';
 import { websiteSessions } from '../../database/schema/website-sessions';
 import { websiteEvents } from '../../database/schema/website-events';
@@ -276,7 +277,12 @@ export class IntegrationService {
   ): Promise<{ found: boolean; canonicalCustomerRemoved: boolean }> {
     return this.database.transaction(async (tx) => {
       const [customerRow] = await tx
-        .select({ id: commerceCustomers.id, canonicalCustomerId: commerceCustomers.canonicalCustomerId })
+        .select({
+          id: commerceCustomers.id,
+          canonicalCustomerId: commerceCustomers.canonicalCustomerId,
+          email: commerceCustomers.email,
+          phoneE164: commerceCustomers.phoneE164,
+        })
         .from(commerceCustomers)
         .where(
           and(
@@ -291,6 +297,18 @@ export class IntegrationService {
       }
 
       await this.deleteSourceCustomerWithOrders(tx, workspaceId, customerRow.id);
+      // Unlinked checkout signals carrying this customer's email/phone are the same person's data (linked ones go with
+      // the canonical customer below when it is orphaned).
+      const email = customerRow.email?.trim().toLowerCase();
+      if (email || customerRow.phoneE164) {
+        await tx.delete(checkoutSessions).where(
+          and(
+            eq(checkoutSessions.workspaceId, workspaceId),
+            isNull(checkoutSessions.canonicalCustomerId),
+            or(email ? eq(checkoutSessions.email, email) : undefined, customerRow.phoneE164 ? eq(checkoutSessions.phoneE164, customerRow.phoneE164) : undefined),
+          ),
+        );
+      }
 
       const canonicalCustomerRemoved = customerRow.canonicalCustomerId
         ? await this.purgeCanonicalCustomerIfOrphaned(tx, workspaceId, customerRow.canonicalCustomerId)
@@ -414,6 +432,8 @@ export class IntegrationService {
     // references this table, so it's safe to remove outright rather than
     // leaving a second, ungoverned copy behind after the purge (DLP).
     await tx.delete(integrationWebhookEvents).where(and(eq(integrationWebhookEvents.workspaceId, workspaceId), eq(integrationWebhookEvents.integrationId, integrationId)));
+    // A checkout source's signals (FlexyPe) — integration-scoped, may carry emails/phones.
+    await tx.delete(checkoutSessions).where(and(eq(checkoutSessions.workspaceId, workspaceId), eq(checkoutSessions.integrationId, integrationId)));
 
     // Order-scoped tables first (FK-safe order), all directly integration-scoped.
     await tx.delete(commerceOrderLineItems).where(and(eq(commerceOrderLineItems.workspaceId, workspaceId), eq(commerceOrderLineItems.integrationId, integrationId)));
@@ -480,6 +500,7 @@ export class IntegrationService {
       );
 
     await tx.delete(recommendations).where(and(eq(recommendations.workspaceId, workspaceId), eq(recommendations.canonicalCustomerId, canonicalCustomerId)));
+    await tx.delete(checkoutSessions).where(and(eq(checkoutSessions.workspaceId, workspaceId), eq(checkoutSessions.canonicalCustomerId, canonicalCustomerId)));
     await tx.delete(internalNotifications).where(and(eq(internalNotifications.workspaceId, workspaceId), eq(internalNotifications.canonicalCustomerId, canonicalCustomerId)));
     await tx.delete(revenueOpportunities).where(and(eq(revenueOpportunities.workspaceId, workspaceId), eq(revenueOpportunities.canonicalCustomerId, canonicalCustomerId)));
     await tx.delete(customerHealthStateHistory).where(and(eq(customerHealthStateHistory.workspaceId, workspaceId), eq(customerHealthStateHistory.canonicalCustomerId, canonicalCustomerId)));

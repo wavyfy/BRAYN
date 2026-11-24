@@ -27,6 +27,7 @@ import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter'
 import { WooCommerceWebhookSetupService } from './providers/woocommerce/woocommerce-webhook-setup.service';
 import { WooCommerceWebhookSetupController } from './providers/woocommerce/woocommerce-webhook-setup.controller';
 import { FlexyPeAdapter } from './providers/flexype/flexype.adapter';
+import { CheckoutSessionService } from './checkout-session.service';
 import { FlexyPeWebhookSetupService } from './providers/flexype/flexype-webhook-setup.service';
 import { FlexyPeWebhookSetupController } from './providers/flexype/flexype-webhook-setup.controller';
 import { CustomerErasureController } from './customer-erasure.controller';
@@ -89,6 +90,7 @@ import { ShopifyWebhookMigrationGuard } from './providers/shopify/shopify-webhoo
     WooCommerceWebhookSetupService,
     FlexyPeAdapter,
     FlexyPeWebhookSetupService,
+    CheckoutSessionService,
     ShopifyWebhookMigrationService,
     ShopifyWebhookMigrationGuard,
   ],

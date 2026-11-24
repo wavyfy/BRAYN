@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { index, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { id, timestamps, workspaceId } from './columns';
 import { integrations } from './integrations';
 import { commerceCustomers } from './commerce-customers';
@@ -53,6 +53,12 @@ export const commerceOrders = pgTable(
      * (doc21).
      */
     sourceCancelledAt: timestamp('source_cancelled_at', { withTimezone: true }),
+    /**
+     * The external checkout session that produced this order, when the commerce platform records a provider-documented
+     * link (Shopify order note attribute "FlexyPe Session ID"). Correlation only: matched at read time against
+     * `checkout_sessions.external_session_id` — never a second order or extra revenue. Null when absent.
+     */
+    externalCheckoutSessionId: text('external_checkout_session_id'),
     ...timestamps(),
   },
   (table) => [
@@ -60,6 +66,10 @@ export const commerceOrders = pgTable(
       table.workspaceId,
       table.provider,
       table.externalId,
+    ),
+    index('commerce_orders_workspace_checkout_session_idx').on(
+      table.workspaceId,
+      table.externalCheckoutSessionId,
     ),
   ],
 );

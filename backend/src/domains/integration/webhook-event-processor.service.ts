@@ -18,6 +18,7 @@ import { IdentityResolutionService } from '../identity-resolution/identity-resol
 import { isWebhookResourceEvent, type WebhookResourceEvent } from './provider-adapter.interface';
 import type { IntegrationProvider } from './dto/connect-integration.schema';
 import { upsertGuestCustomers } from './guest-customers';
+import { CheckoutSessionService } from './checkout-session.service';
 
 /** Claims (processing attempts) before a delivery is dead-lettered. */
 export const WEBHOOK_MAX_ATTEMPTS = 5;
@@ -64,6 +65,8 @@ export interface CheckoutAbandonedPayload {
   occurredAt: string;
   currency: string | null;
   itemCount: number;
+  /** Set only when linked to an existing canonical customer (exact email). */
+  canonicalCustomerId: string | null;
 }
 
 /** Wake-up signal only — the row it names is the actual work item. */
@@ -125,6 +128,7 @@ export class WebhookEventProcessorService implements OnModuleDestroy {
     private readonly identityResolutionService: IdentityResolutionService,
     private readonly logger: StructuredLoggerService,
     private readonly eventBus: EventBus,
+    private readonly checkoutSessionService: CheckoutSessionService,
   ) {}
 
   @OnEvent('integration.webhook.received')
@@ -252,7 +256,13 @@ export class WebhookEventProcessorService implements OnModuleDestroy {
       return;
     }
 
-    if (!(await this.complete(claimed))) {
+    // A checkout signal's personal data now lives (minimized, retention-governed) in checkout_sessions; the raw
+    // delivery copy is cleared so no second, ungoverned copy remains. The row stays for X-Event-Id dedup.
+    const completed =
+      payload.resource === 'checkout'
+        ? await this.finish(claimed, { status: 'processed', processedAt: new Date(), error: null, payload: null })
+        : await this.complete(claimed);
+    if (!completed) {
       this.logger.event('warn', 'Webhook processed by a worker whose claim had already been taken over; outcome not recorded', 'WebhookEventProcessorService', this.logContext(claimed));
     }
   }
@@ -342,9 +352,15 @@ export class WebhookEventProcessorService implements OnModuleDestroy {
       case 'collection':
         await this.collectionService.upsertMany(workspaceId, integrationId, provider, [payload.data]);
         break;
-      case 'checkout':
-        // doc21 normalized integration event. No personal data and no customer id: linking to a customer happens only
-        // after identity resolution (later slice), and nothing consumes this event yet.
+      case 'checkout': {
+        if (provider !== 'flexype') {
+          throw new Error(`Checkout signals are not supported for provider "${provider}".`);
+        }
+        const recorded = await this.checkoutSessionService.record(workspaceId, integrationId, provider, payload.data);
+        if (!recorded.created) {
+          break; // Same provider session already recorded — nothing new happened.
+        }
+        // doc21 normalized integration event — no personal data; a customer id only when linked to an existing customer.
         this.eventBus.emit(
           createEvent<CheckoutAbandonedPayload>({
             type: 'checkout.abandoned',
@@ -358,10 +374,12 @@ export class WebhookEventProcessorService implements OnModuleDestroy {
               occurredAt: new Date(payload.data.occurredAt).toISOString(),
               currency: payload.data.currency,
               itemCount: payload.data.items.reduce((sum, item) => sum + item.quantity, 0),
+              canonicalCustomerId: recorded.canonicalCustomerId,
             },
           }),
         );
         break;
+      }
     }
   }
 }

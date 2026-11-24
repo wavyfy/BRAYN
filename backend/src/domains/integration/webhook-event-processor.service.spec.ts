@@ -10,6 +10,7 @@ import type { OrderService } from '../commerce/order.service';
 import type { CollectionService } from '../commerce/collection.service';
 import type { IdentityResolutionService } from '../identity-resolution/identity-resolution.service';
 import type { EventBus } from '../../common/events/event-bus.service';
+import type { CheckoutSessionService } from './checkout-session.service';
 import type { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 
 /**
@@ -49,6 +50,7 @@ function makeProcessor(options: { finishResult?: unknown[] } = {}) {
     identityResolutionService,
     logger,
     { emit: vi.fn() } as unknown as EventBus,
+    { record: vi.fn() } as unknown as CheckoutSessionService,
   );
 
   return { processor, client, updateChain, customerService, productService, orderService, collectionService, identityResolutionService, logger };

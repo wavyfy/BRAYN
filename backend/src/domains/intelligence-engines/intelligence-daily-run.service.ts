@@ -8,6 +8,7 @@ import { CustomerIntelligenceService } from '../customer-intelligence/customer-i
 import { CustomerHealthService } from './customer-health.service';
 import { RevenueOpportunityService } from './revenue-opportunity.service';
 import { RecommendationService } from './recommendation.service';
+import { applyCheckoutSessionRetention, DEFAULT_CHECKOUT_UNMATCHED_RETENTION_DAYS } from '../integration/checkout-session.service';
 
 export type IntelligenceDailyRun = typeof intelligenceDailyRuns.$inferSelect;
 
@@ -133,6 +134,18 @@ export class IntelligenceDailyRunService {
       if (kept.length === 0) throw new Error('Lease lost — this run was expired by another start.');
       lastBeat = Date.now();
     };
+
+    // Checkout-signal privacy maintenance rides on this existing daily job (no new scheduler). Its failure is logged
+    // and never fails the intelligence run.
+    try {
+      const retention = await applyCheckoutSessionRetention(this.database.client, new Date(), DEFAULT_CHECKOUT_UNMATCHED_RETENTION_DAYS);
+      this.logger.event('log', 'Checkout session retention applied', 'IntelligenceDailyRunService', { runId: run.id, ...retention });
+    } catch (error) {
+      this.logger.event('error', 'Checkout session retention failed', 'IntelligenceDailyRunService', {
+        runId: run.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
 
     try {
       let after: { workspaceId: string; id: string } | null = null;

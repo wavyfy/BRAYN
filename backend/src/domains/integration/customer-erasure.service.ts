@@ -1,11 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DatabaseService } from '../../database/database.service';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { customerErasures } from '../../database/schema/customer-erasures';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
+import { checkoutSessions } from '../../database/schema/checkout-sessions';
 import { websiteEvents } from '../../database/schema/website-events';
 import { websiteSessions } from '../../database/schema/website-sessions';
 import { websiteVisitors } from '../../database/schema/website-visitors';
@@ -136,6 +137,19 @@ export class CustomerErasureService {
         phones,
       );
       await this.eraseWebsiteIdentityData(tx, workspaceId, personIds, emails);
+      // Checkout signals (FlexyPe): linked to the person, or still unlinked but carrying one of their emails/phones.
+      await tx
+        .delete(checkoutSessions)
+        .where(
+          and(
+            eq(checkoutSessions.workspaceId, workspaceId),
+            or(
+              inArray(checkoutSessions.canonicalCustomerId, personIds),
+              emails.length > 0 ? inArray(checkoutSessions.email, emails) : undefined,
+              phones.length > 0 ? inArray(checkoutSessions.phoneE164, phones) : undefined,
+            ),
+          ),
+        );
 
       const identifiers: ErasedIdentifier[] = [
         ...emails.map((email) => emailIdentifier(email)!),

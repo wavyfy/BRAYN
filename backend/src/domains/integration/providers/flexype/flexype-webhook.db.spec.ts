@@ -12,6 +12,7 @@ import { DatabaseService } from '../../../../database/database.service';
 import { workspaces } from '../../../../database/schema/workspaces';
 import { integrations } from '../../../../database/schema/integrations';
 import { integrationWebhookEvents } from '../../../../database/schema/integration-webhook-events';
+import { checkoutSessions } from '../../../../database/schema/checkout-sessions';
 import { commerceCustomers } from '../../../../database/schema/commerce-customers';
 import { canonicalCustomers } from '../../../../database/schema/canonical-customers';
 import { canonicalCustomerDuplicates } from '../../../../database/schema/canonical-customer-duplicates';
@@ -98,6 +99,7 @@ describe('FlexyPe webhook intake (real DB)', { timeout: 90_000 }, () => {
   afterAll(async () => {
     if (db?.isConfigured()) {
       const ids = Object.values(ws);
+      await db.client.delete(checkoutSessions).where(inArray(checkoutSessions.workspaceId, ids));
       await db.client
         .delete(integrationWebhookEvents)
         .where(inArray(integrationWebhookEvents.workspaceId, ids));
@@ -187,7 +189,13 @@ describe('FlexyPe webhook intake (real DB)', { timeout: 90_000 }, () => {
     const row = await waitProcessed(ws.a, (result as { webhookEventId: string }).webhookEventId);
     expect(row.eventType).toBe('ABANDONED_CHECKOUT');
     expect(row.externalEventId).toBe(eventId);
-    const stored = JSON.stringify(row.payload);
+    // Slice 2: the raw delivery copy is cleared once applied; the minimized signal lives in checkout_sessions.
+    expect(row.payload).toBeNull();
+    const [sessionRow] = await db.client
+      .select()
+      .from(checkoutSessions)
+      .where(eq(checkoutSessions.externalSessionId, `sess_${eventId}`));
+    const stored = JSON.stringify(sessionRow);
     expect(stored).toContain('shopper@example.com');
     for (const dropped of [
       '203.0.113.7',
@@ -320,44 +328,49 @@ describe('FlexyPe webhook intake (real DB)', { timeout: 90_000 }, () => {
       email,
       phone_with_dial_code: phone,
     });
-    const byEmail = await deliver(
-      ws.a,
-      webhookSecret,
-      flexypeAbandonedCheckout(
-        { store: { shopify_domain: shop.a } },
-        { user: user('Erase.Me@example.com', null) },
+    const sid = () => `sess_${randomUUID()}`;
+    const ids = { byEmail: sid(), byPhone: sid(), other: sid() };
+    const results = [
+      await deliver(
+        ws.a,
+        webhookSecret,
+        flexypeAbandonedCheckout(
+          { store: { shopify_domain: shop.a } },
+          { session_id: ids.byEmail, user: user('Erase.Me@example.com', null) },
+        ),
       ),
-    );
-    const byPhone = await deliver(
-      ws.a,
-      webhookSecret,
-      flexypeAbandonedCheckout(
-        { store: { shopify_domain: shop.a } },
-        { user: user(null, '+919123456789') },
+      await deliver(
+        ws.a,
+        webhookSecret,
+        flexypeAbandonedCheckout(
+          { store: { shopify_domain: shop.a } },
+          { session_id: ids.byPhone, user: user(null, '+919123456789') },
+        ),
       ),
-    );
-    const other = await deliver(
-      ws.a,
-      webhookSecret,
-      flexypeAbandonedCheckout(
-        { store: { shopify_domain: shop.a } },
-        { user: user('someone.else@example.com', '+919000000000') },
+      await deliver(
+        ws.a,
+        webhookSecret,
+        flexypeAbandonedCheckout(
+          { store: { shopify_domain: shop.a } },
+          { session_id: ids.other, user: user('someone.else@example.com', '+919000000000') },
+        ),
       ),
-    );
-    const ids = [byEmail, byPhone, other].map(
-      (r) => (r as { webhookEventId: string }).webhookEventId,
-    );
-    for (const id of ids) await waitProcessed(ws.a, id);
+    ];
+    for (const r of results)
+      await waitProcessed(ws.a, (r as { webhookEventId: string }).webhookEventId);
+    const sessionOf = async (id: string) =>
+      (
+        await db.client
+          .select()
+          .from(checkoutSessions)
+          .where(eq(checkoutSessions.externalSessionId, id))
+      )[0];
+    expect((await sessionOf(ids.byEmail)).canonicalCustomerId).toBe(source.canonicalCustomerId);
 
     await erasure.eraseCanonicalCustomer(ws.a, source.canonicalCustomerId!, 'clerk_spec_owner');
 
-    const rows = await db.client
-      .select()
-      .from(integrationWebhookEvents)
-      .where(inArray(integrationWebhookEvents.id, ids));
-    const payloadOf = (id: string) => rows.find((r) => r.id === id)!.payload;
-    expect(payloadOf(ids[0])).toBeNull();
-    expect(payloadOf(ids[1])).toBeNull();
-    expect(JSON.stringify(payloadOf(ids[2]))).toContain('someone.else@example.com');
+    expect(await sessionOf(ids.byEmail)).toBeUndefined();
+    expect(await sessionOf(ids.byPhone)).toBeUndefined();
+    expect(await sessionOf(ids.other)).toMatchObject({ email: 'someone.else@example.com' });
   });
 });
