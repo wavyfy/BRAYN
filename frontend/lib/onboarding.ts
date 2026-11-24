@@ -13,7 +13,6 @@ export const COMING_SOON_COMMERCE_PLATFORMS = ['woocommerce'] as const;
 export type OnboardingIntegration = {
   provider: string;
   status: string;
-  lastSyncError?: string | null;
 };
 export type OnboardingImportRun = {
   status: 'running' | 'succeeded' | 'failed' | 'partial';
@@ -74,7 +73,9 @@ export function deriveOnboarding(
     : {
         key: 'connect',
         state: 'error',
-        detail: commerce.lastSyncError ?? 'The connection needs attention — open Integrations.',
+        // Generic on purpose: the checklist is visible to every member; provider error text stays on the Integrations
+        // page, where only owners/admins see it.
+        detail: 'The connection needs attention — open Integrations.',
       };
 
   let importStep: OnboardingStep;

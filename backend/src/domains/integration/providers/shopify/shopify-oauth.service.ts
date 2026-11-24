@@ -168,6 +168,10 @@ export class ShopifyOAuthService {
       throw new ProviderError('Could not verify the client-credentials token with Shopify.');
     }
 
+    if ((await this.integrationService.prepareStoreConnection(workspaceId, 'shopify', shopDomain)) === 'different_store') {
+      throw new ConflictError('This workspace still holds data from a different Shopify store. Use a new workspace for this store.');
+    }
+
     try {
       await this.integrationService.connect(workspaceId, 'shopify');
     } catch (error) {
@@ -311,6 +315,11 @@ export class ShopifyOAuthService {
         connectionCheck: connectionCheck ?? { category: 'unknown', apiVersionHeader: null, shopifyError: null },
       });
       return `${integrationsUrl}?shopify=error&reason=verification_failed`;
+    }
+
+    if ((await this.integrationService.prepareStoreConnection(state.workspaceId, 'shopify', shop)) === 'different_store') {
+      this.logger.event('warn', 'Shopify OAuth callback: refused a different store for an existing connection', 'ShopifyOAuth', { workspaceId: state.workspaceId });
+      return `${integrationsUrl}?shopify=error&reason=different_store`;
     }
 
     try {

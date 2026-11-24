@@ -64,13 +64,19 @@ describe('deriveOnboarding', () => {
     }
   });
 
-  it('a connection in error state blocks completion even after a successful import', () => {
+  it('a successful import with zero records still completes onboarding (an empty store is a valid store)', () => {
     const result = deriveOnboarding(
-      [{ provider: 'shopify', status: 'error', lastSyncError: 'Webhook registration failed' }],
-      run('succeeded'),
+      [{ provider: 'shopify', status: 'connected' }],
+      run('succeeded', 0),
     );
+    expect(result.complete).toBe(true);
+    expect(result.steps[1]!.detail).toBe('0 records imported.');
+  });
+
+  it('a connection in error state blocks completion even after a successful import; no provider error text is shown', () => {
+    const result = deriveOnboarding([{ provider: 'shopify', status: 'error' }], run('succeeded'));
     expect(states(result)).toEqual(['connect:error', 'import:done', 'verify:pending']);
-    expect(result.steps[0]!.detail).toBe('Webhook registration failed');
+    expect(result.steps[0]!.detail).toBe('The connection needs attention — open Integrations.');
     expect(result.complete).toBe(false);
   });
 

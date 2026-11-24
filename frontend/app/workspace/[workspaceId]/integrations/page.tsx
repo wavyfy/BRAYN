@@ -125,6 +125,8 @@ const OAUTH_ERROR_REASONS: Record<string, string> = {
   missing_code: 'Shopify did not send an authorization code.',
   token_exchange_failed: 'Shopify rejected the authorization code.',
   verification_failed: 'The new access token could not be verified against your store.',
+  different_store: 'This workspace still holds data from a different Shopify store. Use a new workspace for this store.',
+  webhook_registration_failed: 'Shopify connected, but its webhook subscriptions could not be registered. Connect again to retry.',
 };
 
 /** Doc19 Phase 8 — Integration Connection UI: Shopify + WooCommerce connect/status/import/disconnect. */
