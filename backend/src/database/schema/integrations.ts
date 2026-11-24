@@ -28,7 +28,7 @@ export const integrations = pgTable(
       .notNull()
       .references(() => workspaces.id),
     provider: text('provider', {
-      enum: ['shopify', 'woocommerce', 'website_tracking', 'whatsapp'],
+      enum: ['shopify', 'woocommerce', 'website_tracking', 'whatsapp', 'flexype'],
     }).notNull(),
     status: text('status', { enum: ['connected', 'disconnected', 'syncing', 'error'] })
       .notNull()

@@ -16,7 +16,7 @@ export const commerceProducts = pgTable(
       .notNull()
       .references(() => integrations.id),
     provider: text('provider', {
-      enum: ['shopify', 'woocommerce', 'website_tracking', 'whatsapp'],
+      enum: ['shopify', 'woocommerce', 'website_tracking', 'whatsapp', 'flexype'],
     }).notNull(),
     /** Provider's own product id (Shopify `product.id`, etc.). */
     externalId: text('external_id').notNull(),

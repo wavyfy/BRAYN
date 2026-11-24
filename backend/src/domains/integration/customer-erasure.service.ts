@@ -88,6 +88,7 @@ export class CustomerErasureService {
         provider: commerceCustomers.provider,
         externalId: commerceCustomers.externalId,
         email: commerceCustomers.email,
+        phoneE164: commerceCustomers.phoneE164,
       };
       const linked = await tx
         .select(sourceColumns)
@@ -122,11 +123,17 @@ export class CustomerErasureService {
               )
           : [];
       const sources = [...linked, ...unresolved];
+      const phones = [
+        ...new Set(
+          sources.map((source) => source.phoneE164).filter((phone): phone is string => !!phone),
+        ),
+      ];
       const webhookPayloadsCleared = await this.clearWebhookPayloads(
         tx,
         workspaceId,
         sources,
         emails,
+        phones,
       );
       await this.eraseWebsiteIdentityData(tx, workspaceId, personIds, emails);
 
@@ -279,7 +286,8 @@ export class CustomerErasureService {
 
   /**
    * Clears the stored payload (and error) of every webhook row in this workspace that carries this person's data:
-   * customer events for their source records or emails, and order events linked to them (guest orders included).
+   * customer events for their source records or emails, order events linked to them (guest orders included), and
+   * checkout signals (FlexyPe) carrying one of their emails or E.164 phones.
    * Rows are kept so the provider's delivery id still de-duplicates a retry. Rows not yet processed are marked
    * processed — nothing is left to apply; a row a worker already claimed completes as a no-op (null payload).
    */
@@ -288,6 +296,7 @@ export class CustomerErasureService {
     workspaceId: string,
     sources: Array<{ integrationId: string; externalId: string }>,
     emails: string[],
+    phones: string[],
   ): Promise<number> {
     const byIntegration = new Map<string, string[]>();
     for (const source of sources) {
@@ -312,7 +321,14 @@ export class CustomerErasureService {
         sql`(
           (${t.payload}->>'resource' = 'customer' and lower(trim(${t.payload}->'data'->>'email')) in ${emails})
           or (${t.payload}->>'resource' = 'order' and lower(trim(${t.payload}->'data'->'guestCustomer'->>'email')) in ${emails})
+          or (${t.payload}->>'resource' = 'checkout' and ${t.payload}->'data'->>'email' in ${emails})
         )`,
+      );
+    }
+    // Checkout signals are stored with the phone already in E.164 (FlexyPeAdapter), the same form as `phone_e164`.
+    if (phones.length > 0) {
+      conditions.push(
+        sql`(${t.payload}->>'resource' = 'checkout' and ${t.payload}->'data'->>'phone' in ${phones})`,
       );
     }
     if (conditions.length === 0) {

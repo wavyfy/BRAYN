@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-/** Phase 1 integration sources (doc 06 — Integration Sources). */
-export const integrationProviders = ['shopify', 'woocommerce', 'website_tracking', 'whatsapp'] as const;
+/** Phase 1 integration sources (doc 06 — Integration Sources; FlexyPe = external checkout signal source). */
+export const integrationProviders = ['shopify', 'woocommerce', 'website_tracking', 'whatsapp', 'flexype'] as const;
 
 export const connectIntegrationSchema = z.object({
   provider: z.enum(integrationProviders),

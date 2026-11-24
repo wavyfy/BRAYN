@@ -22,7 +22,7 @@ export const commerceCollections = pgTable(
       .notNull()
       .references(() => integrations.id),
     provider: text('provider', {
-      enum: ['shopify', 'woocommerce', 'website_tracking', 'whatsapp'],
+      enum: ['shopify', 'woocommerce', 'website_tracking', 'whatsapp', 'flexype'],
     }).notNull(),
     /** Provider's own collection id (Shopify `collection.id`, etc.). */
     externalId: text('external_id').notNull(),

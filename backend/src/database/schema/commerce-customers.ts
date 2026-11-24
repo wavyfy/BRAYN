@@ -27,7 +27,7 @@ export const commerceCustomers = pgTable(
       .notNull()
       .references(() => integrations.id),
     provider: text('provider', {
-      enum: ['shopify', 'woocommerce', 'website_tracking', 'whatsapp'],
+      enum: ['shopify', 'woocommerce', 'website_tracking', 'whatsapp', 'flexype'],
     }).notNull(),
     /** Provider's own customer id (Shopify `customer.id`, etc.) — dedupe/sync key alongside workspace+provider. */
     externalId: text('external_id').notNull(),

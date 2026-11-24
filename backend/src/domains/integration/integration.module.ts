@@ -26,6 +26,9 @@ import { ShopifyUninstallController } from './providers/shopify/shopify-uninstal
 import { WooCommerceAdapter } from './providers/woocommerce/woocommerce.adapter';
 import { WooCommerceWebhookSetupService } from './providers/woocommerce/woocommerce-webhook-setup.service';
 import { WooCommerceWebhookSetupController } from './providers/woocommerce/woocommerce-webhook-setup.controller';
+import { FlexyPeAdapter } from './providers/flexype/flexype.adapter';
+import { FlexyPeWebhookSetupService } from './providers/flexype/flexype-webhook-setup.service';
+import { FlexyPeWebhookSetupController } from './providers/flexype/flexype-webhook-setup.controller';
 import { CustomerErasureController } from './customer-erasure.controller';
 import { CustomerErasureService } from './customer-erasure.service';
 import { ShopifyWebhookMigrationService } from './providers/shopify/shopify-webhook-migration.service';
@@ -60,6 +63,7 @@ import { ShopifyWebhookMigrationGuard } from './providers/shopify/shopify-webhoo
     ShopifyComplianceController,
     ShopifyUninstallController,
     WooCommerceWebhookSetupController,
+    FlexyPeWebhookSetupController,
     CustomerErasureController,
     ShopifyWebhookMigrationController,
   ],
@@ -83,6 +87,8 @@ import { ShopifyWebhookMigrationGuard } from './providers/shopify/shopify-webhoo
     ShopifyUninstallService,
     WooCommerceAdapter,
     WooCommerceWebhookSetupService,
+    FlexyPeAdapter,
+    FlexyPeWebhookSetupService,
     ShopifyWebhookMigrationService,
     ShopifyWebhookMigrationGuard,
   ],

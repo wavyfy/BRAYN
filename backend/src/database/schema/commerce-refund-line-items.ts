@@ -23,7 +23,7 @@ export const commerceRefundLineItems = pgTable(
       .references(() => commerceRefunds.id),
     orderLineItemId: uuid('order_line_item_id').references(() => commerceOrderLineItems.id),
     provider: text('provider', {
-      enum: ['shopify', 'woocommerce', 'website_tracking', 'whatsapp'],
+      enum: ['shopify', 'woocommerce', 'website_tracking', 'whatsapp', 'flexype'],
     }).notNull(),
     /** Provider's own refund line item id (Shopify `refund_line_item.id`, etc.). */
     externalId: text('external_id').notNull(),

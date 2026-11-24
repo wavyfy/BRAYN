@@ -6,7 +6,8 @@ import { DatabaseService } from '../../database/database.service';
 import { integrations } from '../../database/schema/integrations';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
 import { withRetry } from '../../common/async/retry';
-import type { DomainEvent } from '../../common/events/domain-event';
+import { createEvent, type DomainEvent } from '../../common/events/domain-event';
+import { EventBus } from '../../common/events/event-bus.service';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
 import { scrubSensitive } from '../../common/logging/scrub-sensitive';
 import { CustomerService } from '../commerce/customer.service';
@@ -53,6 +54,16 @@ function reviveDates(value: unknown, key = ''): unknown {
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, reviveDates(v, k)]));
   }
   return value;
+}
+
+/** `checkout.abandoned` (doc21): a checkout session ended without an order, with the last stage the provider reported. */
+export interface CheckoutAbandonedPayload {
+  integrationId: string;
+  checkoutSessionId: string;
+  stage: string;
+  occurredAt: string;
+  currency: string | null;
+  itemCount: number;
 }
 
 /** Wake-up signal only — the row it names is the actual work item. */
@@ -113,6 +124,7 @@ export class WebhookEventProcessorService implements OnModuleDestroy {
     private readonly collectionService: CollectionService,
     private readonly identityResolutionService: IdentityResolutionService,
     private readonly logger: StructuredLoggerService,
+    private readonly eventBus: EventBus,
   ) {}
 
   @OnEvent('integration.webhook.received')
@@ -329,6 +341,26 @@ export class WebhookEventProcessorService implements OnModuleDestroy {
         break;
       case 'collection':
         await this.collectionService.upsertMany(workspaceId, integrationId, provider, [payload.data]);
+        break;
+      case 'checkout':
+        // doc21 normalized integration event. No personal data and no customer id: linking to a customer happens only
+        // after identity resolution (later slice), and nothing consumes this event yet.
+        this.eventBus.emit(
+          createEvent<CheckoutAbandonedPayload>({
+            type: 'checkout.abandoned',
+            workspaceId,
+            entityId: payload.data.sessionId,
+            idempotencyKey: `${integrationId}:${payload.data.sessionId}`,
+            payload: {
+              integrationId,
+              checkoutSessionId: payload.data.sessionId,
+              stage: payload.data.stage,
+              occurredAt: new Date(payload.data.occurredAt).toISOString(),
+              currency: payload.data.currency,
+              itemCount: payload.data.items.reduce((sum, item) => sum + item.quantity, 0),
+            },
+          }),
+        );
         break;
     }
   }
