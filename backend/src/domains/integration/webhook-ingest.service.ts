@@ -79,8 +79,8 @@ export class WebhookIngestService {
     if (!parsed) {
       return { status: 'ignored' };
     }
-    if (parsed.storeDomain !== undefined) {
-      await this.requireWorkspaceStore(workspaceId, provider, parsed.storeDomain);
+    if (parsed.store !== undefined) {
+      await this.requireWorkspaceStore(workspaceId, provider, parsed.store);
     }
 
     // The durable row is both the dedup and the acknowledgement: once this
@@ -164,23 +164,29 @@ export class WebhookIngestService {
 
   /**
    * Workspace isolation for a signal source bound to a commerce store: the delivery's store must be this workspace's
-   * connected Shopify store. A valid secret alone isn't enough — a secret configured on another store's account (or a
+   * connected store on the provider the adapter names. A valid secret alone isn't enough — a secret configured on another store's account (or a
    * copy-paste between workspaces) would otherwise attach that store's shoppers to this workspace. Rejected before
    * anything is stored; the provider sees the failure in its delivery log.
    */
-  private async requireWorkspaceStore(workspaceId: string, provider: IntegrationProvider, storeDomain: string): Promise<void> {
-    const [shopify] = await this.database.client
+  private async requireWorkspaceStore(
+    workspaceId: string,
+    provider: IntegrationProvider,
+    store: { provider: IntegrationProvider; domain: string },
+  ): Promise<void> {
+    const [owner] = await this.database.client
       .select({ shopDomain: integrations.shopDomain, status: integrations.status })
       .from(integrations)
-      .where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, 'shopify')))
+      .where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, store.provider)))
       .limit(1);
-    const expected = shopify && shopify.status !== 'disconnected' ? shopify.shopDomain?.toLowerCase() : undefined;
+    const expected = owner && owner.status !== 'disconnected' ? owner.shopDomain?.toLowerCase() : undefined;
+    const storeDomain = store.domain;
     if (!expected || expected !== storeDomain.toLowerCase()) {
       this.logger.event('warn', 'Rejected webhook for a store that is not this workspace\'s connected Shopify store', 'WebhookIngestService', {
         workspaceId,
         provider,
         storeDomain,
-        reason: expected ? 'store_mismatch' : 'no_connected_shopify_store',
+        storeProvider: store.provider,
+        reason: expected ? 'store_mismatch' : 'no_connected_store',
       });
       throw new UnauthorizedError('This delivery is for a store that is not connected to this workspace.');
     }

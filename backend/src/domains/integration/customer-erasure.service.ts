@@ -7,6 +7,7 @@ import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { customerErasures } from '../../database/schema/customer-erasures';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
 import { checkoutSessions } from '../../database/schema/checkout-sessions';
+import { commerceOrders } from '../../database/schema/commerce-orders';
 import { websiteEvents } from '../../database/schema/website-events';
 import { websiteSessions } from '../../database/schema/website-sessions';
 import { websiteVisitors } from '../../database/schema/website-visitors';
@@ -137,7 +138,25 @@ export class CustomerErasureService {
         phones,
       );
       await this.eraseWebsiteIdentityData(tx, workspaceId, personIds, emails);
-      // Checkout signals (FlexyPe): linked to the person, or still unlinked but carrying one of their emails/phones.
+      // Checkout signals (FlexyPe): linked to the person, or still unlinked but carrying one of their emails/phones, or
+      // unlinked but tied to one of their own orders by the provider session id (read before the orders are deleted).
+      const orderSessionIds =
+        sources.length > 0
+          ? (
+              await tx
+                .selectDistinct({ id: commerceOrders.externalCheckoutSessionId })
+                .from(commerceOrders)
+                .where(
+                  and(
+                    eq(commerceOrders.workspaceId, workspaceId),
+                    inArray(
+                      commerceOrders.customerId,
+                      sources.map((source) => source.id),
+                    ),
+                  ),
+                )
+            ).flatMap((row) => (row.id ? [row.id] : []))
+          : [];
       await tx
         .delete(checkoutSessions)
         .where(
@@ -147,6 +166,12 @@ export class CustomerErasureService {
               inArray(checkoutSessions.canonicalCustomerId, personIds),
               emails.length > 0 ? inArray(checkoutSessions.email, emails) : undefined,
               phones.length > 0 ? inArray(checkoutSessions.phoneE164, phones) : undefined,
+              orderSessionIds.length > 0
+                ? and(
+                    inArray(checkoutSessions.externalSessionId, orderSessionIds),
+                    isNull(checkoutSessions.canonicalCustomerId),
+                  )
+                : undefined,
             ),
           ),
         );

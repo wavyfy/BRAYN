@@ -951,7 +951,7 @@ describe('IntegrationService', () => {
     }
 
     function makeService(tx: ReturnType<typeof makeTx>) {
-      const database = { transaction: vi.fn((fn: (tx: unknown) => unknown) => fn({ select: tx.select, delete: tx.delete, update: tx.update })) };
+      const database = { transaction: vi.fn((fn: (tx: unknown) => unknown) => fn({ select: tx.select, selectDistinct: vi.fn(() => makeChain([])), delete: tx.delete, update: tx.update })) }; // selectDistinct: the customer's order checkout-session ids (none here)
       return new IntegrationService(database as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
     }
 

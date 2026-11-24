@@ -296,16 +296,27 @@ export class IntegrationService {
         return { found: false, canonicalCustomerRemoved: false };
       }
 
+      // Unlinked checkout signals carrying this customer's email/phone, or tied to one of their orders by the provider
+      // session id, are the same person's data (linked ones go with the canonical customer below when it is orphaned).
+      // Order session ids are read before the orders are deleted.
+      const orderSessionIds = (
+        await tx
+          .selectDistinct({ id: commerceOrders.externalCheckoutSessionId })
+          .from(commerceOrders)
+          .where(and(eq(commerceOrders.workspaceId, workspaceId), eq(commerceOrders.customerId, customerRow.id)))
+      ).flatMap((row) => (row.id ? [row.id] : []));
       await this.deleteSourceCustomerWithOrders(tx, workspaceId, customerRow.id);
-      // Unlinked checkout signals carrying this customer's email/phone are the same person's data (linked ones go with
-      // the canonical customer below when it is orphaned).
       const email = customerRow.email?.trim().toLowerCase();
-      if (email || customerRow.phoneE164) {
+      if (email || customerRow.phoneE164 || orderSessionIds.length > 0) {
         await tx.delete(checkoutSessions).where(
           and(
             eq(checkoutSessions.workspaceId, workspaceId),
             isNull(checkoutSessions.canonicalCustomerId),
-            or(email ? eq(checkoutSessions.email, email) : undefined, customerRow.phoneE164 ? eq(checkoutSessions.phoneE164, customerRow.phoneE164) : undefined),
+            or(
+              email ? eq(checkoutSessions.email, email) : undefined,
+              customerRow.phoneE164 ? eq(checkoutSessions.phoneE164, customerRow.phoneE164) : undefined,
+              orderSessionIds.length > 0 ? inArray(checkoutSessions.externalSessionId, orderSessionIds) : undefined,
+            ),
           ),
         );
       }

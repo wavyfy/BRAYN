@@ -279,14 +279,12 @@ describe('Checkout sessions — identity, activity, privacy (real DB)', { timeou
       .insert(canonicalCustomers)
       .values({ workspaceId: ws.a, primaryEmail: 'survivor@example.com' })
       .returning();
-    await db.client
-      .insert(canonicalCustomers)
-      .values({
-        workspaceId: ws.a,
-        primaryEmail: 'merged.away@example.com',
-        mergedIntoId: survivor.id,
-        mergedAt: new Date(),
-      });
+    await db.client.insert(canonicalCustomers).values({
+      workspaceId: ws.a,
+      primaryEmail: 'merged.away@example.com',
+      mergedIntoId: survivor.id,
+      mergedAt: new Date(),
+    });
 
     const { sessionId } = await checkout(ws.a, { email: 'merged.away@example.com' });
 
@@ -429,5 +427,63 @@ describe('Checkout sessions — identity, activity, privacy (real DB)', { timeou
 
     expect(result.found).toBe(true);
     expect(await session(byPhone.sessionId)).toBeUndefined();
+  });
+  it('erasure also removes an unlinked session tied to the person only through their own order session id', async () => {
+    const erasure = moduleRef.get(CustomerErasureService);
+    const customerId = await shopifyCustomer(ws.a, 'c-erase-order', 'erase.by.order@example.com');
+    const typedOtherEmail = await checkout(ws.a, {
+      email: 'typed.differently@example.com',
+      phone_with_dial_code: null,
+    });
+    await shopifyOrder(ws.a, 'c-erase-order', 'order-erase-by-session', typedOtherEmail.sessionId);
+
+    await erasure.eraseCanonicalCustomer(ws.a, customerId, 'clerk_spec_owner');
+
+    expect(await session(typedOtherEmail.sessionId)).toBeUndefined();
+  });
+
+  it('retention also clears a stale checkout delivery that never finished processing (no copy outlives the window)', async () => {
+    const flexypeId = (await integrationService.listByWorkspace(ws.a)).find(
+      (i) => i.provider === 'flexype',
+    )!.id;
+    const old = new Date(Date.now() - 31 * 86_400_000);
+    const [stale] = await db.client
+      .insert(integrationWebhookEvents)
+      .values({
+        workspaceId: ws.a,
+        integrationId: flexypeId,
+        externalEventId: `stale-${randomUUID()}`,
+        eventType: 'ABANDONED_CHECKOUT',
+        status: 'dead_letter',
+        payload: {
+          resource: 'checkout',
+          data: { email: 'stuck@example.com', phone: '+919899999999' },
+        },
+        createdAt: old,
+      })
+      .returning();
+    const [fresh] = await db.client
+      .insert(integrationWebhookEvents)
+      .values({
+        workspaceId: ws.a,
+        integrationId: flexypeId,
+        externalEventId: `fresh-${randomUUID()}`,
+        eventType: 'ABANDONED_CHECKOUT',
+        status: 'dead_letter',
+        payload: { resource: 'checkout', data: { email: 'recent@example.com' } },
+      })
+      .returning();
+
+    await applyCheckoutSessionRetention(db.client, new Date(), 30);
+
+    const rows = await db.client
+      .select()
+      .from(integrationWebhookEvents)
+      .where(inArray(integrationWebhookEvents.id, [stale.id, fresh.id]));
+    expect(rows.find((r) => r.id === stale.id)).toMatchObject({
+      payload: null,
+      status: 'processed',
+    });
+    expect(rows.find((r) => r.id === fresh.id)).toMatchObject({ status: 'dead_letter' });
   });
 });

@@ -32,7 +32,7 @@ describe('FlexyPeAdapter', () => {
       expect(parsed).toEqual({
         externalEventId: 'evt_header_1',
         eventType: 'ABANDONED_CHECKOUT',
-        storeDomain: 'test-store.myshopify.com',
+        store: { provider: 'shopify', domain: 'test-store.myshopify.com' },
         payload: {
           resource: 'checkout',
           data: {

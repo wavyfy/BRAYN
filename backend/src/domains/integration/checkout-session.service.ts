@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { and, isNull, lt, or, sql } from 'drizzle-orm';
 import { DatabaseService } from '../../database/database.service';
 import { checkoutSessions } from '../../database/schema/checkout-sessions';
+import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
 import { ErasedIdentifierService, emailIdentifier } from '../commerce/erased-identifier.service';
 import {
   IdentityResolutionService,
@@ -97,7 +98,7 @@ export async function applyCheckoutSessionRetention(
   db: Db,
   now: Date,
   retentionDays: number,
-): Promise<{ linked: number; anonymized: number }> {
+): Promise<{ linked: number; anonymized: number; payloadsCleared: number }> {
   const linked = await linkUnresolvedCheckoutSessions(db);
   const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
   const anonymized = await db
@@ -114,5 +115,22 @@ export async function applyCheckoutSessionRetention(
       ),
     )
     .returning({ id: checkoutSessions.id });
-  return { linked, anonymized: anonymized.length };
+  // A checkout delivery that never completed processing (dead-lettered, or stuck) still holds its minimized payload —
+  // same window, so no copy outlives the session's own identifiers. Mirrors erasure: nothing left to apply.
+  const payloadsCleared = await db
+    .update(integrationWebhookEvents)
+    .set({
+      payload: null,
+      error: null,
+      status: sql`case when ${integrationWebhookEvents.status} in ('pending', 'dead_letter') then 'processed' else ${integrationWebhookEvents.status} end`,
+      processedAt: sql`coalesce(${integrationWebhookEvents.processedAt}, now())`,
+    })
+    .where(
+      and(
+        sql`${integrationWebhookEvents.payload}->>'resource' = 'checkout'`,
+        lt(integrationWebhookEvents.createdAt, cutoff),
+      ),
+    )
+    .returning({ id: integrationWebhookEvents.id });
+  return { linked, anonymized: anonymized.length, payloadsCleared: payloadsCleared.length };
 }

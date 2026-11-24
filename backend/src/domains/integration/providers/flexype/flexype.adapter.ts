@@ -87,7 +87,8 @@ export class FlexyPeAdapter implements ProviderAdapter, OnModuleInit {
       externalEventId: eventId.trim(),
       eventType,
       payload: { resource: 'checkout', data: signal },
-      storeDomain: signal.shopDomain,
+      // FlexyPe documents Shopify stores only (store.shopify_domain).
+      store: { provider: 'shopify', domain: signal.shopDomain },
     };
   }
 }
