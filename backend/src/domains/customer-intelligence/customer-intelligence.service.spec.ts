@@ -16,7 +16,8 @@ function makeChain(result: unknown) {
 
 function makeSelectQueue(results: unknown[]) {
   let i = 0;
-  return vi.fn(() => makeChain(results[i++]));
+  // Queries past the scripted ones (e.g. the checkout-session lookup at the end of getActivity) return no rows.
+  return vi.fn(() => makeChain(results[i++] ?? []));
 }
 
 const EMPTY_BEHAVIOURAL_CONTEXT = { eventsCount: 0, lastActivityAt: null, recentEvents: [] };
@@ -297,7 +298,8 @@ describe('CustomerIntelligenceService', () => {
       const result = await service.getActivity('ws_1', 'canon_1');
 
       expect(result).toEqual([]);
-      expect(select).toHaveBeenCalledTimes(3);
+      // canonical, source rows, linked visitors, checkout sessions (email-linked sessions need no source row) — no orders query.
+      expect(select).toHaveBeenCalledTimes(4);
     });
 
     it('includes website_activity entries for a linked visitor in the chronological history', async () => {

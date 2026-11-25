@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, ne, or, sql } from 'drizzle-orm';
 import { canonicalCustomers } from '../../database/schema/canonical-customers';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { commerceOrders, orderPlacedAt } from '../../database/schema/commerce-orders';
@@ -7,6 +7,7 @@ import { commerceRefunds } from '../../database/schema/commerce-refunds';
 import { commerceFulfillments } from '../../database/schema/commerce-fulfillments';
 import { websiteVisitors } from '../../database/schema/website-visitors';
 import { websiteEvents } from '../../database/schema/website-events';
+import { checkoutSessions } from '../../database/schema/checkout-sessions';
 import { commerceProducts } from '../../database/schema/commerce-products';
 import { commerceProductVariants } from '../../database/schema/commerce-product-variants';
 import { commerceOrderLineItems } from '../../database/schema/commerce-order-line-items';
@@ -132,7 +133,34 @@ export type ActivityEntry =
       status: string | null;
       shipmentStatus: string | null;
     }
-  | { type: 'website_activity'; occurredAt: Date; eventType: string };
+  | { type: 'website_activity'; occurredAt: Date; eventType: string }
+  /**
+   * A checkout session an external checkout provider (FlexyPe) reported as ended without an order. `stage` is the
+   * provider's last stage verbatim (no inferred payment outcome); `completedOrderExternalId` is the commerce order the
+   * platform later linked to this session (Shopify note attribute), if any. No amounts — never extra revenue.
+   * `attribution` is why this customer sees it: `order` — the session id is on one of this customer's own commerce
+   * orders (the documented checkout↔order link — it ties this session to that order, not proof of payment or of the
+   * shopper's identity); `email` — only the shopper-typed checkout email matched (unverified). See `withoutUnverifiedCheckouts` for consumers that must not use the latter.
+   */
+  | {
+      type: 'checkout_abandoned';
+      occurredAt: Date;
+      provider: string;
+      externalId: string;
+      stage: string;
+      completedOrderExternalId: string | null;
+      attribution: CheckoutAttribution;
+    };
+
+export type CheckoutAttribution = 'order' | 'email';
+
+/**
+ * Activity for consumers that turn it into AI text or decisions (AI read tools, AI customer summaries): drops checkout
+ * entries attributed only by an unverified, shopper-typed email. Order-linked checkout entries stay.
+ */
+export function withoutUnverifiedCheckouts(entries: ActivityEntry[]): ActivityEntry[] {
+  return entries.filter((entry) => entry.type !== 'checkout_abandoned' || entry.attribution === 'order');
+}
 
 interface SourceCustomerRow {
   id: string;
@@ -300,6 +328,7 @@ export class CustomerIntelligenceService {
               totalPrice: commerceOrders.totalPrice,
               placedAt: orderPlacedAt(),
               cancelledAt: commerceOrders.sourceCancelledAt,
+              checkoutSessionId: commerceOrders.externalCheckoutSessionId,
             })
             .from(commerceOrders)
             .where(and(eq(commerceOrders.workspaceId, workspaceId), inArray(commerceOrders.customerId, sourceCustomerIds)));
@@ -342,6 +371,11 @@ export class CustomerIntelligenceService {
     // customer records") applies to the query shape too: no final merge
     // can ever need more than ACTIVITY_LIMIT of them.
     const websiteActivity = await this.getRecentWebsiteEvents(workspaceId, visitorIds, ACTIVITY_LIMIT);
+    const checkouts = await this.getCheckoutSessions(
+      workspaceId,
+      canonicalCustomerId,
+      orders.flatMap((order) => (order.checkoutSessionId ? [order.checkoutSessionId] : [])),
+    );
 
     const entries: ActivityEntry[] = [
       ...sourceRows.flatMap((row): ActivityEntry[] =>
@@ -395,6 +429,17 @@ export class CustomerIntelligenceService {
           type: 'website_activity',
           occurredAt: event.occurredAt,
           eventType: event.eventType,
+        }),
+      ),
+      ...checkouts.map(
+        (checkout): ActivityEntry => ({
+          type: 'checkout_abandoned',
+          occurredAt: checkout.abandonedAt,
+          provider: checkout.provider,
+          externalId: checkout.externalSessionId,
+          stage: checkout.stage,
+          completedOrderExternalId: checkout.completedOrderExternalId,
+          attribution: checkout.attribution,
         }),
       ),
     ];
@@ -621,6 +666,59 @@ export class CustomerIntelligenceService {
       .where(and(eq(websiteVisitors.workspaceId, workspaceId), eq(websiteVisitors.canonicalCustomerId, canonicalCustomerId)));
 
     return rows.map((row) => row.id);
+  }
+
+  /**
+   * This customer's abandoned checkout sessions: linked to them (exact-email link, see CheckoutSessionService), or
+   * correlated through one of their own orders carrying the provider session id (Shopify "FlexyPe Session ID" — the
+   * documented link). For each, the workspace order (any customer's) that later carried the same session id, if any.
+   * Nothing is matched by name, amount or timing. Newest first, capped at ACTIVITY_LIMIT.
+   */
+  private async getCheckoutSessions(workspaceId: string, canonicalCustomerId: string, ownOrderSessionIds: string[]) {
+    const sessions = await this.database.client
+      .select({
+        provider: checkoutSessions.provider,
+        externalSessionId: checkoutSessions.externalSessionId,
+        stage: checkoutSessions.stage,
+        abandonedAt: checkoutSessions.abandonedAt,
+      })
+      .from(checkoutSessions)
+      .where(
+        and(
+          eq(checkoutSessions.workspaceId, workspaceId),
+          or(
+            eq(checkoutSessions.canonicalCustomerId, canonicalCustomerId),
+            // An order link never pulls in a session already linked to a different customer.
+            ownOrderSessionIds.length > 0
+              ? and(inArray(checkoutSessions.externalSessionId, ownOrderSessionIds), isNull(checkoutSessions.canonicalCustomerId))
+              : undefined,
+          ),
+        ),
+      )
+      .orderBy(desc(checkoutSessions.abandonedAt))
+      .limit(ACTIVITY_LIMIT);
+    if (sessions.length === 0) {
+      return [];
+    }
+    const completedOrders = await this.database.client
+      .select({ externalId: commerceOrders.externalId, checkoutSessionId: commerceOrders.externalCheckoutSessionId })
+      .from(commerceOrders)
+      .where(
+        and(
+          eq(commerceOrders.workspaceId, workspaceId),
+          inArray(
+            commerceOrders.externalCheckoutSessionId,
+            sessions.map((session) => session.externalSessionId),
+          ),
+        ),
+      );
+    const orderBySession = new Map(completedOrders.map((order) => [order.checkoutSessionId, order.externalId]));
+    const ownSessions = new Set(ownOrderSessionIds);
+    return sessions.map((session) => ({
+      ...session,
+      completedOrderExternalId: orderBySession.get(session.externalSessionId) ?? null,
+      attribution: (ownSessions.has(session.externalSessionId) ? 'order' : 'email') as CheckoutAttribution,
+    }));
   }
 
   /** Shared by `getBehaviouralContext` (limit 10) and `getActivity` (limit `ACTIVITY_LIMIT`) — same query, different caps. */

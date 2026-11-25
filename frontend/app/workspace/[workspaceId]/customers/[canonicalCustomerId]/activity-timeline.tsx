@@ -18,7 +18,17 @@ export type ActivityEntry =
       status: string | null;
       shipmentStatus: string | null;
     }
-  | { type: 'website_activity'; occurredAt: string; eventType: string };
+  | { type: 'website_activity'; occurredAt: string; eventType: string }
+  | {
+      type: 'checkout_abandoned';
+      occurredAt: string;
+      provider: string;
+      externalId: string;
+      stage: string;
+      completedOrderExternalId: string | null;
+      /** `order`: session id on this customer's own order; `email`: only the shopper-typed checkout email matched (unverified). */
+      attribution: 'order' | 'email';
+    };
 
 /** How many events show before the rest fold behind "Show earlier activity". */
 const VISIBLE_EVENTS = 12;
@@ -34,6 +44,7 @@ const typeStyle: Record<ActivityEntry['type'], { icon: ComponentType<SVGProps<SV
   fulfillment: { icon: ShipmentIcon, className: 'bg-subtle text-foreground/70 ring-border' },
   website_activity: { icon: CursorIcon, className: 'bg-info/10 text-info ring-info/20' },
   customer_created: { icon: UserPlusIcon, className: 'bg-subtle text-foreground/60 ring-border' },
+  checkout_abandoned: { icon: OrderIcon, className: 'bg-warning/10 text-warning ring-warning/20' },
 };
 
 function ActivityLabel({ entry }: { entry: ActivityEntry }) {
@@ -69,6 +80,18 @@ function ActivityLabel({ entry }: { entry: ActivityEntry }) {
         <span className="text-foreground">
           Refund processed
           {entry.totalRefunded && <span className="font-semibold tabular-nums"> · {entry.totalRefunded}</span>}
+        </span>
+      );
+    case 'checkout_abandoned':
+      // The provider's last stage, verbatim — never presented as a payment outcome.
+      return (
+        <span className="text-foreground">
+          Checkout not completed in <span className="capitalize">{entry.provider}</span>
+          <span className="text-muted-foreground"> · last step: {entry.stage.toLowerCase().replaceAll('_', ' ')}</span>
+          {entry.completedOrderExternalId && <span className="text-muted-foreground"> · order placed later</span>}
+          {entry.attribution === 'email' && (
+            <span className="text-warning" title="Matched only by the email typed at checkout — not verified"> · matched by checkout email (unverified)</span>
+          )}
         </span>
       );
     case 'fulfillment':

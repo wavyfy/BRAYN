@@ -3,7 +3,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { DatabaseService } from '../../database/database.service';
 import { integrations } from '../../database/schema/integrations';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
-import { ConflictError, NotFoundError, ProviderError, UnauthenticatedError } from '../../common/errors/app-error';
+import { ConflictError, NotFoundError, ProviderError, UnauthenticatedError, UnauthorizedError } from '../../common/errors/app-error';
 import { createEvent } from '../../common/events/domain-event';
 import { EventBus } from '../../common/events/event-bus.service';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
@@ -78,6 +78,9 @@ export class WebhookIngestService {
     const parsed = adapter.parseWebhookEvent(rawBody, headers);
     if (!parsed) {
       return { status: 'ignored' };
+    }
+    if (parsed.store !== undefined) {
+      await this.requireWorkspaceStore(workspaceId, provider, parsed.store);
     }
 
     // The durable row is both the dedup and the acknowledgement: once this
@@ -156,6 +159,36 @@ export class WebhookIngestService {
         workspaceId,
         error: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
+
+  /**
+   * Workspace isolation for a signal source bound to a commerce store: the delivery's store must be this workspace's
+   * connected store on the provider the adapter names. A valid secret alone isn't enough — a secret configured on another store's account (or a
+   * copy-paste between workspaces) would otherwise attach that store's shoppers to this workspace. Rejected before
+   * anything is stored; the provider sees the failure in its delivery log.
+   */
+  private async requireWorkspaceStore(
+    workspaceId: string,
+    provider: IntegrationProvider,
+    store: { provider: IntegrationProvider; domain: string },
+  ): Promise<void> {
+    const [owner] = await this.database.client
+      .select({ shopDomain: integrations.shopDomain, status: integrations.status })
+      .from(integrations)
+      .where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, store.provider)))
+      .limit(1);
+    const expected = owner && owner.status !== 'disconnected' ? owner.shopDomain?.toLowerCase() : undefined;
+    const storeDomain = store.domain;
+    if (!expected || expected !== storeDomain.toLowerCase()) {
+      this.logger.event('warn', 'Rejected webhook for a store that is not this workspace\'s connected Shopify store', 'WebhookIngestService', {
+        workspaceId,
+        provider,
+        storeDomain,
+        storeProvider: store.provider,
+        reason: expected ? 'store_mismatch' : 'no_connected_store',
+      });
+      throw new UnauthorizedError('This delivery is for a store that is not connected to this workspace.');
     }
   }
 

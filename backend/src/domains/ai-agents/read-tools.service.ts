@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { CustomerIntelligenceService } from '../customer-intelligence/customer-intelligence.service';
+import { CustomerIntelligenceService, withoutUnverifiedCheckouts } from '../customer-intelligence/customer-intelligence.service';
 import { UnauthorizedError, ValidationError } from '../../common/errors/app-error';
 import { RequestContext } from '../../common/logging/request-context';
 import { StructuredLoggerService } from '../../common/logging/structured-logger.service';
@@ -100,7 +100,8 @@ export class ReadToolsService {
       throw new UnauthorizedError('Your role does not permit accessing customer activity history.');
     }
 
-    const activity = await this.customerIntelligence.getActivity(workspaceId, customerId);
+    // The model never receives a checkout attributed only by an unverified, shopper-typed email.
+    const activity = withoutUnverifiedCheckouts(await this.customerIntelligence.getActivity(workspaceId, customerId));
     await this.recordAccess(workspaceId, customerId, actorRole);
     return JSON.stringify({ activity });
   }

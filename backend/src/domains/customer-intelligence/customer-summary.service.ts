@@ -6,7 +6,7 @@ import { DatabaseService } from '../../database/database.service';
 import { RequestContext } from '../../common/logging/request-context';
 import { NotFoundError, ProviderError, UnauthenticatedError } from '../../common/errors/app-error';
 import { AiGatewayService } from '../ai/ai-gateway.service';
-import { CustomerIntelligenceService, type ActivityEntry, type CustomerRecord } from './customer-intelligence.service';
+import { CustomerIntelligenceService, withoutUnverifiedCheckouts, type ActivityEntry, type CustomerRecord } from './customer-intelligence.service';
 import { CustomerContextBuilder } from './customer-context-builder.service';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -137,7 +137,8 @@ export class CustomerSummaryService {
       // No question: notes come out in recency order, so the input is stable.
       this.customerContext.build(workspaceId, canonicalCustomerId, ''),
     ]);
-    return buildSummaryInput(customer, activity, notes.block);
+    // AI text never states an unverified (email-only) checkout attribution as a fact.
+    return buildSummaryInput(customer, withoutUnverifiedCheckouts(activity), notes.block);
   }
 
   private requireUuid(canonicalCustomerId: string): void {

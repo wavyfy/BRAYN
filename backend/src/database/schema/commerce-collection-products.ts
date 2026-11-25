@@ -31,7 +31,7 @@ export const commerceCollectionProducts = pgTable(
       .notNull()
       .references(() => commerceProducts.id),
     provider: text('provider', {
-      enum: ['shopify', 'woocommerce', 'website_tracking', 'whatsapp'],
+      enum: ['shopify', 'woocommerce', 'website_tracking', 'whatsapp', 'flexype'],
     }).notNull(),
     /** Provider's own membership-link id (Shopify `collect.id`, etc.). */
     externalId: text('external_id').notNull(),

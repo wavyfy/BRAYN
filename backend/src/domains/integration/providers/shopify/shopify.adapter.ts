@@ -343,6 +343,10 @@ const SHOPIFY_ORDERS_QUERY = `
           createdAt
           updatedAt
           cancelledAt
+          customAttributes {
+            key
+            value
+          }
           lineItems(first: $lineItemsFirst) {
             edges {
               node {
@@ -892,6 +896,8 @@ interface ShopifyOrder {
   updated_at: string;
   /** Null unless the order was cancelled. Present on REST-shaped webhook payloads (orders/updated carries the cancellation). */
   cancelled_at?: string | null;
+  /** Checkout-added key/value pairs (REST `note_attributes`; GraphQL `Order.customAttributes`). Only the external checkout session id is read. */
+  note_attributes?: { name: string; value: string | null }[];
   line_items: ShopifyLineItem[];
   /** Embedded — Shopify has no top-level refunds list (doc 20 Shopify Phase 1 Data — "Refunds"); live refunds also arrive standalone via `refunds/create`. */
   refunds: ShopifyRefund[];
@@ -966,6 +972,7 @@ interface ShopifyGraphqlOrderNode {
   createdAt: string;
   updatedAt: string;
   cancelledAt: string | null;
+  customAttributes?: { key: string; value: string | null }[];
   lineItems: ShopifyGraphqlOrderLineItemsConnection;
   /** Plain list per Shopify's real schema, not a connection — see REFUNDS_PAGE_SIZE doc comment. */
   refunds: ShopifyGraphqlRefundNode[];
@@ -2098,10 +2105,22 @@ function graphqlOrderToRestShape(node: ShopifyGraphqlOrderNode, lineItemNodes: S
     created_at: node.createdAt,
     updated_at: node.updatedAt,
     cancelled_at: node.cancelledAt,
+    note_attributes: (node.customAttributes ?? []).map((attribute) => ({ name: attribute.key, value: attribute.value })),
     line_items: lineItemNodes.map(graphqlLineItemToRestShape),
     refunds: node.refunds.map(graphqlRefundToRestShape),
     fulfillments: node.fulfillments.map((fulfillment) => graphqlFulfillmentToRestShape(fulfillment, orderNumericId)),
   };
+}
+
+/**
+ * FlexyPe writes its checkout session id onto the Shopify order as a note attribute (docs.flexype.io/webhooks/event-
+ * triggers): `{ "name": "FlexyPe Session ID", "value": "<session_id>" }` — the documented order↔checkout link.
+ */
+export const FLEXYPE_SESSION_NOTE_ATTRIBUTE = 'FlexyPe Session ID';
+
+function externalCheckoutSessionId(order: ShopifyOrder): string | null {
+  const value = order.note_attributes?.find((attribute) => attribute.name === FLEXYPE_SESSION_NOTE_ATTRIBUTE)?.value?.trim();
+  return value ? value : null;
 }
 
 /** Shared with fetchOrders (list) and the orders/* webhooks (single record) — same Shopify payload shape either way. */
@@ -2113,6 +2132,7 @@ function normalizeOrder(order: ShopifyOrder): NormalizedOrder {
     sourceUpdatedAt: new Date(order.updated_at),
     sourceCreatedAt: order.created_at ? new Date(order.created_at) : null,
     sourceCancelledAt: order.cancelled_at ? new Date(order.cancelled_at) : null,
+    externalCheckoutSessionId: externalCheckoutSessionId(order),
     lineItems: order.line_items.map((item) => ({
       externalId: String(item.id),
       variantExternalId: item.variant_id !== null ? String(item.variant_id) : null,

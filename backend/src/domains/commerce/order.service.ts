@@ -74,6 +74,8 @@ export interface NormalizedOrder {
   sourceCreatedAt: Date | null;
   /** When the order was cancelled at the source, null if it isn't — see commerce_orders.sourceCancelledAt. */
   sourceCancelledAt?: Date | null;
+  /** External checkout session that produced the order, when the platform records a provider-documented link — see commerce_orders.externalCheckoutSessionId. */
+  externalCheckoutSessionId?: string | null;
   lineItems: NormalizedOrderLineItem[];
   refunds: NormalizedRefund[];
   fulfillments: NormalizedFulfillment[];
@@ -272,6 +274,7 @@ export class OrderService {
           sourceUpdatedAt: order.sourceUpdatedAt,
           sourceCreatedAt: order.sourceCreatedAt,
           sourceCancelledAt: order.sourceCancelledAt ?? null,
+          externalCheckoutSessionId: order.externalCheckoutSessionId ?? null,
         })),
       )
       .onConflictDoUpdate({
@@ -282,6 +285,8 @@ export class OrderService {
           sourceUpdatedAt: sql`excluded.source_updated_at`,
           sourceCreatedAt: sql`excluded.source_created_at`,
           sourceCancelledAt: sql`excluded.source_cancelled_at`,
+          // Never erased by a later version that lacks the attribute (e.g. a provider without it).
+          externalCheckoutSessionId: sql`coalesce(excluded.external_checkout_session_id, ${commerceOrders.externalCheckoutSessionId})`,
           updatedAt: new Date(),
         },
         // A stale row comes back from RETURNING with nothing — its line items/refunds/fulfillments are skipped with it.

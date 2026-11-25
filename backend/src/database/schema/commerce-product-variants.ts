@@ -25,7 +25,7 @@ export const commerceProductVariants = pgTable(
       .notNull()
       .references(() => commerceProducts.id),
     provider: text('provider', {
-      enum: ['shopify', 'woocommerce', 'website_tracking', 'whatsapp'],
+      enum: ['shopify', 'woocommerce', 'website_tracking', 'whatsapp', 'flexype'],
     }).notNull(),
     /** Provider's own variant id (Shopify `variant.id`, etc.). */
     externalId: text('external_id').notNull(),
