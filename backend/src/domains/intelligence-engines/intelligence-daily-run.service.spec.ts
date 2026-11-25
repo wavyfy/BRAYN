@@ -7,6 +7,14 @@ import type { CustomerHealthService } from './customer-health.service';
 import type { RevenueOpportunityService } from './revenue-opportunity.service';
 import type { RecommendationService } from './recommendation.service';
 
+// Retention maintenance is its own module; stubbed here so each test states its outcome explicitly (it used to fail
+// silently against this mock DB).
+const { applyRetention } = vi.hoisted(() => ({ applyRetention: vi.fn() }));
+vi.mock('../integration/checkout-session.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../integration/checkout-session.service')>()),
+  applyCheckoutSessionRetention: applyRetention,
+}));
+
 const RUN_STARTED = new Date('2026-11-01T08:00:00Z');
 const run = { id: 'run_1', status: 'running', startedAt: RUN_STARTED, heartbeatAt: RUN_STARTED } as IntelligenceDailyRun;
 
@@ -16,6 +24,7 @@ function keys(count: number, prefix = 'c') {
 
 /** execute() only issues `update(...).set(...).where(...)` against the run row. */
 function setup(pages: { workspaceId: string; id: string }[][], findCurrent: (id: string) => unknown = () => null) {
+  applyRetention.mockReset().mockResolvedValue({ linked: 0, anonymized: 0, payloadsCleared: 0, deleted: 0 });
   const sets: Record<string, unknown>[] = [];
   const lease = { rows: [{ id: 'run_1' }] as { id: string }[] };
   const client = {
@@ -48,6 +57,18 @@ function setup(pages: { workspaceId: string; id: string }[][], findCurrent: (id:
 }
 
 describe('IntelligenceDailyRunService.execute()', () => {
+  it('records a retention-maintenance failure on the run (prefixed) without failing the intelligence run', async () => {
+    const t = setup([keys(1)]);
+    applyRetention.mockRejectedValueOnce(new Error('relation "checkout_sessions" does not exist'));
+
+    await t.service.execute(run);
+
+    expect(t.health.recalculate).toHaveBeenCalledTimes(1);
+    expect(t.final()).toMatchObject({ status: 'succeeded', error: 'retention: relation "checkout_sessions" does not exist', customersFailed: 0 });
+    expect(t.logger.event).toHaveBeenCalledWith('error', 'Checkout session retention failed', 'IntelligenceDailyRunService', expect.objectContaining({ runId: 'run_1' }));
+  });
+
+
   it('recalculates (emit only on change), evaluates opportunities and generates recommendations for every customer → succeeded', async () => {
     const t = setup([keys(2)]);
 

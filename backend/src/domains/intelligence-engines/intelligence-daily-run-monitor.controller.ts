@@ -19,7 +19,9 @@ export class IntelligenceDailyRunMonitorController {
   @Get()
   async freshness(@Res({ passthrough: true }) reply: FastifyReply) {
     const freshness = await this.dailyRunService.getFreshness();
-    reply.status(freshness.fresh ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE);
+    // Never cached by a proxy or the monitor: every poll must reflect the database.
+    reply.header('Cache-Control', 'no-store');
+    reply.status(freshness.healthy ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE);
     return freshness;
   }
 }
