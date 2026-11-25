@@ -139,8 +139,8 @@ export type ActivityEntry =
    * provider's last stage verbatim (no inferred payment outcome); `completedOrderExternalId` is the commerce order the
    * platform later linked to this session (Shopify note attribute), if any. No amounts — never extra revenue.
    * `attribution` is why this customer sees it: `order` — the session id is on one of this customer's own commerce
-   * orders (documented provider link, corroborated); `email` — only the shopper-typed checkout email matched
-   * (unverified). See `withoutUnverifiedCheckouts` for consumers that must not use the latter.
+   * orders (the documented checkout↔order link — it ties this session to that order, not proof of payment or of the
+   * shopper's identity); `email` — only the shopper-typed checkout email matched (unverified). See `withoutUnverifiedCheckouts` for consumers that must not use the latter.
    */
   | {
       type: 'checkout_abandoned';
@@ -156,7 +156,7 @@ export type CheckoutAttribution = 'order' | 'email';
 
 /**
  * Activity for consumers that turn it into AI text or decisions (AI read tools, AI customer summaries): drops checkout
- * entries attributed only by an unverified, shopper-typed email. Order-corroborated checkout entries stay.
+ * entries attributed only by an unverified, shopper-typed email. Order-linked checkout entries stay.
  */
 export function withoutUnverifiedCheckouts(entries: ActivityEntry[]): ActivityEntry[] {
   return entries.filter((entry) => entry.type !== 'checkout_abandoned' || entry.attribution === 'order');
