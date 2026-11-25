@@ -846,6 +846,20 @@ describe('ShopifyAdapter', () => {
       return jsonResponse(200, { data: { order: { lineItems: { edges: nodes.map((node) => ({ node })), pageInfo } } } });
     }
 
+    it('requests Order.customAttributes and maps "FlexyPe Session ID" to externalCheckoutSessionId', async () => {
+      const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () =>
+        graphqlOrdersResponse([orderNode({ customAttributes: [{ key: 'FlexyPe Session ID', value: 'sess_gql' }] })]),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+      const page = await adapter.fetchOrders({ shopDomain: 'acme.myshopify.com', accessToken: 'shpat_123' });
+
+      expect(page.orders[0].externalCheckoutSessionId).toBe('sess_gql');
+      const query = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).query as string;
+      expect(query).toMatch(/customAttributes\s*{\s*key\s+value\s*}/);
+    });
+
     it('requests the first page over GraphQL and normalizes orders with line items (order/variant GID -> numeric externalId, money unwrapped)', async () => {
       const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => graphqlOrdersResponse([orderNode()]));
       vi.stubGlobal('fetch', fetchMock);
@@ -863,6 +877,7 @@ describe('ShopifyAdapter', () => {
             // Order.createdAt (checkout time), not updatedAt — the order-placed time.
             sourceCreatedAt: new Date('2025-12-20T10:00:00Z'),
             sourceCancelledAt: null,
+            externalCheckoutSessionId: null,
             lineItems: [{ externalId: '9001', variantExternalId: '901', quantity: 2, price: '9.99' }],
             refunds: [],
             fulfillments: [],
@@ -2156,6 +2171,17 @@ describe('ShopifyAdapter', () => {
 
       expect(parse({ ...order, cancelled_at: '2026-01-02T00:00:00Z' })?.payload).toMatchObject({ data: { sourceCancelledAt: new Date('2026-01-02T00:00:00Z') } });
       expect(parse({ ...order, cancelled_at: null })?.payload).toMatchObject({ data: { sourceCancelledAt: null } });
+    });
+
+    it('reads the external checkout session id only from the documented "FlexyPe Session ID" note attribute', () => {
+      const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+      const order = { id: 903, customer: null, total_price: '19.99', created_at: '2025-11-02T09:15:00Z', updated_at: '2026-01-02T00:00:00Z', line_items: [] };
+      const parse = (body: object) => adapter.parseWebhookEvent(JSON.stringify(body), { 'x-shopify-topic': 'orders/create', 'x-shopify-webhook-id': 'wh_evt_fp' });
+
+      expect(parse({ ...order, note_attributes: [{ name: 'gift', value: 'yes' }, { name: 'FlexyPe Session ID', value: ' sess_42 ' }] })?.payload).toMatchObject({ data: { externalCheckoutSessionId: 'sess_42' } });
+      expect(parse({ ...order, note_attributes: [{ name: 'flexype session id', value: 'sess_x' }, { name: 'Session', value: 'sess_y' }] })?.payload).toMatchObject({ data: { externalCheckoutSessionId: null } });
+      expect(parse({ ...order, note_attributes: [{ name: 'FlexyPe Session ID', value: '' }] })?.payload).toMatchObject({ data: { externalCheckoutSessionId: null } });
+      expect(parse(order)?.payload).toMatchObject({ data: { externalCheckoutSessionId: null } });
     });
 
     it('normalizes a refunds/create delivery — bare refund plus order_id, same refund shape as an order-embedded refund', () => {

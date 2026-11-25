@@ -31,7 +31,7 @@ export const commerceFulfillments = pgTable(
       .notNull()
       .references(() => commerceOrders.id),
     provider: text('provider', {
-      enum: ['shopify', 'woocommerce', 'website_tracking', 'whatsapp'],
+      enum: ['shopify', 'woocommerce', 'website_tracking', 'whatsapp', 'flexype'],
     }).notNull(),
     /** Provider's own fulfillment id (Shopify `fulfillment.id`, etc.). */
     externalId: text('external_id').notNull(),

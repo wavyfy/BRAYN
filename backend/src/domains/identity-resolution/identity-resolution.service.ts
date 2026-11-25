@@ -19,6 +19,7 @@ import {
   type IdentityReviewSignal,
 } from '../../database/schema/canonical-customer-duplicates';
 import { websiteVisitors } from '../../database/schema/website-visitors';
+import { checkoutSessions } from '../../database/schema/checkout-sessions';
 import { DatabaseService } from '../../database/database.service';
 import { lockErasureShared } from '../commerce/erased-identifier.service';
 import { RequestContext } from '../../common/logging/request-context';
@@ -214,6 +215,20 @@ export class IdentityResolutionService {
       .where(eq(websiteVisitors.id, visitor.id));
   }
 
+  /**
+   * The EXISTING canonical customer (a merged one resolves to its survivor) whose primary email is exactly `email`
+   * (already trimmed + lower-cased) in this workspace, or null. Never creates one. Used to link external checkout
+   * sessions (doc09 Matching Rules — external checkout signals); runs on the caller's transaction.
+   */
+  async findExistingCustomerIdByEmail(db: NodePgDatabase, workspaceId: string, email: string): Promise<string | null> {
+    const [canonical] = await db
+      .select({ id: canonicalCustomers.id, mergedIntoId: canonicalCustomers.mergedIntoId })
+      .from(canonicalCustomers)
+      .where(and(eq(canonicalCustomers.workspaceId, workspaceId), eq(canonicalCustomers.primaryEmail, email)))
+      .limit(1);
+    return canonical ? (canonical.mergedIntoId ?? canonical.id) : null;
+  }
+
   /** Pending review candidates (duplicates and conflicts) for a workspace — the review surface doc09's "Detection" bullet asks for. */
   async listDuplicates(workspaceId: string) {
     return this.database.client
@@ -398,6 +413,7 @@ export class IdentityResolutionService {
 
       await tx.update(commerceCustomers).set({ canonicalCustomerId: surviving.id, updatedAt: now }).where(fromMerged(commerceCustomers));
       await tx.update(websiteVisitors).set({ canonicalCustomerId: surviving.id, updatedAt: now }).where(fromMerged(websiteVisitors));
+      await tx.update(checkoutSessions).set({ canonicalCustomerId: surviving.id, updatedAt: now }).where(fromMerged(checkoutSessions));
       await tx.update(conversations).set({ canonicalCustomerId: surviving.id, updatedAt: now }).where(fromMerged(conversations));
       // Memory moves as-is (all statuses): updatedAt is pinned so it keeps meaning "content last changed", not "merged".
       await tx
@@ -568,4 +584,22 @@ export class IdentityResolutionService {
 
 function normalizeEmail(email: string | null): string | null {
   return email ? email.trim().toLowerCase() : null;
+}
+
+/**
+ * Late link for external checkout sessions (all workspaces; daily job): an unlinked session whose email now belongs to
+ * an existing canonical customer in the SAME workspace is linked to it (or its merge survivor), and the session's
+ * identifiers are cleared — the same exact-email, never-phone, never-create rule as at ingestion. Returns rows linked.
+ */
+export async function linkUnresolvedCheckoutSessions(db: NodePgDatabase): Promise<number> {
+  const result = await db.execute(sql`
+    update ${checkoutSessions} s
+    set canonical_customer_id = coalesce(c.merged_into_id, c.id), email = null, phone_e164 = null, updated_at = now()
+    from ${canonicalCustomers} c
+    where s.canonical_customer_id is null
+      and s.email is not null
+      and c.workspace_id = s.workspace_id
+      and c.primary_email = s.email
+  `);
+  return result.rowCount ?? 0;
 }

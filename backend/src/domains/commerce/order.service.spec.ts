@@ -103,6 +103,7 @@ describe('OrderService', () => {
           sourceUpdatedAt: order.sourceUpdatedAt,
           sourceCreatedAt: order.sourceCreatedAt,
           sourceCancelledAt: null,
+          externalCheckoutSessionId: null,
         },
       ]);
       expect(lineItemChain.values).toHaveBeenCalledWith([

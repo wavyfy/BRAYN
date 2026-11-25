@@ -24,7 +24,7 @@ export const commerceOrderLineItems = pgTable(
       .references(() => commerceOrders.id),
     variantId: uuid('variant_id').references(() => commerceProductVariants.id),
     provider: text('provider', {
-      enum: ['shopify', 'woocommerce', 'website_tracking', 'whatsapp'],
+      enum: ['shopify', 'woocommerce', 'website_tracking', 'whatsapp', 'flexype'],
     }).notNull(),
     /** Provider's own line item id (Shopify `line_item.id`, etc.). */
     externalId: text('external_id').notNull(),

@@ -10,6 +10,33 @@ export interface ParsedWebhookEvent {
   externalEventId: string;
   eventType: string;
   payload: unknown;
+  /**
+   * The commerce store the delivery says it belongs to, for a signal-only source bound to a commerce store (FlexyPe →
+   * its Shopify store). When set, WebhookIngestService accepts the delivery only if the workspace's connected
+   * `store.provider` integration has this store domain. Omitted → no store check. The adapter names the provider; the
+   * core pipeline assumes none.
+   */
+  store?: { provider: IntegrationProvider; domain: string };
+}
+
+/**
+ * A checkout lifecycle signal from an external checkout source (doc06 "External Checkout & Payment Signal Sources";
+ * doc21 "External Checkout & Payment Lifecycle Events"). Signal only: never a commerce order or customer record.
+ * Personal data is limited to the two identifiers identity linking may use (email, E.164 phone).
+ */
+export interface NormalizedCheckoutSignal {
+  kind: 'abandoned';
+  /** Provider checkout session id — the correlation key to the commerce order (FlexyPe: order note attribute "FlexyPe Session ID"). */
+  sessionId: string;
+  /** Last lifecycle stage the provider reports, verbatim (e.g. FlexyPe `PAYMENT_INITIATED`) — never upgraded to a more specific payment outcome. */
+  stage: string;
+  occurredAt: string;
+  shopDomain: string;
+  currency: string | null;
+  email: string | null;
+  phone: string | null;
+  customerType: 'NEW' | 'REPEAT' | null;
+  items: Array<{ productExternalId: string | null; variantExternalId: string | null; quantity: number; totalPrice: string | null }>;
 }
 
 /**
@@ -25,7 +52,8 @@ export type WebhookResourceEvent =
   | { resource: 'order'; data: NormalizedOrder }
   | { resource: 'fulfillment'; data: NormalizedFulfillment & { orderExternalId: string } }
   | { resource: 'refund'; data: NormalizedRefund & { orderExternalId: string } }
-  | { resource: 'collection'; data: NormalizedCollection };
+  | { resource: 'collection'; data: NormalizedCollection }
+  | { resource: 'checkout'; data: NormalizedCheckoutSignal };
 
 export function isWebhookResourceEvent(value: unknown): value is WebhookResourceEvent {
   return typeof value === 'object' && value !== null && 'resource' in value && 'data' in value;
