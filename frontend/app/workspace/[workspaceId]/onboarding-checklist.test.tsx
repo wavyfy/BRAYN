@@ -54,6 +54,19 @@ describe('OnboardingChecklist', () => {
     expect(screen.getByRole('link', { name: 'Go to import' })).toBeTruthy();
   });
 
+  it('a connection in error points to Integrations, not to connecting again', () => {
+    const state = deriveOnboarding([{ provider: 'shopify', status: 'error' }], {
+      status: 'succeeded',
+      recordsImported: 4,
+      recordsFailed: 0,
+      error: null,
+    });
+    render(<OnboardingChecklist workspaceId="ws_1" state={state} canManage />);
+
+    expect(screen.queryByRole('link', { name: 'Connect Shopify' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Open integrations' })).toBeTruthy();
+  });
+
   it('an import in progress offers no duplicate start action', () => {
     const state = deriveOnboarding([{ provider: 'shopify', status: 'connected' }], {
       status: 'running',

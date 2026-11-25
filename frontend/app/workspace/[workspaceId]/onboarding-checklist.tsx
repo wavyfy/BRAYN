@@ -105,7 +105,7 @@ export function OnboardingChecklist({
         <div className="mt-4">
           {canManage ? (
             <LinkButton href={integrationsHref} size="sm">
-              {current.key === 'connect'
+              {current.key === 'connect' && current.state === 'current'
                 ? 'Connect Shopify'
                 : current.key === 'import' && current.state !== 'in_progress'
                   ? 'Go to import'

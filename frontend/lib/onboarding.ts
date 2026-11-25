@@ -105,7 +105,9 @@ export function deriveOnboarding(
     };
   } else {
     const failed =
-      commerceImport.recordsFailed > 0 ? ` ${commerceImport.recordsFailed} records failed.` : '';
+      commerceImport.recordsFailed > 0
+        ? ` ${commerceImport.recordsFailed} ${commerceImport.recordsFailed === 1 ? 'record' : 'records'} failed.`
+        : '';
     importStep = {
       key: 'import',
       state: 'error',

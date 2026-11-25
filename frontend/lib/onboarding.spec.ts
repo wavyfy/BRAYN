@@ -64,6 +64,14 @@ describe('deriveOnboarding', () => {
     }
   });
 
+  it('uses the singular for one failed record', () => {
+    const result = deriveOnboarding(
+      [{ provider: 'shopify', status: 'connected' }],
+      run('partial', 5, 1),
+    );
+    expect(result.steps[1]!.detail).toContain(' 1 record failed.');
+  });
+
   it('a successful import with zero records still completes onboarding (an empty store is a valid store)', () => {
     const result = deriveOnboarding(
       [{ provider: 'shopify', status: 'connected' }],
