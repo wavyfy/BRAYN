@@ -119,6 +119,11 @@ export const envSchema = z.object({
   // both backends only for a migration window, then remove it.
   SHOPIFY_WEBHOOK_MIGRATION_SECRET: z.string().min(32).optional(),
 
+  // Bearer secret for the read-only daily-run freshness check polled by an external uptime monitor (missed-run
+  // alerting that doesn't depend on the scheduler it watches). Deliberately separate from the cron secret: the monitor
+  // can read freshness but never start a run. Unset → that endpoint answers 503 (fail closed).
+  BRAYN_MONITOR_SECRET: z.string().min(32).optional(),
+
   // Keys the HMACs of erased customers' identifiers (ErasedIdentifierService). Dedicated — never the credential
   // encryption key. Unset → customer erasure fails closed (503), and ingestion fails closed for any workspace that
   // already has erased identifiers. Do NOT rotate: stored HMACs can't be re-keyed, so a new value makes ingestion

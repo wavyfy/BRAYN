@@ -25,6 +25,29 @@ export function startOfUtcDay(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 }
 
+/** By this hour (UTC) a run must have succeeded today; the scheduler's first slot is 02:17, so one slot may slip. */
+export const DAILY_RUN_FRESHNESS_DEADLINE_HOURS = 6;
+const HOUR_MS = 60 * 60 * 1000;
+
+export type DailyRunFreshnessReason = 'succeeded_today' | 'awaiting_today' | 'missed_today' | 'never_succeeded';
+
+/**
+ * Missed-run detection (Nov 25, 2026: GitHub dropped every scheduled slot of a UTC day). Fresh = a run that started
+ * today has succeeded, or it is still before the deadline and yesterday's run succeeded. A reused older run never
+ * counts, because only `startedAt` of a succeeded run is considered.
+ */
+export function evaluateDailyRunFreshness(lastSucceededStartedAt: Date | null, now: Date): { fresh: boolean; reason: DailyRunFreshnessReason } {
+  const dayStart = startOfUtcDay(now).getTime();
+  if (lastSucceededStartedAt && lastSucceededStartedAt.getTime() >= dayStart) {
+    return { fresh: true, reason: 'succeeded_today' };
+  }
+  const beforeDeadline = now.getTime() < dayStart + DAILY_RUN_FRESHNESS_DEADLINE_HOURS * HOUR_MS;
+  if (beforeDeadline && lastSucceededStartedAt && lastSucceededStartedAt.getTime() >= dayStart - 24 * HOUR_MS) {
+    return { fresh: true, reason: 'awaiting_today' };
+  }
+  return { fresh: false, reason: lastSucceededStartedAt ? 'missed_today' : 'never_succeeded' };
+}
+
 /**
  * Daily intelligence run (doc10 — "Daily recalculation as a consistency
  * mechanism"; Milestone #5 D2/D3/D5 daily part). Triggered by an external
@@ -80,6 +103,25 @@ export class IntelligenceDailyRunService {
       });
     }
     return result;
+  }
+
+  /** Freshness for the external monitor: timestamps and statuses only, no customer data. */
+  async getFreshness(now = new Date()) {
+    const runs = intelligenceDailyRuns;
+    const [lastSucceeded] = await this.database.client
+      .select({ startedAt: runs.startedAt })
+      .from(runs)
+      .where(eq(runs.status, 'succeeded'))
+      .orderBy(desc(runs.startedAt))
+      .limit(1);
+    const [latest] = await this.database.client.select({ status: runs.status, startedAt: runs.startedAt }).from(runs).orderBy(desc(runs.startedAt)).limit(1);
+    return {
+      ...evaluateDailyRunFreshness(lastSucceeded?.startedAt ?? null, now),
+      checkedAt: now.toISOString(),
+      lastSucceededRunStartedAt: lastSucceeded?.startedAt.toISOString() ?? null,
+      latestRunStatus: latest?.status ?? null,
+      latestRunStartedAt: latest?.startedAt.toISOString() ?? null,
+    };
   }
 
   async getLatest(): Promise<IntelligenceDailyRun> {
