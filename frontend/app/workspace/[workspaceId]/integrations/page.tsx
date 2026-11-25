@@ -3,7 +3,7 @@ import { apiFetch, ApiError } from '@/lib/api';
 import { Card } from '@/components/ui/card';
 import { ApiErrorState } from '@/components/api-error-state';
 import { PageBody, PageHeader } from '@/components/ui/page-header';
-import { StatusDot, type BadgeTone } from '@/components/ui/status-badge';
+import { StatusBadge, StatusDot, type BadgeTone } from '@/components/ui/status-badge';
 import { ConnectForm } from './connect-form';
 import { ShopifyConnect } from './shopify-connect';
 import { IntegrationActions, type ImportRun } from './integration-actions';
@@ -43,6 +43,7 @@ function ProviderCard({
   connect,
   manage,
   setup,
+  comingSoon = false,
 }: {
   workspaceId: string;
   provider: string;
@@ -56,6 +57,11 @@ function ProviderCard({
   manage?: ReactNode;
   /** Extra provider-specific setup shown under the import/sync controls (WooCommerce webhooks). */
   setup?: ReactNode;
+  /**
+   * Launch readiness (onboarding v1): not yet available for new connections. No connect action is offered; an
+   * existing connection keeps its controls and is labelled not yet verified.
+   */
+  comingSoon?: boolean;
 }) {
   const isLive = integration && integration.status !== 'disconnected';
   const status = integration?.status ?? 'disconnected';
@@ -72,12 +78,23 @@ function ProviderCard({
             <p className="mt-0.5 text-[13px] text-muted-foreground">{description}</p>
           </div>
         </div>
-        <StatusDot tone={statusTone[status]} className="shrink-0 capitalize">
-          {status}
-        </StatusDot>
+        {comingSoon && !isLive ? (
+          <StatusBadge tone="neutral" className="shrink-0">
+            Coming soon
+          </StatusBadge>
+        ) : (
+          <StatusDot tone={statusTone[status]} className="shrink-0 capitalize">
+            {status}
+          </StatusDot>
+        )}
       </div>
       <div className="flex-1 border-t border-border bg-subtle/40 px-5 py-4">
-        {!canManage ? (
+        {comingSoon && isLive && (
+          <p className="mb-3 text-[13px] text-warning">Not yet verified with a real store — existing connection kept as is.</p>
+        )}
+        {comingSoon && !isLive ? (
+          <p className="text-[13px] text-muted-foreground">Coming soon. {providerLabel} support is being verified with real stores before it opens for new connections.</p>
+        ) : !canManage ? (
           <p className="text-[13px] text-muted-foreground">{isLive ? `Connected. Ask an owner or admin to manage this integration.` : 'Not connected.'}</p>
         ) : isLive && manage ? (
           manage
@@ -108,6 +125,8 @@ const OAUTH_ERROR_REASONS: Record<string, string> = {
   missing_code: 'Shopify did not send an authorization code.',
   token_exchange_failed: 'Shopify rejected the authorization code.',
   verification_failed: 'The new access token could not be verified against your store.',
+  different_store: 'This workspace still holds data from a different Shopify store. Use a new workspace for this store.',
+  webhook_registration_failed: 'Shopify connected, but its webhook subscriptions could not be registered. Connect again to retry.',
 };
 
 /** Doc19 Phase 8 — Integration Connection UI: Shopify + WooCommerce connect/status/import/disconnect. */
@@ -165,6 +184,8 @@ export default async function IntegrationsPage(props: {
           </p>
         )}
 
+      <h2 className="text-sm font-semibold text-foreground">Commerce platform</h2>
+      <p className="-mt-2 text-[13px] text-muted-foreground">Choose the platform your store runs on. BRAYN needs one connected store for customer intelligence.</p>
       <div className="grid grid-cols-1 items-stretch gap-5 xl:grid-cols-2">
         <ProviderCard
           workspaceId={workspaceId}
@@ -185,6 +206,7 @@ export default async function IntegrationsPage(props: {
           integration={woocommerce}
           latestImport={woocommerceImport}
           canManage={canManage}
+          comingSoon
           connect={
             <ConnectForm
               workspaceId={workspaceId}
@@ -200,6 +222,11 @@ export default async function IntegrationsPage(props: {
           setup={woocommerceWebhookSettings && <WooCommerceWebhookSetup workspaceId={workspaceId} settings={woocommerceWebhookSettings} />}
         />
 
+      </div>
+
+      <h2 className="pt-2 text-sm font-semibold text-foreground">Optional</h2>
+      <p className="-mt-2 text-[13px] text-muted-foreground">Extra signals that enrich customer intelligence. None of these is required.</p>
+      <div className="grid grid-cols-1 items-stretch gap-5 xl:grid-cols-2">
         <ProviderCard
           workspaceId={workspaceId}
           provider="website_tracking"
@@ -211,6 +238,23 @@ export default async function IntegrationsPage(props: {
           connect={<WebsiteTrackingConnect workspaceId={workspaceId} />}
           manage={websiteTrackingSettings && <WebsiteTrackingSetup workspaceId={workspaceId} settings={websiteTrackingSettings} />}
         />
+
+        <Card className="flex flex-col" aria-label="Checkout provider">
+          <div className="flex items-start justify-between gap-4 px-5 pb-4 pt-5">
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-foreground">Checkout provider</h2>
+              <p className="mt-0.5 text-[13px] text-muted-foreground">
+                Abandoned-checkout signals from a third-party checkout such as FlexyPe, if your store uses one.
+              </p>
+            </div>
+            <StatusBadge tone="neutral" className="shrink-0">
+              Coming soon
+            </StatusBadge>
+          </div>
+          <div className="flex-1 border-t border-border bg-subtle/40 px-5 py-4">
+            <p className="text-[13px] text-muted-foreground">Optional — not needed to use BRAYN with your store. Setup will appear here when available.</p>
+          </div>
+        </Card>
       </div>
       </PageBody>
     </main>
