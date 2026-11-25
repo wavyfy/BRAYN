@@ -31,6 +31,7 @@ function makeLogger(): StructuredLoggerService {
 
 function makeIntegrationService(overrides: Partial<IntegrationService> = {}): IntegrationService {
   return {
+    prepareStoreConnection: vi.fn(async () => 'ok' as const),
     connect: vi.fn(async () => ({})),
     setCredentials: vi.fn(async () => undefined),
     setSetupError: vi.fn(async () => undefined),
@@ -514,6 +515,19 @@ describe('ShopifyOAuthService', () => {
         expect(adapter.ensureWebhookSubscriptions).toHaveBeenCalledTimes(2);
         expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=connected');
       });
+    });
+
+    it('refuses a different store for an existing connection (data of two stores never mixed): no credentials stored, explicit reason', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpat_other' }), { status: 200 })));
+      const integrationService = makeIntegrationService({ prepareStoreConnection: vi.fn(async () => 'different_store' as const) });
+      const service = new ShopifyOAuthService(makeConfig(), integrationService, makeAdapter(), makeLogger());
+
+      const redirect = await startThenCallback(service);
+
+      expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=different_store');
+      expect(integrationService.prepareStoreConnection).toHaveBeenCalledWith('ws_1', 'shopify', expect.stringMatching(/myshopify\.com$/));
+      expect(integrationService.connect).not.toHaveBeenCalled();
+      expect(integrationService.setCredentials).not.toHaveBeenCalled();
     });
 
     it('still stores fresh credentials when the workspace is already connected (re-authorization)', async () => {

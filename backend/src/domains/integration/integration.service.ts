@@ -6,6 +6,7 @@ import { DatabaseService } from '../../database/database.service';
 import { integrations } from '../../database/schema/integrations';
 import { commerceCustomers } from '../../database/schema/commerce-customers';
 import { commerceOrders } from '../../database/schema/commerce-orders';
+import { integrationImportRuns } from '../../database/schema/integration-import-runs';
 import { commerceOrderLineItems } from '../../database/schema/commerce-order-line-items';
 import { commerceFulfillments } from '../../database/schema/commerce-fulfillments';
 import { commerceRefunds } from '../../database/schema/commerce-refunds';
@@ -111,6 +112,44 @@ export class IntegrationService {
       .limit(1);
 
     return integration ?? null;
+  }
+
+  /**
+   * Called by a store-bound connect flow (Shopify) before it (re)connects `provider` to `shopDomain`. The connection row
+   * is reused across reconnects, so without this a previous connection's state would leak into the new one:
+   * - a different store than the one this row last held is refused (`different_store`) while that store's commerce data
+   *   is still here — two stores' customers and orders must never be mixed under one connection;
+   * - reconnecting after a disconnect, or to a different store with no data left, clears the previous connection's
+   *   import-run bookkeeping, so "first import" status (onboarding) reflects only the new connection.
+   * Re-authorizing the same live store changes nothing.
+   */
+  async prepareStoreConnection(workspaceId: string, provider: IntegrationProvider, shopDomain: string): Promise<'ok' | 'different_store'> {
+    const existing = await this.findByProvider(workspaceId, provider);
+    if (!existing) {
+      return 'ok';
+    }
+    const sameStore = !existing.shopDomain || existing.shopDomain.toLowerCase() === shopDomain.toLowerCase();
+    if (!sameStore) {
+      const [data] = await this.database.client
+        .select({ id: commerceCustomers.id })
+        .from(commerceCustomers)
+        .where(and(eq(commerceCustomers.workspaceId, workspaceId), eq(commerceCustomers.integrationId, existing.id)))
+        .limit(1);
+      const [order] = data
+        ? [data]
+        : await this.database.client
+            .select({ id: commerceOrders.id })
+            .from(commerceOrders)
+            .where(and(eq(commerceOrders.workspaceId, workspaceId), eq(commerceOrders.integrationId, existing.id)))
+            .limit(1);
+      if (order) {
+        return 'different_store';
+      }
+    }
+    if (!sameStore || existing.status === 'disconnected') {
+      await this.database.client.delete(integrationImportRuns).where(eq(integrationImportRuns.integrationId, existing.id));
+    }
+    return 'ok';
   }
 
   /** Connects a provider, or reconnects one this workspace previously disconnected. */

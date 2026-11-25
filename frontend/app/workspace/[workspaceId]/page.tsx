@@ -2,6 +2,8 @@ import Link from 'next/link';
 import { apiFetch, ApiError } from '@/lib/api';
 import { RenameWorkspaceForm } from './rename-workspace-form';
 import { ImportantPendingActions, type NotificationsPage } from './important-pending-actions';
+import { OnboardingChecklist } from './onboarding-checklist';
+import { deriveOnboarding, SUPPORTED_COMMERCE_PLATFORMS, type OnboardingImportRun } from '@/lib/onboarding';
 import { AddMemberForm } from './add-member-form';
 import { MemberRowActions } from './member-row-actions';
 import { Card } from '@/components/ui/card';
@@ -105,6 +107,18 @@ export default async function WorkspacePage(props: { params: Promise<{ workspace
   }
   const role = memberships.find((m) => m.id === workspace.id)?.role;
   const canManage = role === 'owner' || role === 'admin';
+  // Onboarding (WP5): derived from live data on every load — resumable, nothing stored. A failed import-status read
+  // is shown as "couldn't load", never as "not started".
+  const commerce = dashboard.integrations.find(
+    (integration) => (SUPPORTED_COMMERCE_PLATFORMS as readonly string[]).includes(integration.provider) && integration.status !== 'disconnected',
+  );
+  const commerceImport: OnboardingImportRun | undefined = commerce
+    ? await (apiFetch(`/api/v1/workspaces/${params.workspaceId}/integrations/${commerce.provider}/import`) as Promise<OnboardingImportRun>).then(
+        (run) => run ?? null,
+        () => undefined,
+      )
+    : null;
+  const onboarding = deriveOnboarding(dashboard.integrations, commerceImport);
   const { byPriority } = dashboard.openOpportunities;
   const urgent = (byPriority.critical ?? 0) + (byPriority.high ?? 0);
 
@@ -121,6 +135,8 @@ export default async function WorkspacePage(props: { params: Promise<{ workspace
       />
 
       <PageBody className="space-y-8">
+        <OnboardingChecklist workspaceId={workspace.id} state={onboarding} canManage={canManage} />
+
         <MetricStrip>
           <Metric label="Customers" value={dashboard.customersCount} />
           <Metric label="Orders" value={dashboard.commerce.ordersCount} />
