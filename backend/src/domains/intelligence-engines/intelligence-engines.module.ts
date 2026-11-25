@@ -12,6 +12,8 @@ import { IntelligenceDailyRunController } from './intelligence-daily-run.control
 import { InternalNotificationService } from './internal-notification.service';
 import { InternalNotificationController } from './internal-notification.controller';
 import { InternalCronGuard } from '../../common/auth/internal-cron.guard';
+import { InternalMonitorGuard } from '../../common/auth/internal-monitor.guard';
+import { IntelligenceDailyRunMonitorController } from './intelligence-daily-run-monitor.controller';
 
 /**
  * Owns derived customer intelligence: Customer Risk & Engagement State,
@@ -37,8 +39,8 @@ import { InternalCronGuard } from '../../common/auth/internal-cron.guard';
  */
 @Module({
   imports: [WorkspaceModule, CustomerIntelligenceModule],
-  controllers: [CustomerHealthController, RevenueOpportunityController, RecommendationController, IntelligenceDailyRunController, InternalNotificationController],
-  providers: [CustomerHealthService, RevenueOpportunityService, RecommendationService, IntelligenceDailyRunService, InternalNotificationService, InternalCronGuard],
+  controllers: [CustomerHealthController, RevenueOpportunityController, RecommendationController, IntelligenceDailyRunController, IntelligenceDailyRunMonitorController, InternalNotificationController],
+  providers: [CustomerHealthService, RevenueOpportunityService, RecommendationService, IntelligenceDailyRunService, InternalNotificationService, InternalCronGuard, InternalMonitorGuard],
   exports: [CustomerHealthService, RevenueOpportunityService, RecommendationService, InternalNotificationService],
 })
 export class IntelligenceEnginesModule {}

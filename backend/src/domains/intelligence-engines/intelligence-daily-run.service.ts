@@ -27,6 +27,48 @@ export function startOfUtcDay(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 }
 
+/** By this hour (UTC) a run must have succeeded today; the scheduler's first slot is 02:17, so one slot may slip. */
+export const DAILY_RUN_FRESHNESS_DEADLINE_HOURS = 6;
+const HOUR_MS = 60 * 60 * 1000;
+
+export type DailyRunFreshnessReason =
+  | 'succeeded_today'
+  | 'awaiting_today'
+  /** A run started today but ended failed/partial — the trigger worked, the execution didn't. */
+  | 'failed_today'
+  /** A run started today and is still running past the deadline. */
+  | 'running_today'
+  /** No run started today at all — the schedule itself was missed. */
+  | 'missed_today'
+  | 'never_succeeded';
+
+/** Prefix of `intelligence_daily_runs.error` on a run that succeeded but whose retention maintenance failed. */
+export const RETENTION_ERROR_PREFIX = 'retention: ';
+
+/**
+ * Missed-run detection (Nov 25, 2026: GitHub dropped every scheduled slot of a UTC day). Fresh = a run that started
+ * today has succeeded, or it is still before the deadline and yesterday's run succeeded. A reused older run never
+ * counts, because only `startedAt` of a succeeded run is considered.
+ */
+export function evaluateDailyRunFreshness(
+  lastSucceededStartedAt: Date | null,
+  now: Date,
+  latest: { status: string; startedAt: Date } | null = null,
+): { fresh: boolean; reason: DailyRunFreshnessReason } {
+  const dayStart = startOfUtcDay(now).getTime();
+  if (lastSucceededStartedAt && lastSucceededStartedAt.getTime() >= dayStart) {
+    return { fresh: true, reason: 'succeeded_today' };
+  }
+  const beforeDeadline = now.getTime() < dayStart + DAILY_RUN_FRESHNESS_DEADLINE_HOURS * HOUR_MS;
+  if (beforeDeadline && lastSucceededStartedAt && lastSucceededStartedAt.getTime() >= dayStart - 24 * HOUR_MS) {
+    return { fresh: true, reason: 'awaiting_today' };
+  }
+  if (latest && latest.startedAt.getTime() >= dayStart) {
+    return { fresh: false, reason: latest.status === 'running' ? 'running_today' : 'failed_today' };
+  }
+  return { fresh: false, reason: lastSucceededStartedAt ? 'missed_today' : 'never_succeeded' };
+}
+
 /**
  * Daily intelligence run (doc10 — "Daily recalculation as a consistency
  * mechanism"; Milestone #5 D2/D3/D5 daily part). Triggered by an external
@@ -84,6 +126,34 @@ export class IntelligenceDailyRunService {
     return result;
   }
 
+  /** Freshness for the external monitor: timestamps and statuses only, no customer data. */
+  /**
+   * Healthy = fresh AND today's retention maintenance did not fail (a succeeded intelligence run alone must not report
+   * maintenance healthy). Retention is `unknown` until a run has succeeded today.
+   */
+  async getFreshness(now = new Date()) {
+    const runs = intelligenceDailyRuns;
+    const [lastSucceeded] = await this.database.client
+      .select({ startedAt: runs.startedAt, error: runs.error })
+      .from(runs)
+      .where(eq(runs.status, 'succeeded'))
+      .orderBy(desc(runs.startedAt))
+      .limit(1);
+    const [latest] = await this.database.client.select({ status: runs.status, startedAt: runs.startedAt }).from(runs).orderBy(desc(runs.startedAt)).limit(1);
+    const freshness = evaluateDailyRunFreshness(lastSucceeded?.startedAt ?? null, now, latest ?? null);
+    const retention =
+      freshness.reason !== 'succeeded_today' ? 'unknown' : lastSucceeded?.error?.startsWith(RETENTION_ERROR_PREFIX) ? 'failed' : 'ok';
+    return {
+      healthy: freshness.fresh && retention !== 'failed',
+      ...freshness,
+      retention,
+      checkedAt: now.toISOString(),
+      lastSucceededRunStartedAt: lastSucceeded?.startedAt.toISOString() ?? null,
+      latestRunStatus: latest?.status ?? null,
+      latestRunStartedAt: latest?.startedAt.toISOString() ?? null,
+    };
+  }
+
   async getLatest(): Promise<IntelligenceDailyRun> {
     const [latest] = await this.database.client.select().from(intelligenceDailyRuns).orderBy(desc(intelligenceDailyRuns.startedAt)).limit(1);
     if (!latest) throw new NotFoundError('No daily intelligence run has been recorded yet.');
@@ -136,8 +206,10 @@ export class IntelligenceDailyRunService {
       lastBeat = Date.now();
     };
 
-    // Checkout-signal privacy maintenance rides on this existing daily job (no new scheduler). Its failure is logged
-    // and never fails the intelligence run.
+    // Checkout-signal privacy maintenance rides on this existing daily job (no new scheduler). Its failure is logged,
+    // sent to Sentry and recorded on the run row (`error`, RETENTION_ERROR_PREFIX) so the freshness check reports it —
+    // it never fails the intelligence run itself.
+    let retentionError: string | null = null;
     try {
       const retention = await applyCheckoutSessionRetention(this.database.client, new Date(), DEFAULT_CHECKOUT_UNMATCHED_RETENTION_DAYS);
       this.logger.event('log', 'Checkout session retention applied', 'IntelligenceDailyRunService', { runId: run.id, ...retention });
@@ -149,6 +221,7 @@ export class IntelligenceDailyRunService {
       // Operational visibility: a privacy-maintenance failure must reach error tracking, not only the log (scrubbed
       // like every Sentry event). No-op when Sentry isn't configured.
       captureException(error);
+      retentionError = `${RETENTION_ERROR_PREFIX}${error instanceof Error ? error.message : String(error)}`.slice(0, 500);
     }
 
     try {
@@ -198,7 +271,7 @@ export class IntelligenceDailyRunService {
     try {
       await this.database.client
         .update(intelligenceDailyRuns)
-        .set({ ...counts, status, error: fatal, completedAt: new Date(), heartbeatAt: new Date() })
+        .set({ ...counts, status, error: fatal ?? retentionError, completedAt: new Date(), heartbeatAt: new Date() })
         .where(and(eq(intelligenceDailyRuns.id, run.id), eq(intelligenceDailyRuns.status, 'running')));
     } catch (error) {
       // The row stays `running`; its lease expires and the next trigger replaces it.
