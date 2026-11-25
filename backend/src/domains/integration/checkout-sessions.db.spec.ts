@@ -24,7 +24,10 @@ import { EventBus } from '../../common/events/event-bus.service';
 import { CustomerService } from '../commerce/customer.service';
 import { OrderService, type NormalizedOrder } from '../commerce/order.service';
 import { IdentityResolutionService } from '../identity-resolution/identity-resolution.service';
-import { CustomerIntelligenceService } from '../customer-intelligence/customer-intelligence.service';
+import {
+  CustomerIntelligenceService,
+  withoutUnverifiedCheckouts,
+} from '../customer-intelligence/customer-intelligence.service';
 import { IntegrationService } from './integration.service';
 import { WebhookIngestService } from './webhook-ingest.service';
 import {
@@ -327,10 +330,18 @@ describe('Checkout sessions — identity, activity, privacy (real DB)', { timeou
       provider: 'flexype',
       stage: 'PAYMENT_INITIATED',
       completedOrderExternalId: 'order-recovered',
+      attribution: 'order',
     });
     expect(
       entries.find((e) => (e as { externalId: string }).externalId === linked.sessionId),
-    ).toMatchObject({ completedOrderExternalId: null });
+    ).toMatchObject({ completedOrderExternalId: null, attribution: 'email' });
+    // AI consumers only ever see the order-corroborated one.
+    const aiView = withoutUnverifiedCheckouts(await ucir.getActivity(ws.a, customerId)).filter(
+      (e) => e.type === 'checkout_abandoned',
+    );
+    expect(aiView.map((e) => (e as { externalId: string }).externalId)).toEqual([
+      recovered.sessionId,
+    ]);
     expect(JSON.stringify(entries)).not.toContain(unrelated.sessionId);
     expect(JSON.stringify(entries)).not.toMatch(/1500|1998|total/i);
     // The Shopify order is the only order: FlexyPe created none.
@@ -485,5 +496,35 @@ describe('Checkout sessions — identity, activity, privacy (real DB)', { timeou
       status: 'processed',
     });
     expect(rows.find((r) => r.id === fresh.id)).toMatchObject({ status: 'dead_letter' });
+  });
+  it('record retention: deletes unlinked sessions past the record window unless an order carries the session id; keeps linked ones', async () => {
+    const customerId = await shopifyCustomer(ws.a, 'c-record', 'record.keep@example.com');
+    const uncorrelated = await checkout(ws.a, { email: 'nobody.record@example.com' });
+    const correlated = await checkout(ws.a, { email: 'other.typed@example.com' });
+    await shopifyOrder(ws.a, 'c-record', 'order-record', correlated.sessionId);
+    const linked = await checkout(ws.a, { email: 'record.keep@example.com' });
+    const recent = await checkout(ws.a, { email: 'recent.record@example.com' });
+    const old = new Date(Date.now() - 91 * 86_400_000);
+    await db.client
+      .update(checkoutSessions)
+      .set({ createdAt: old })
+      .where(
+        inArray(checkoutSessions.externalSessionId, [
+          uncorrelated.sessionId,
+          correlated.sessionId,
+          linked.sessionId,
+        ]),
+      );
+
+    const result = await applyCheckoutSessionRetention(db.client, new Date(), 30, 90);
+
+    expect(result.deleted).toBeGreaterThanOrEqual(1);
+    expect(await session(uncorrelated.sessionId)).toBeUndefined();
+    expect(await session(correlated.sessionId)).toMatchObject({
+      canonicalCustomerId: null,
+      email: null,
+    });
+    expect(await session(linked.sessionId)).toMatchObject({ canonicalCustomerId: customerId });
+    expect(await session(recent.sessionId)).toMatchObject({ email: 'recent.record@example.com' });
   });
 });

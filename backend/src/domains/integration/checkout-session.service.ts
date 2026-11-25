@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { and, isNull, lt, or, sql } from 'drizzle-orm';
 import { DatabaseService } from '../../database/database.service';
 import { checkoutSessions } from '../../database/schema/checkout-sessions';
+import { commerceOrders } from '../../database/schema/commerce-orders';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
 import { ErasedIdentifierService, emailIdentifier } from '../commerce/erased-identifier.service';
 import {
@@ -84,21 +85,30 @@ type Db = DatabaseService['client'];
 
 /** Default window for identifiers on unlinked checkout sessions — see applyCheckoutSessionRetention. */
 export const DEFAULT_CHECKOUT_UNMATCHED_RETENTION_DAYS = 30;
+/**
+ * Default lifetime of an unlinked session that never matched a commerce order — see applyCheckoutSessionRetention.
+ * Provisional (Nov 24, 2026): such a row is pseudonymous (the provider can map its session id back to a shopper) and no
+ * BRAYN surface shows it, so it is deleted rather than kept indefinitely; 90 days leaves room for a late order.
+ */
+export const DEFAULT_CHECKOUT_UNMATCHED_RECORD_DAYS = 90;
 
 /**
  * Daily maintenance for unlinked checkout sessions (run by the daily intelligence job — no new scheduler), across all
  * workspaces:
  * 1. late link: an unlinked session whose email now belongs to an existing canonical customer in the SAME workspace is
  *    linked (survivor of a merge), and its identifiers are cleared — same exact-email rule as `record`;
- * 2. retention: sessions still unlinked after `retentionDays` lose their email and phone; the anonymous signal
- *    (stage, time, item count) stays for workspace-level checkout analytics.
+ * 2. retention: sessions still unlinked after `retentionDays` lose their email and phone;
+ * 3. record deletion: sessions still unlinked after `recordDays` whose provider session id is on no commerce order in
+ *    the same workspace are deleted (pseudonymous, unused). Linked or order-corroborated sessions stay as customer
+ *    activity and follow the customer's lifecycle (erasure, redact, purge).
  * Erased emails can't be linked here: erasure deletes every session carrying them, and `record` never stores a blocked one.
  */
 export async function applyCheckoutSessionRetention(
   db: Db,
   now: Date,
   retentionDays: number,
-): Promise<{ linked: number; anonymized: number; payloadsCleared: number }> {
+  recordDays: number = DEFAULT_CHECKOUT_UNMATCHED_RECORD_DAYS,
+): Promise<{ linked: number; anonymized: number; payloadsCleared: number; deleted: number }> {
   const linked = await linkUnresolvedCheckoutSessions(db);
   const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
   const anonymized = await db
@@ -132,5 +142,21 @@ export async function applyCheckoutSessionRetention(
       ),
     )
     .returning({ id: integrationWebhookEvents.id });
-  return { linked, anonymized: anonymized.length, payloadsCleared: payloadsCleared.length };
+  const recordCutoff = new Date(now.getTime() - recordDays * 24 * 60 * 60 * 1000);
+  const deleted = await db
+    .delete(checkoutSessions)
+    .where(
+      and(
+        isNull(checkoutSessions.canonicalCustomerId),
+        lt(checkoutSessions.createdAt, recordCutoff),
+        sql`not exists (select 1 from ${commerceOrders} o where o.workspace_id = ${checkoutSessions.workspaceId} and o.external_checkout_session_id = ${checkoutSessions.externalSessionId})`,
+      ),
+    )
+    .returning({ id: checkoutSessions.id });
+  return {
+    linked,
+    anonymized: anonymized.length,
+    payloadsCleared: payloadsCleared.length,
+    deleted: deleted.length,
+  };
 }

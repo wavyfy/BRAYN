@@ -138,8 +138,29 @@ export type ActivityEntry =
    * A checkout session an external checkout provider (FlexyPe) reported as ended without an order. `stage` is the
    * provider's last stage verbatim (no inferred payment outcome); `completedOrderExternalId` is the commerce order the
    * platform later linked to this session (Shopify note attribute), if any. No amounts — never extra revenue.
+   * `attribution` is why this customer sees it: `order` — the session id is on one of this customer's own commerce
+   * orders (the documented checkout↔order link — it ties this session to that order, not proof of payment or of the
+   * shopper's identity); `email` — only the shopper-typed checkout email matched (unverified). See `withoutUnverifiedCheckouts` for consumers that must not use the latter.
    */
-  | { type: 'checkout_abandoned'; occurredAt: Date; provider: string; externalId: string; stage: string; completedOrderExternalId: string | null };
+  | {
+      type: 'checkout_abandoned';
+      occurredAt: Date;
+      provider: string;
+      externalId: string;
+      stage: string;
+      completedOrderExternalId: string | null;
+      attribution: CheckoutAttribution;
+    };
+
+export type CheckoutAttribution = 'order' | 'email';
+
+/**
+ * Activity for consumers that turn it into AI text or decisions (AI read tools, AI customer summaries): drops checkout
+ * entries attributed only by an unverified, shopper-typed email. Order-linked checkout entries stay.
+ */
+export function withoutUnverifiedCheckouts(entries: ActivityEntry[]): ActivityEntry[] {
+  return entries.filter((entry) => entry.type !== 'checkout_abandoned' || entry.attribution === 'order');
+}
 
 interface SourceCustomerRow {
   id: string;
@@ -418,6 +439,7 @@ export class CustomerIntelligenceService {
           externalId: checkout.externalSessionId,
           stage: checkout.stage,
           completedOrderExternalId: checkout.completedOrderExternalId,
+          attribution: checkout.attribution,
         }),
       ),
     ];
@@ -691,7 +713,12 @@ export class CustomerIntelligenceService {
         ),
       );
     const orderBySession = new Map(completedOrders.map((order) => [order.checkoutSessionId, order.externalId]));
-    return sessions.map((session) => ({ ...session, completedOrderExternalId: orderBySession.get(session.externalSessionId) ?? null }));
+    const ownSessions = new Set(ownOrderSessionIds);
+    return sessions.map((session) => ({
+      ...session,
+      completedOrderExternalId: orderBySession.get(session.externalSessionId) ?? null,
+      attribution: (ownSessions.has(session.externalSessionId) ? 'order' : 'email') as CheckoutAttribution,
+    }));
   }
 
   /** Shared by `getBehaviouralContext` (limit 10) and `getActivity` (limit `ACTIVITY_LIMIT`) — same query, different caps. */

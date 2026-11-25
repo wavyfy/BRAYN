@@ -8,6 +8,7 @@ import { CustomerIntelligenceService } from '../customer-intelligence/customer-i
 import { CustomerHealthService } from './customer-health.service';
 import { RevenueOpportunityService } from './revenue-opportunity.service';
 import { RecommendationService } from './recommendation.service';
+import { captureException } from '../../common/observability/sentry';
 import { applyCheckoutSessionRetention, DEFAULT_CHECKOUT_UNMATCHED_RETENTION_DAYS } from '../integration/checkout-session.service';
 
 export type IntelligenceDailyRun = typeof intelligenceDailyRuns.$inferSelect;
@@ -145,6 +146,9 @@ export class IntelligenceDailyRunService {
         runId: run.id,
         error: error instanceof Error ? error.message : String(error),
       });
+      // Operational visibility: a privacy-maintenance failure must reach error tracking, not only the log (scrubbed
+      // like every Sentry event). No-op when Sentry isn't configured.
+      captureException(error);
     }
 
     try {
