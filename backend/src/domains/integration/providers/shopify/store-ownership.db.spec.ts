@@ -12,11 +12,16 @@ import { commerceCustomers } from '../../../../database/schema/commerce-customer
 import { customerDataRequests } from '../../../../database/schema/customer-data-requests';
 import { commerceOrders } from '../../../../database/schema/commerce-orders';
 import { shopifyComplianceWebhooks } from '../../../../database/schema/shopify-compliance-webhooks';
-import { ConflictError, UnauthenticatedError } from '../../../../common/errors/app-error';
+import {
+  ConflictError,
+  NotFoundError,
+  UnauthenticatedError,
+} from '../../../../common/errors/app-error';
 import { IntegrationService, STORE_OWNED_ELSEWHERE_MESSAGE } from '../../integration.service';
 import { ShopifyComplianceService } from './shopify-compliance.service';
 import { ShopifyUninstallService } from './shopify-uninstall.service';
 import { ShopifyAdapter } from './shopify.adapter';
+import { applyCompliancePayloadRetention } from './shopify-compliance-retention';
 import type { Env } from '../../../../config/env.schema';
 
 /**
@@ -704,6 +709,68 @@ describe('Shopify store ownership (real DB)', { timeout: 60_000 }, () => {
         'owned_elsewhere',
       );
       expect(await row(b)).toBeUndefined();
+    });
+  });
+
+  describe('compliance payload protection and retention', () => {
+    const deliverWithId = (webhookId: string, topic: string, payload: object) => {
+      const body = JSON.stringify(payload);
+      return compliance.handle(topic, body, {
+        'x-shopify-hmac-sha256': sign(body),
+        'x-shopify-webhook-id': webhookId,
+      });
+    };
+    const auditRow = async (webhookId: string) =>
+      (
+        await db.client
+          .select()
+          .from(shopifyComplianceWebhooks)
+          .where(eq(shopifyComplianceWebhooks.webhookId, webhookId))
+      )[0];
+    const age = (webhookId: string, days: number) =>
+      db.client
+        .update(shopifyComplianceWebhooks)
+        .set({ receivedAt: new Date(Date.now() - days * 24 * 60 * 60 * 1000) })
+        .where(eq(shopifyComplianceWebhooks.webhookId, webhookId));
+
+    it('an unresolved payload is stored encrypted (no customer identifier in the row) and still replayable', async () => {
+      const id = `wh-${randomUUID()}`;
+      await deliverWithId(id, 'customers/redact', {
+        shop_id: 77,
+        shop_domain: newShop(),
+        customer: { id: 191167, email: 'jane@example.com', phone: '+15556251199' },
+        orders_to_redact: [299938],
+      });
+      const r = await auditRow(id);
+      expect(r.status).toBe('exception');
+      expect(r.payload).toMatchObject({ v: 1, ciphertext: expect.any(String) });
+      const raw = JSON.stringify(r);
+      for (const secret of ['jane@example.com', '191167', '+15556251199', '299938'])
+        expect(raw).not.toContain(secret);
+      // Decrypts for replay (still unresolvable here, so it stays an open exception).
+      expect(await compliance.replay(id)).toEqual({ status: 'exception' });
+    });
+
+    it('after 30 days an unresolved payload is cleared but the delivery stays open, escalated and visibly unreplayable', async () => {
+      const [old, recent] = [`wh-${randomUUID()}`, `wh-${randomUUID()}`];
+      await deliverWithId(old, 'shop/redact', { shop_id: 78, shop_domain: newShop() });
+      await deliverWithId(recent, 'shop/redact', { shop_id: 79, shop_domain: newShop() });
+      await age(old, 31);
+      await age(recent, 8);
+
+      const result = await applyCompliancePayloadRetention(db.client, new Date());
+      expect(result.compliancePayloadsCleared).toBeGreaterThanOrEqual(1);
+      expect(result.complianceOverdue).toBeGreaterThanOrEqual(2);
+      expect(result.complianceNearDeadline).toBeGreaterThanOrEqual(1);
+      expect(await auditRow(old)).toMatchObject({ status: 'exception', payload: null });
+      expect((await auditRow(recent)).payload).not.toBeNull();
+      await expect(compliance.replay(old)).rejects.toBeInstanceOf(NotFoundError);
+      const open = await compliance.openIssues();
+      expect(open.payloadExpired).toBeGreaterThanOrEqual(1);
+      expect(open.nearDeadline).toBeGreaterThanOrEqual(1);
+
+      await compliance.resolve(old, 'Deadline handled manually.');
+      await compliance.resolve(recent, 'Test cleanup.');
     });
   });
 });

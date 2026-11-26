@@ -10,6 +10,9 @@ import type { RecommendationService } from './recommendation.service';
 // Retention maintenance is its own module; stubbed here so each test states its outcome explicitly (it used to fail
 // silently against this mock DB).
 const { applyRetention } = vi.hoisted(() => ({ applyRetention: vi.fn() }));
+vi.mock('../integration/providers/shopify/shopify-compliance-retention', () => ({
+  applyCompliancePayloadRetention: vi.fn(async () => ({ compliancePayloadsCleared: 0, complianceOpen: 0, complianceOverdue: 0, complianceNearDeadline: 0 })),
+}));
 vi.mock('../integration/checkout-session.service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../integration/checkout-session.service')>()),
   applyCheckoutSessionRetention: applyRetention,

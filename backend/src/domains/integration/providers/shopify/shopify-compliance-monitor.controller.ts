@@ -17,12 +17,17 @@ export class ShopifyComplianceMonitorController {
 
   @Get()
   async status(@Res({ passthrough: true }) reply: FastifyReply) {
-    const { count, oldestReceivedAt } = await this.complianceService.openIssues();
+    const { count, overdue, nearDeadline, payloadExpired, oldestReceivedAt } =
+      await this.complianceService.openIssues();
     reply.header('Cache-Control', 'no-store');
     reply.status(count === 0 ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE);
     return {
       healthy: count === 0,
       openIssues: count,
+      // Escalation: open > 7 days, > 25 days (Shopify's 30-day deadline is close), and past retention (payload cleared).
+      overdue,
+      nearDeadline,
+      payloadExpired,
       oldestOpenReceivedAt: oldestReceivedAt?.toISOString() ?? null,
     };
   }

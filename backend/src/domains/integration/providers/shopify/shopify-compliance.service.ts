@@ -10,6 +10,8 @@ import { ConflictError, NotFoundError, ProviderError, UnauthenticatedError, Vali
 import { StructuredLoggerService } from '../../../../common/logging/structured-logger.service';
 import { IntegrationService } from '../../integration.service';
 import { verifyShopifyHmac } from './shopify.adapter';
+import { complianceOpenIssueCounts } from './shopify-compliance-retention';
+import { decryptCredential, encryptCredential, InvalidEncryptionKeyError, parseEncryptionKey } from '../../../../common/crypto/credential-cipher';
 import type { Env } from '../../../../config/env.schema';
 
 export const SHOPIFY_COMPLIANCE_TOPICS = ['customers/data_request', 'customers/redact', 'shop/redact'] as const;
@@ -134,9 +136,11 @@ export class ShopifyComplianceService {
       )
       .returning({ attempt: t.attempts, topic: t.topic, payload: t.payload });
     if (!row) {
-      throw new NotFoundError('No replayable compliance delivery with that id (unknown, done, running, or no payload).');
+      throw new NotFoundError(
+        'No replayable compliance delivery with that id (unknown, done, running, or its payload was cleared by the 30-day retention).',
+      );
     }
-    await this.run({ webhookId, attempt: row.attempt }, row.topic as ShopifyComplianceTopic, row.payload as ShopifyCompliancePayload);
+    await this.run({ webhookId, attempt: row.attempt }, row.topic as ShopifyComplianceTopic, this.openPayload(row.payload));
     const [after] = await this.database.client.select({ status: t.status }).from(t).where(eq(t.webhookId, webhookId));
     return { status: after?.status ?? 'unknown' };
   }
@@ -154,19 +158,37 @@ export class ShopifyComplianceService {
     }
   }
 
-  /** Open privacy work: failed or excepted deliveries, and claims abandoned mid-processing. Ids/timestamps only. */
-  async openIssues(): Promise<{ count: number; oldestReceivedAt: Date | null }> {
-    const t = shopifyComplianceWebhooks;
-    const [row] = await this.database.client
-      .select({ count: sql<number>`count(*)::int`, oldest: sql<Date | null>`min(${t.receivedAt})` })
-      .from(t)
-      .where(
-        or(
-          inArray(t.status, ['failed', 'exception']),
-          sql`${t.status} = 'processing' and ${t.claimedAt} < now() - ${STALE_CLAIM_INTERVAL}`,
-        ),
-      );
-    return { count: row?.count ?? 0, oldestReceivedAt: row?.oldest ? new Date(row.oldest) : null };
+  /** Open privacy work (failed / exception / abandoned) with escalation counts. Counts and a timestamp only. */
+  async openIssues() {
+    return complianceOpenIssueCounts(this.database.client, new Date());
+  }
+
+  /**
+   * The stored payload is the verified body encrypted with the app's credential key (AES-256-GCM, the same cipher and
+   * key as provider credentials): erasure-request identifiers are never stored in plaintext. Fails closed (non-2xx,
+   * Shopify retries) if the key isn't configured.
+   */
+  private sealPayload(body: ShopifyCompliancePayload): { v: 1; ciphertext: string } {
+    return { v: 1, ciphertext: encryptCredential(JSON.stringify(body), this.encryptionKey()) };
+  }
+
+  private openPayload(stored: unknown): ShopifyCompliancePayload {
+    const sealed = stored as { v?: unknown; ciphertext?: unknown } | null;
+    if (sealed?.v !== 1 || typeof sealed.ciphertext !== 'string') {
+      throw new ValidationError('Stored compliance payload is not in the encrypted format.');
+    }
+    return JSON.parse(decryptCredential(sealed.ciphertext, this.encryptionKey())) as ShopifyCompliancePayload;
+  }
+
+  private encryptionKey(): Buffer {
+    try {
+      return parseEncryptionKey(this.config.get('BRAYN_CREDENTIAL_ENCRYPTION_KEY', { infer: true }));
+    } catch (error) {
+      if (error instanceof InvalidEncryptionKeyError) {
+        throw new ProviderError('Credential encryption is not configured.');
+      }
+      throw error;
+    }
   }
 
   private async run(claim: Claim, topic: ShopifyComplianceTopic, body: ShopifyCompliancePayload): Promise<void> {
@@ -240,7 +262,7 @@ export class ShopifyComplianceService {
         shopDomain,
         shopId: body.shop_id === undefined || body.shop_id === null ? null : String(body.shop_id),
         status: 'processing',
-        payload: body,
+        payload: this.sealPayload(body),
       })
       .onConflictDoUpdate({
         target: t.webhookId,

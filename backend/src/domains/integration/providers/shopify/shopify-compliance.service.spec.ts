@@ -17,7 +17,9 @@ function sign(rawBody: string, secret = CLIENT_SECRET): string {
 
 /** `null` (not `undefined`, which TS default params would silently replace with CLIENT_SECRET) simulates an unconfigured secret. */
 function makeConfig(secret: string | null = CLIENT_SECRET): ConfigService<Env, true> {
-  return { get: () => secret ?? undefined } as unknown as ConfigService<Env, true>;
+  return {
+    get: (key: string) => (key === 'BRAYN_CREDENTIAL_ENCRYPTION_KEY' ? 'a'.repeat(64) : (secret ?? undefined)),
+  } as unknown as ConfigService<Env, true>;
 }
 
 function makeLogger(): StructuredLoggerService {
