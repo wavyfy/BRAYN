@@ -135,7 +135,8 @@ export class IntegrationService {
    * - a different store than the one this row last held is refused (`different_store`) while that store's commerce data
    *   is still here — two stores' customers and orders must never be mixed under one connection;
    * - reconnecting after a disconnect, or to a different store with no data left, clears the previous connection's
-   *   import-run bookkeeping, so "first import" status (onboarding) reflects only the new connection.
+   *   import-run bookkeeping, so "first import" status (onboarding) reflects only the new connection. That reset runs
+   *   inside connectStore(), only once the connection is actually accepted: a refused connect clears nothing.
    * Re-authorizing the same live store changes nothing.
    *
    * Store ownership (doc 22): a store that another workspace holds (live, or disconnected while that workspace still
@@ -159,9 +160,6 @@ export class IntegrationService {
     const sameStore = !existing.shopDomain || existing.shopDomain.toLowerCase() === shopDomain.toLowerCase();
     if (!sameStore && (await this.holdsCommerceData(workspaceId, existing.id))) {
       return 'different_store';
-    }
-    if (!sameStore || existing.status === 'disconnected') {
-      await this.database.client.delete(integrationImportRuns).where(eq(integrationImportRuns.integrationId, existing.id));
     }
     return 'ok';
   }
@@ -218,19 +216,32 @@ export class IntegrationService {
     const shopDomain = credentials.shopDomain ? credentials.shopDomain.toLowerCase() : null;
     const reconnecting = sql`${integrations.status} = 'disconnected'`;
     try {
-      await this.database.client
-        .insert(integrations)
-        .values({ workspaceId, provider, credentials: encrypted, shopDomain })
-        .onConflictDoUpdate({
-          target: [integrations.workspaceId, integrations.provider],
-          set: {
-            status: sql`case when ${reconnecting} then 'connected' else ${integrations.status} end`,
-            lastSyncError: sql`case when ${reconnecting} then null else ${integrations.lastSyncError} end`,
-            credentials: encrypted,
-            ...(shopDomain ? { shopDomain } : {}),
-            updatedAt: new Date(),
-          },
-        });
+      await this.database.transaction(async (tx) => {
+        const [existing] = await tx
+          .select({ id: integrations.id, status: integrations.status, shopDomain: integrations.shopDomain })
+          .from(integrations)
+          .where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, provider)))
+          .for('update');
+        await tx
+          .insert(integrations)
+          .values({ workspaceId, provider, credentials: encrypted, shopDomain })
+          .onConflictDoUpdate({
+            target: [integrations.workspaceId, integrations.provider],
+            set: {
+              status: sql`case when ${reconnecting} then 'connected' else ${integrations.status} end`,
+              lastSyncError: sql`case when ${reconnecting} then null else ${integrations.lastSyncError} end`,
+              credentials: encrypted,
+              ...(shopDomain ? { shopDomain } : {}),
+              updatedAt: new Date(),
+            },
+          });
+        // A reconnect, or a switch to another store (prepareStoreConnection already refused one with data left), starts
+        // onboarding's "first import" afresh. Same transaction: a refused connect rolls this back too.
+        const otherStore = Boolean(existing?.shopDomain && shopDomain && existing.shopDomain.toLowerCase() !== shopDomain);
+        if (existing && (existing.status === 'disconnected' || otherStore)) {
+          await tx.delete(integrationImportRuns).where(eq(integrationImportRuns.integrationId, existing.id));
+        }
+      });
     } catch (error) {
       if (isLiveShopConflict(error)) {
         return 'owned_elsewhere';
@@ -249,6 +260,11 @@ export class IntegrationService {
     }
 
     if (existing) {
+      // A generic reconnect re-claims the store this row last held: refused while another workspace holds it (live, or
+      // disconnected with its data), so a former holder can't make a credential-less row live and lock the owner out.
+      if (provider === 'shopify' && existing.shopDomain && (await this.isStoreHeldElsewhere(workspaceId, existing.shopDomain))) {
+        throw new ConflictError(STORE_OWNED_ELSEWHERE_MESSAGE);
+      }
       try {
         const [reconnected] = await this.database.client
           .update(integrations)
@@ -401,9 +417,16 @@ export class IntegrationService {
   async purgeCommerceCustomer(
     workspaceId: string,
     integrationId: string,
-    externalId: string,
-  ): Promise<{ found: boolean; canonicalCustomerRemoved: boolean }> {
+    externalId: string | undefined,
+    orderExternalIds: string[] = [],
+  ): Promise<{ found: boolean; canonicalCustomerRemoved: boolean; ordersErased: number }> {
     return this.database.transaction(async (tx) => {
+      // Shopify's `orders_to_redact`: erased even when the customer row itself is unknown here (e.g. never imported, or
+      // already removed), so a redaction never leaves the customer's orders behind.
+      const ordersErased = await this.deleteOrdersByExternalId(tx, workspaceId, integrationId, orderExternalIds);
+      if (externalId === undefined) {
+        return { found: ordersErased > 0, canonicalCustomerRemoved: false, ordersErased };
+      }
       const [customerRow] = await tx
         .select({
           id: commerceCustomers.id,
@@ -421,7 +444,7 @@ export class IntegrationService {
         )
         .limit(1);
       if (!customerRow) {
-        return { found: false, canonicalCustomerRemoved: false };
+        return { found: ordersErased > 0, canonicalCustomerRemoved: false, ordersErased };
       }
 
       // Unlinked checkout signals carrying this customer's email/phone, or tied to one of their orders by the provider
@@ -453,8 +476,47 @@ export class IntegrationService {
         ? await this.purgeCanonicalCustomerIfOrphaned(tx, workspaceId, customerRow.canonicalCustomerId)
         : false;
 
-      return { found: true, canonicalCustomerRemoved };
+      return { found: true, canonicalCustomerRemoved, ordersErased };
     });
+  }
+
+  /** Erases listed orders (by provider order id) of one integration, with their unlinked checkout signals. */
+  private async deleteOrdersByExternalId(
+    tx: NodePgDatabase,
+    workspaceId: string,
+    integrationId: string,
+    orderExternalIds: string[],
+  ): Promise<number> {
+    if (orderExternalIds.length === 0) {
+      return 0;
+    }
+    const rows = await tx
+      .select({ id: commerceOrders.id, sessionId: commerceOrders.externalCheckoutSessionId })
+      .from(commerceOrders)
+      .where(
+        and(
+          eq(commerceOrders.workspaceId, workspaceId),
+          eq(commerceOrders.integrationId, integrationId),
+          inArray(commerceOrders.externalId, orderExternalIds),
+        ),
+      );
+    if (rows.length === 0) {
+      return 0;
+    }
+    const sessionIds = rows.flatMap((row) => (row.sessionId ? [row.sessionId] : []));
+    if (sessionIds.length > 0) {
+      await tx
+        .delete(checkoutSessions)
+        .where(
+          and(
+            eq(checkoutSessions.workspaceId, workspaceId),
+            isNull(checkoutSessions.canonicalCustomerId),
+            inArray(checkoutSessions.externalSessionId, sessionIds),
+          ),
+        );
+    }
+    await this.deleteOrderRows(tx, workspaceId, rows.map((row) => row.id));
+    return rows.length;
   }
 
   /**
@@ -468,8 +530,18 @@ export class IntegrationService {
       .select({ id: commerceOrders.id, externalId: commerceOrders.externalId })
       .from(commerceOrders)
       .where(and(eq(commerceOrders.workspaceId, workspaceId), eq(commerceOrders.customerId, commerceCustomerId)));
-    const orderIds = orderRows.map((row) => row.id);
+    await this.deleteOrderRows(
+      tx,
+      workspaceId,
+      orderRows.map((row) => row.id),
+    );
 
+    await tx.delete(commerceCustomers).where(and(eq(commerceCustomers.workspaceId, workspaceId), eq(commerceCustomers.id, commerceCustomerId)));
+    return orderRows.map((row) => row.externalId);
+  }
+
+  /** Orders and everything hanging off them (line items, refunds, refund line items, fulfillments), FK-safe order. */
+  private async deleteOrderRows(tx: NodePgDatabase, workspaceId: string, orderIds: string[]): Promise<void> {
     if (orderIds.length > 0) {
       const refundRows = await tx
         .select({ id: commerceRefunds.id })
@@ -486,9 +558,6 @@ export class IntegrationService {
       await tx.delete(commerceRefunds).where(and(eq(commerceRefunds.workspaceId, workspaceId), inArray(commerceRefunds.orderId, orderIds)));
       await tx.delete(commerceOrders).where(and(eq(commerceOrders.workspaceId, workspaceId), inArray(commerceOrders.id, orderIds)));
     }
-
-    await tx.delete(commerceCustomers).where(and(eq(commerceCustomers.workspaceId, workspaceId), eq(commerceCustomers.id, commerceCustomerId)));
-    return orderRows.map((row) => row.externalId);
   }
 
   /**

@@ -10,6 +10,8 @@ import { integrations } from '../../../../database/schema/integrations';
 import { integrationImportRuns } from '../../../../database/schema/integration-import-runs';
 import { commerceCustomers } from '../../../../database/schema/commerce-customers';
 import { customerDataRequests } from '../../../../database/schema/customer-data-requests';
+import { commerceOrders } from '../../../../database/schema/commerce-orders';
+import { shopifyComplianceWebhooks } from '../../../../database/schema/shopify-compliance-webhooks';
 import { ConflictError, UnauthenticatedError } from '../../../../common/errors/app-error';
 import { IntegrationService, STORE_OWNED_ELSEWHERE_MESSAGE } from '../../integration.service';
 import { ShopifyComplianceService } from './shopify-compliance.service';
@@ -31,7 +33,12 @@ describe('Shopify store ownership (real DB)', { timeout: 60_000 }, () => {
   let appSecret: string;
   const workspaceIds: string[] = [];
 
-  const newShop = () => `ownership-${randomUUID().slice(0, 8)}.myshopify.com`;
+  const shops: string[] = [];
+  const newShop = () => {
+    const shop = `ownership-${randomUUID().slice(0, 8)}.myshopify.com`;
+    shops.push(shop, shop.toUpperCase());
+    return shop;
+  };
   const creds = (shopDomain: string, accessToken = 'shpat_test') => ({
     shopDomain,
     accessToken,
@@ -72,8 +79,14 @@ describe('Shopify store ownership (real DB)', { timeout: 60_000 }, () => {
         .delete(integrationImportRuns)
         .where(inArray(integrationImportRuns.workspaceId, workspaceIds));
       await db.client
+        .delete(commerceOrders)
+        .where(inArray(commerceOrders.workspaceId, workspaceIds));
+      await db.client
         .delete(commerceCustomers)
         .where(inArray(commerceCustomers.workspaceId, workspaceIds));
+      await db.client
+        .delete(shopifyComplianceWebhooks)
+        .where(inArray(shopifyComplianceWebhooks.shopDomain, shops));
       await db.client.delete(integrations).where(inArray(integrations.workspaceId, workspaceIds));
       await db.client.delete(workspaces).where(inArray(workspaces.id, workspaceIds));
     }
@@ -315,6 +328,176 @@ describe('Shopify store ownership (real DB)', { timeout: 60_000 }, () => {
         .from(customerDataRequests)
         .where(inArray(customerDataRequests.workspaceId, [a, b, c]));
       expect(records.map((r) => r.workspaceId).sort()).toEqual([a, b].sort());
+    });
+  });
+
+  describe('historical holders and races', () => {
+    it('a former holder cannot re-claim the store through a generic reconnect (no credential-less squatting)', async () => {
+      const [a, b] = [await workspace(), await workspace()];
+      const shop = newShop();
+      expect(await oauth(a, shop)).toBe('ok');
+      await service.disconnect(a, 'shopify');
+      expect(await oauth(b, shop)).toBe('ok');
+      await expect(service.connect(a, 'shopify')).rejects.toThrow(STORE_OWNED_ELSEWHERE_MESSAGE);
+      // Same when the other holder is disconnected but still has the store data.
+      await addCustomer(b, 'c-1');
+      await service.disconnect(b, 'shopify');
+      await expect(service.connect(a, 'shopify')).rejects.toThrow(STORE_OWNED_ELSEWHERE_MESSAGE);
+      expect((await row(a)).status).toBe('disconnected');
+    });
+
+    it('new workspaces racing for a store whose disconnected holder keeps its data are all refused', async () => {
+      const a = await workspace();
+      const shop = newShop();
+      expect(await oauth(a, shop)).toBe('ok');
+      await addCustomer(a, 'c-1');
+      await service.disconnect(a, 'shopify');
+      const racers = await Promise.all([workspace(), workspace(), workspace()]);
+      const results = await Promise.all(racers.map((id) => oauth(id, shop)));
+      expect(results).toEqual(['owned_elsewhere', 'owned_elsewhere', 'owned_elsewhere']);
+      for (const id of racers) expect(await row(id)).toBeUndefined();
+    });
+
+    it('the holder reconnecting while a new workspace connects: exactly one ends up live', async () => {
+      const [a, b] = [await workspace(), await workspace()];
+      const shop = newShop();
+      expect(await oauth(a, shop)).toBe('ok');
+      await service.disconnect(a, 'shopify');
+      const results = await Promise.all([
+        service.connectStore(a, 'shopify', creds(shop)),
+        service.connectStore(b, 'shopify', creds(shop)),
+      ]);
+      expect(results.filter((r) => r === 'ok')).toHaveLength(1);
+      const live = await db.client
+        .select({ id: integrations.id })
+        .from(integrations)
+        .where(
+          and(inArray(integrations.workspaceId, [a, b]), eq(integrations.status, 'connected')),
+        );
+      expect(live).toHaveLength(1);
+    });
+  });
+
+  describe('compliance retry contract and audit (shopify_compliance_webhooks)', () => {
+    const deliverWithId = (webhookId: string, topic: string, payload: object) => {
+      const body = JSON.stringify(payload);
+      return compliance.handle(topic, body, {
+        'x-shopify-hmac-sha256': sign(body),
+        'x-shopify-webhook-id': webhookId,
+      });
+    };
+    const auditRow = async (webhookId: string) => {
+      const [r] = await db.client
+        .select()
+        .from(shopifyComplianceWebhooks)
+        .where(eq(shopifyComplianceWebhooks.webhookId, webhookId));
+      return r;
+    };
+    const dataRequestCount = async (workspaceId: string) =>
+      (
+        await db.client
+          .select({ id: customerDataRequests.id })
+          .from(customerDataRequests)
+          .where(eq(customerDataRequests.workspaceId, workspaceId))
+      ).length;
+
+    it('redelivered and concurrent copies of one data_request record it exactly once, audited without customer identifiers', async () => {
+      const a = await workspace();
+      const shop = newShop();
+      expect(await oauth(a, shop)).toBe('ok');
+      const id = `wh-${randomUUID()}`;
+      const payload = {
+        shop_id: 954889,
+        shop_domain: shop,
+        customer: { id: 191167, email: 'jane@example.com' },
+      };
+      const outcomes = await Promise.allSettled([
+        deliverWithId(id, 'customers/data_request', payload),
+        deliverWithId(id, 'customers/data_request', payload),
+      ]);
+      // Each copy is either acknowledged or told to retry (409); never processed twice.
+      for (const o of outcomes) {
+        if (o.status === 'rejected') expect(o.reason).toBeInstanceOf(ConflictError);
+      }
+      await deliverWithId(id, 'customers/data_request', payload);
+      expect(await dataRequestCount(a)).toBe(1);
+      const audit = await auditRow(id);
+      expect(audit).toMatchObject({
+        status: 'processed',
+        outcome: 'recorded',
+        matchedIntegrations: 1,
+        shopId: '954889',
+        topic: 'customers/data_request',
+      });
+      expect(JSON.stringify(audit)).not.toContain('jane@example.com');
+      expect(JSON.stringify(audit)).not.toContain('191167');
+    });
+
+    it('a failed erasure is recorded as failed and fully redone by the redelivery', async () => {
+      const [a, b] = [await workspace(), await workspace()];
+      const shop = newShop();
+      expect(await oauth(a, shop)).toBe('ok');
+      await addCustomer(a, 'c-1');
+      await service.disconnect(a, 'shopify');
+      // b: a second holder (historical duplicate); the first holder's erasure fails once.
+      await service.connect(b, 'shopify');
+      await service.setCredentials(b, 'shopify', creds(shop));
+      await addCustomer(b, 'c-1');
+      const id = `wh-${randomUUID()}`;
+      const erase = vi
+        .spyOn(service, 'eraseIntegrationForShopRedact')
+        .mockRejectedValueOnce(Object.assign(new Error('simulated'), { code: '40P01' }));
+
+      await expect(deliverWithId(id, 'shop/redact', { shop_domain: shop })).rejects.toThrow(
+        'simulated',
+      );
+      expect(await auditRow(id)).toMatchObject({ status: 'failed', error: '40P01' });
+      expect(await customerCount(b)).toBe(1); // nothing claimed as done
+
+      await deliverWithId(id, 'shop/redact', { shop_domain: shop });
+      erase.mockRestore();
+      expect(await auditRow(id)).toMatchObject({
+        status: 'processed',
+        outcome: 'erased',
+        matchedIntegrations: 2,
+        attempts: 2,
+      });
+      expect(await customerCount(a)).toBe(0);
+      expect(await customerCount(b)).toBe(0);
+    });
+
+    it('customers/redact erases the listed orders even when the customer row is unknown', async () => {
+      const a = await workspace();
+      const shop = newShop();
+      expect(await oauth(a, shop)).toBe('ok');
+      const integrationId = (await row(a)).id;
+      await db.client.insert(commerceOrders).values([
+        { workspaceId: a, integrationId, provider: 'shopify', externalId: '299938' },
+        { workspaceId: a, integrationId, provider: 'shopify', externalId: '777' },
+      ]);
+      const id = `wh-${randomUUID()}`;
+      await deliverWithId(id, 'customers/redact', {
+        shop_domain: shop,
+        customer: { id: 424242 },
+        orders_to_redact: [299938],
+      });
+      const left = await db.client
+        .select({ externalId: commerceOrders.externalId })
+        .from(commerceOrders)
+        .where(eq(commerceOrders.workspaceId, a));
+      expect(left.map((o) => o.externalId)).toEqual(['777']);
+      expect(await auditRow(id)).toMatchObject({ status: 'processed', outcome: 'erased' });
+    });
+
+    it('an unknown shop (e.g. an alias BRAYN never stored) is acknowledged and audited as unknown_shop', async () => {
+      const id = `wh-${randomUUID()}`;
+      const shop = newShop();
+      await deliverWithId(id, 'shop/redact', { shop_id: 1, shop_domain: shop });
+      expect(await auditRow(id)).toMatchObject({
+        status: 'processed',
+        outcome: 'unknown_shop',
+        matchedIntegrations: 0,
+      });
     });
   });
 });

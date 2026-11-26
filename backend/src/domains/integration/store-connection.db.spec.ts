@@ -119,7 +119,11 @@ describe('IntegrationService.prepareStoreConnection (real DB)', { timeout: 60_00
     expect(await service.prepareStoreConnection(workspaceId, 'shopify', d('back'))).toBe(
       'ok',
     );
-    await service.connect(workspaceId, 'shopify');
+    // The check alone clears nothing; the accepted connection does.
+    expect(await runCount(workspaceId)).toBe(1);
+    expect(
+      await service.connectStore(workspaceId, 'shopify', { shopDomain: d('back'), accessToken: 'shpat_new' }),
+    ).toBe('ok');
     expect(await runCount(workspaceId)).toBe(0);
     expect(await importRuns.getLatestImportRun(workspaceId, 'shopify')).toBeNull();
   });
@@ -143,6 +147,21 @@ describe('IntegrationService.prepareStoreConnection (real DB)', { timeout: 60_00
     expect(
       await service.prepareStoreConnection(workspaceId, 'shopify', d('another')),
     ).toBe('ok');
+    expect(
+      await service.connectStore(workspaceId, 'shopify', { shopDomain: d('another'), accessToken: 'shpat_new' }),
+    ).toBe('ok');
     expect(await runCount(workspaceId)).toBe(0);
+  });
+
+  it('a connect refused by the store-ownership index clears nothing (the reset rolls back with it)', async () => {
+    const owner = randomUUID();
+    workspaceIds.push(owner);
+    await db.client.insert(workspaces).values({ id: owner, name: 'Store connection spec' });
+    expect(await service.connectStore(owner, 'shopify', { shopDomain: d('contested'), accessToken: 'shpat_a' })).toBe('ok');
+    const loser = await connectedWorkspace(d('loser'), { disconnected: true });
+    expect(
+      await service.connectStore(loser, 'shopify', { shopDomain: d('contested'), accessToken: 'shpat_b' }),
+    ).toBe('owned_elsewhere');
+    expect(await runCount(loser)).toBe(1);
   });
 });

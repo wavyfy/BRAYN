@@ -548,6 +548,20 @@ describe('ShopifyOAuthService', () => {
       expect(adapter.ensureWebhookSubscriptions).not.toHaveBeenCalled();
     });
 
+    it('a database failure while storing the connection redirects with a generic error (never a raw 500), no webhook registration', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpat_x' }), { status: 200 })));
+      const integrationService = makeIntegrationService({
+        connectStore: vi.fn(async () => {
+          throw new Error('connection terminated');
+        }),
+      });
+      const adapter = makeAdapter();
+      const service = new ShopifyOAuthService(makeConfig(), integrationService, adapter, makeLogger());
+
+      expect(await startThenCallback(service)).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error');
+      expect(adapter.ensureWebhookSubscriptions).not.toHaveBeenCalled();
+    });
+
     it('still stores fresh credentials when the workspace is already connected (re-authorization)', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpat_rotated' }), { status: 200 })));
       const integrationService = makeIntegrationService();

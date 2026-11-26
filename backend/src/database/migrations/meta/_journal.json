@@ -379,6 +379,13 @@
       "when": 1795691238578,
       "tag": "0053_shopify_store_ownership",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1795693881274,
+      "tag": "0054_shopify_compliance_webhooks",
+      "breakpoints": true
     }
   ]
 }

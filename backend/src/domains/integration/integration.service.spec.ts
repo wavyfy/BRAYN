@@ -951,7 +951,7 @@ describe('IntegrationService', () => {
 
       const result = await service.purgeCommerceCustomer('ws_1', 'int_1', 'shopify_customer_999');
 
-      expect(result).toEqual({ found: false, canonicalCustomerRemoved: false });
+      expect(result).toEqual({ found: false, canonicalCustomerRemoved: false, ordersErased: 0 });
       expect(tx.deleteCalls).toHaveLength(0);
     });
 
@@ -966,7 +966,7 @@ describe('IntegrationService', () => {
 
       const result = await service.purgeCommerceCustomer('ws_1', 'int_1', 'shopify_customer_1');
 
-      expect(result).toEqual({ found: true, canonicalCustomerRemoved: false });
+      expect(result).toEqual({ found: true, canonicalCustomerRemoved: false, ordersErased: 0 });
       expect(tx.deleteCalls).toEqual(
         expect.arrayContaining([commerceOrderLineItems, commerceRefundLineItems, commerceFulfillments, commerceRefunds, commerceOrders, commerceCustomers]),
       );
@@ -988,7 +988,7 @@ describe('IntegrationService', () => {
 
       const result = await service.purgeCommerceCustomer('ws_1', 'int_1', 'shopify_customer_1');
 
-      expect(result).toEqual({ found: true, canonicalCustomerRemoved: true });
+      expect(result).toEqual({ found: true, canonicalCustomerRemoved: true, ordersErased: 0 });
       expect(tx.deleteCalls).toContain(commerceCustomers);
       expect(tx.deleteCalls).toContain(canonicalCustomers);
       expect(tx.deleteCalls).toContain(identityMergeHistory);
@@ -1030,7 +1030,7 @@ describe('IntegrationService', () => {
 
       const result = await service.purgeCommerceCustomer('ws_1', 'int_1', 'shopify_customer_1');
 
-      expect(result).toEqual({ found: true, canonicalCustomerRemoved: true });
+      expect(result).toEqual({ found: true, canonicalCustomerRemoved: true, ordersErased: 0 });
       expect(tx.deleteCalls.filter((table) => table === canonicalCustomers)).toHaveLength(2);
       expect(tx.deleteCalls.filter((table) => table === identityMergeHistory)).toHaveLength(2);
       // No linked visitors → no website deletes at all.
@@ -1046,7 +1046,7 @@ describe('IntegrationService', () => {
 
       const result = await service.purgeCommerceCustomer('ws_1', 'int_1', 'shopify_customer_1');
 
-      expect(result).toEqual({ found: true, canonicalCustomerRemoved: false });
+      expect(result).toEqual({ found: true, canonicalCustomerRemoved: false, ordersErased: 0 });
       expect(tx.deleteCalls).not.toContain(canonicalCustomers);
     });
   });

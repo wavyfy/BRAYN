@@ -2,6 +2,7 @@ import { createHmac } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { ShopifyComplianceService } from './shopify-compliance.service';
 import { customerDataRequests } from '../../../../database/schema/customer-data-requests';
+import { ConflictError } from '../../../../common/errors/app-error';
 import type { DatabaseService } from '../../../../database/database.service';
 import type { IntegrationService } from '../../integration.service';
 import type { ConfigService } from '@nestjs/config';
@@ -23,10 +24,27 @@ function makeLogger(): StructuredLoggerService {
   return { event: vi.fn() } as unknown as StructuredLoggerService;
 }
 
-function makeDatabase() {
-  const values = vi.fn(async (row: Record<string, unknown>) => void row);
+/**
+ * `claim` = what the shopify_compliance_webhooks claim upsert returns: a row (this attempt owns the delivery) or none,
+ * in which case `existingStatus` is the status of the already-recorded delivery. Real-DB behaviour of the claim is
+ * covered in store-ownership.db.spec.
+ */
+function makeDatabase(opts: { claimed?: boolean; existingStatus?: string } = {}) {
+  const claimed = opts.claimed ?? true;
+  const values = vi.fn((rows: unknown) => ({
+    rows,
+    onConflictDoUpdate: () => ({ returning: async () => (claimed ? [{ id: 'claim_1' }] : []) }),
+    then: (resolve: (value: unknown) => unknown) => resolve(undefined),
+  }));
   const insert = vi.fn(() => ({ values }));
-  return { database: { client: { insert } } as unknown as DatabaseService, insert, values };
+  const set = vi.fn(() => ({ where: vi.fn(async () => undefined) }));
+  const update = vi.fn(() => ({ set }));
+  const select = vi.fn(() => ({
+    from: () => ({ where: () => ({ limit: async () => [{ status: opts.existingStatus ?? 'processed' }] }) }),
+  }));
+  const client = { insert, update, select };
+  const transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(client));
+  return { database: { client, transaction } as unknown as DatabaseService, insert, values, set };
 }
 
 describe('ShopifyComplianceService', () => {
@@ -141,14 +159,14 @@ describe('ShopifyComplianceService', () => {
       const integration = { id: 'int_1', workspaceId: 'ws_1' };
       const integrationService = {
         findAllByShopDomain: vi.fn(async () => [integration]),
-        purgeCommerceCustomer: vi.fn(async () => ({ found: true, canonicalCustomerRemoved: true })),
+        purgeCommerceCustomer: vi.fn(async () => ({ found: true, canonicalCustomerRemoved: true, ordersErased: 0 })),
       } as unknown as IntegrationService;
       const service = new ShopifyComplianceService(makeConfig(), database, integrationService, makeLogger());
 
       const rawBody = JSON.stringify({ shop_domain: 'wavyfyy.myshopify.com', customer: { id: 191167, email: 'jane@example.com' } });
       await service.handle('customers/redact', rawBody, { 'x-shopify-hmac-sha256': sign(rawBody) });
 
-      expect(integrationService.purgeCommerceCustomer).toHaveBeenCalledWith('ws_1', 'int_1', '191167');
+      expect(integrationService.purgeCommerceCustomer).toHaveBeenCalledWith('ws_1', 'int_1', '191167', []);
     });
 
     it('does nothing (but still acknowledges) when the shop is unrecognized', async () => {
@@ -227,6 +245,58 @@ describe('ShopifyComplianceService', () => {
       await expect(service.handle('shop/redact', rawBody, { 'x-shopify-hmac-sha256': sign(rawBody) })).resolves.toBeUndefined();
 
       expect(integrationService.eraseIntegrationForShopRedact).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('retry contract (claim by X-Shopify-Webhook-Id)', () => {
+    const shopKnown = () =>
+      ({
+        findAllByShopDomain: vi.fn(async () => [{ id: 'int_1', workspaceId: 'ws_1', status: 'connected' }]),
+        eraseIntegrationForShopRedact: vi.fn(async () => ({ found: true })),
+        purgeCommerceCustomer: vi.fn(async () => ({ found: true, canonicalCustomerRemoved: false, ordersErased: 2 })),
+      }) as unknown as IntegrationService;
+    const deliver = (service: ShopifyComplianceService, topic: string, payload: object) => {
+      const rawBody = JSON.stringify(payload);
+      return service.handle(topic, rawBody, { 'x-shopify-hmac-sha256': sign(rawBody), 'x-shopify-webhook-id': 'wh_1' });
+    };
+
+    it('a redelivery of an already-processed webhook is acknowledged without doing the work again', async () => {
+      const { database } = makeDatabase({ claimed: false, existingStatus: 'processed' });
+      const integrationService = shopKnown();
+      const service = new ShopifyComplianceService(makeConfig(), database, integrationService, makeLogger());
+
+      await expect(deliver(service, 'shop/redact', { shop_domain: 'wavyfyy.myshopify.com' })).resolves.toBeUndefined();
+      expect(integrationService.eraseIntegrationForShopRedact).not.toHaveBeenCalled();
+    });
+
+    it('a redelivery while an attempt is still running is answered 409 (Shopify retries later), with no work done', async () => {
+      const { database } = makeDatabase({ claimed: false, existingStatus: 'processing' });
+      const integrationService = shopKnown();
+      const service = new ShopifyComplianceService(makeConfig(), database, integrationService, makeLogger());
+
+      await expect(deliver(service, 'shop/redact', { shop_domain: 'wavyfyy.myshopify.com' })).rejects.toBeInstanceOf(ConflictError);
+      expect(integrationService.eraseIntegrationForShopRedact).not.toHaveBeenCalled();
+    });
+
+    it('a failed erasure is recorded as failed (error category only) and rethrown, so Shopify redelivers', async () => {
+      const { database, set } = makeDatabase();
+      const integrationService = shopKnown();
+      vi.mocked(integrationService.eraseIntegrationForShopRedact).mockRejectedValueOnce(
+        Object.assign(new Error('deadlock detected on row jane@example.com'), { code: '40P01' }),
+      );
+      const service = new ShopifyComplianceService(makeConfig(), database, integrationService, makeLogger());
+
+      await expect(deliver(service, 'shop/redact', { shop_domain: 'wavyfyy.myshopify.com' })).rejects.toThrow('deadlock');
+      expect(set).toHaveBeenCalledWith({ status: 'failed', error: '40P01' });
+    });
+
+    it('customers/redact passes orders_to_redact through, so orders are erased even when the customer row is unknown', async () => {
+      const { database } = makeDatabase();
+      const integrationService = shopKnown();
+      const service = new ShopifyComplianceService(makeConfig(), database, integrationService, makeLogger());
+
+      await deliver(service, 'customers/redact', { shop_domain: 'wavyfyy.myshopify.com', orders_to_redact: [299938, 280263] });
+      expect(integrationService.purgeCommerceCustomer).toHaveBeenCalledWith('ws_1', 'int_1', undefined, ['299938', '280263']);
     });
   });
 
