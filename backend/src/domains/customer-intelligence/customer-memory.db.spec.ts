@@ -295,7 +295,7 @@ describe('Customer memory (real DB)', { timeout: 90_000 }, () => {
       await integrationService.purgeCommerceCustomer(ws.b, wooB, 'w1');
       const result = await integrationService.purgeCommerceCustomer(ws.b, shopifyB, 's1');
 
-      expect(result).toEqual({ found: true, canonicalCustomerRemoved: true });
+      expect(result).toEqual({ found: true, canonicalCustomerRemoved: true, ordersErased: 0 });
       expect(await db.client.select().from(customerMemoryEntries).where(inArray(customerMemoryEntries.id, ids))).toHaveLength(0);
       expect(await db.client.select().from(customerMemoryEntryHistory).where(inArray(customerMemoryEntryHistory.memoryEntryId, ids))).toHaveLength(0);
       expect(await db.client.select().from(customerMemoryEntries).where(eq(customerMemoryEntries.workspaceId, ws.b))).toHaveLength(0);

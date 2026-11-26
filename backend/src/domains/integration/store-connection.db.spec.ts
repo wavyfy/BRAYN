@@ -21,6 +21,9 @@ describe('IntegrationService.prepareStoreConnection (real DB)', { timeout: 60_00
   let service: IntegrationService;
   let importRuns: ImportRunService;
   const workspaceIds: string[] = [];
+  // Unique per run: one store can be live in only one workspace (migration 0053), so fixed domains would collide.
+  const run = randomUUID().slice(0, 8);
+  const d = (name: string) => `${name}-${run}.myshopify.com`;
 
   beforeAll(async () => {
     moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -94,14 +97,14 @@ describe('IntegrationService.prepareStoreConnection (real DB)', { timeout: 60_00
     const workspaceId = randomUUID();
     workspaceIds.push(workspaceId);
     await db.client.insert(workspaces).values({ id: workspaceId, name: 'Store connection spec' });
-    expect(await service.prepareStoreConnection(workspaceId, 'shopify', 'any.myshopify.com')).toBe(
+    expect(await service.prepareStoreConnection(workspaceId, 'shopify', d('any'))).toBe(
       'ok',
     );
   });
 
   it('re-authorizing the same live store keeps its import history (onboarding stays complete)', async () => {
-    const workspaceId = await connectedWorkspace('same.myshopify.com', { withData: true });
-    expect(await service.prepareStoreConnection(workspaceId, 'shopify', 'SAME.myshopify.com')).toBe(
+    const workspaceId = await connectedWorkspace(d('same'), { withData: true });
+    expect(await service.prepareStoreConnection(workspaceId, 'shopify', d('same').toUpperCase())).toBe(
       'ok',
     );
     expect(await runCount(workspaceId)).toBe(1);
@@ -109,37 +112,56 @@ describe('IntegrationService.prepareStoreConnection (real DB)', { timeout: 60_00
   });
 
   it('reconnecting after a disconnect clears the previous import, so onboarding requires a fresh import', async () => {
-    const workspaceId = await connectedWorkspace('back.myshopify.com', {
+    const workspaceId = await connectedWorkspace(d('back'), {
       disconnected: true,
       withData: true,
     });
-    expect(await service.prepareStoreConnection(workspaceId, 'shopify', 'back.myshopify.com')).toBe(
+    expect(await service.prepareStoreConnection(workspaceId, 'shopify', d('back'))).toBe(
       'ok',
     );
-    await service.connect(workspaceId, 'shopify');
+    // The check alone clears nothing; the accepted connection does.
+    expect(await runCount(workspaceId)).toBe(1);
+    expect(
+      await service.connectStore(workspaceId, 'shopify', { shopDomain: d('back'), accessToken: 'shpat_new' }),
+    ).toBe('ok');
     expect(await runCount(workspaceId)).toBe(0);
     expect(await importRuns.getLatestImportRun(workspaceId, 'shopify')).toBeNull();
   });
 
   it("a different store is refused while the previous store's data is still held (live or disconnected), and nothing is cleared", async () => {
-    const live = await connectedWorkspace('first.myshopify.com', { withData: true });
-    const parked = await connectedWorkspace('first.myshopify.com', {
+    const live = await connectedWorkspace(d('first'), { withData: true });
+    const parked = await connectedWorkspace(d('first-parked'), {
       withData: true,
       disconnected: true,
     });
     for (const workspaceId of [live, parked]) {
       expect(
-        await service.prepareStoreConnection(workspaceId, 'shopify', 'second.myshopify.com'),
+        await service.prepareStoreConnection(workspaceId, 'shopify', d('second')),
       ).toBe('different_store');
       expect(await runCount(workspaceId)).toBe(1);
     }
   });
 
   it('a different store with no data left from the previous one is allowed, with the old import cleared', async () => {
-    const workspaceId = await connectedWorkspace('empty.myshopify.com', { disconnected: true });
+    const workspaceId = await connectedWorkspace(d('empty'), { disconnected: true });
     expect(
-      await service.prepareStoreConnection(workspaceId, 'shopify', 'another.myshopify.com'),
+      await service.prepareStoreConnection(workspaceId, 'shopify', d('another')),
+    ).toBe('ok');
+    expect(
+      await service.connectStore(workspaceId, 'shopify', { shopDomain: d('another'), accessToken: 'shpat_new' }),
     ).toBe('ok');
     expect(await runCount(workspaceId)).toBe(0);
+  });
+
+  it('a connect refused by the store-ownership index clears nothing (the reset rolls back with it)', async () => {
+    const owner = randomUUID();
+    workspaceIds.push(owner);
+    await db.client.insert(workspaces).values({ id: owner, name: 'Store connection spec' });
+    expect(await service.connectStore(owner, 'shopify', { shopDomain: d('contested'), accessToken: 'shpat_a' })).toBe('ok');
+    const loser = await connectedWorkspace(d('loser'), { disconnected: true });
+    expect(
+      await service.connectStore(loser, 'shopify', { shopDomain: d('contested'), accessToken: 'shpat_b' }),
+    ).toBe('owned_elsewhere');
+    expect(await runCount(loser)).toBe(1);
   });
 });

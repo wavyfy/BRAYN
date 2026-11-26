@@ -1,0 +1,2 @@
+-- Store ownership: one live workspace per Shopify store. Fails (atomically, nothing changed) if two live rows already share a store; resolve those by an explicit owner decision first (doc 22), never by automatic cleanup.
+CREATE UNIQUE INDEX IF NOT EXISTS "integrations_shopify_live_shop_unique" ON "integrations" USING btree (lower("shop_domain")) WHERE "integrations"."provider" = 'shopify' and "integrations"."status" <> 'disconnected' and "integrations"."shop_domain" is not null;

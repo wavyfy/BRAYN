@@ -52,7 +52,10 @@ describe('FlexyPe webhook intake (real DB)', { timeout: 90_000 }, () => {
   let processor: WebhookEventProcessorService;
   const emitted: DomainEvent<CheckoutAbandonedPayload>[] = [];
   const ws = { a: randomUUID(), b: randomUUID(), noShop: randomUUID() };
-  const shop = { a: 'flexype-spec-a.myshopify.com', b: 'flexype-spec-b.myshopify.com' };
+  const shop = {
+    a: `flexype-spec-a-${randomUUID().slice(0, 8)}.myshopify.com`,
+    b: `flexype-spec-b-${randomUUID().slice(0, 8)}.myshopify.com`,
+  };
 
   beforeAll(async () => {
     moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -177,7 +180,7 @@ describe('FlexyPe webhook intake (real DB)', { timeout: 90_000 }, () => {
     const { webhookSecret } = await setup.generateSecret(ws.a);
     const eventId = randomUUID();
     const body = flexypeAbandonedCheckout(
-      { store: { shopify_domain: 'FLEXYPE-SPEC-A.myshopify.com' } },
+      { store: { shopify_domain: shop.a.toUpperCase() } },
       { session_id: `sess_${eventId}` },
     );
 

@@ -137,7 +137,7 @@ describe('Customer erasure — linked website visitors (real DB)', { timeout: 90
 
     const result = await integrationService.purgeCommerceCustomer(ws.a, integrationIds[`${ws.a}:shopify`], 'a1');
 
-    expect(result).toEqual({ found: true, canonicalCustomerRemoved: true });
+    expect(result).toEqual({ found: true, canonicalCustomerRemoved: true, ordersErased: 0 });
     expect(await canonicalExists(customerA)).toBe(false);
     expect(await websiteRowsOf(linkedA)).toEqual({ visitors: 0, sessions: 0, events: 0 });
     // No identity_signal (email) left behind anywhere in the workspace.
@@ -172,7 +172,7 @@ describe('Customer erasure — linked website visitors (real DB)', { timeout: 90
     await integrationService.purgeCommerceCustomer(ws.c, integrationIds[`${ws.c}:woocommerce`], 'w1');
     const result = await integrationService.purgeCommerceCustomer(ws.c, integrationIds[`${ws.c}:shopify`], 's1');
 
-    expect(result).toEqual({ found: true, canonicalCustomerRemoved: true });
+    expect(result).toEqual({ found: true, canonicalCustomerRemoved: true, ordersErased: 0 });
     expect(await canonicalExists(survivor)).toBe(false);
     expect(await canonicalExists(merged)).toBe(false);
     expect(await websiteRowsOf(mergedVisitor)).toEqual({ visitors: 0, sessions: 0, events: 0 });

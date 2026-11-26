@@ -20,14 +20,24 @@ function signedHeaders(overrides: Record<string, string> = {}, body = BODY, secr
   };
 }
 
-function makeService(options: { rows?: { workspaceId: string; status: string }[]; clientSecret?: string | undefined } = {}) {
+function makeService(
+  options: {
+    rows?: { workspaceId: string; status: string }[];
+    conflicts?: { workspaceId: string; status: string }[];
+    clientSecret?: string | undefined;
+  } = {},
+) {
   const chain: Record<string, unknown> = {};
   chain.from = vi.fn(() => chain);
   chain.where = vi.fn(async () => options.rows ?? [{ workspaceId: 'ws_1', status: 'connected' }]);
   const client = { select: vi.fn(() => chain) };
   const env: Partial<Env> = { SHOPIFY_APP_CLIENT_SECRET: 'clientSecret' in options ? options.clientSecret : CLIENT_SECRET };
   const config = { get: (key: keyof Env) => env[key] } as unknown as ConfigService<Env, true>;
-  const integrationService = { disconnect: vi.fn(async () => ({})) } as unknown as IntegrationService;
+  const rows = options.rows ?? [{ workspaceId: 'ws_1', status: 'connected' }];
+  const integrationService = {
+    disconnect: vi.fn(async () => ({})),
+    resolveShopHolders: vi.fn(async () => ({ holders: rows, conflicts: options.conflicts ?? [] })),
+  } as unknown as IntegrationService;
   const logger = { event: vi.fn() } as unknown as StructuredLoggerService;
 
   return {
@@ -57,6 +67,14 @@ describe('ShopifyUninstallService', () => {
     expect(integrationService.disconnect).toHaveBeenCalledWith('ws_2', 'shopify');
   });
 
+  it('resolves by the payload shop id (stable across domain aliases) and never disconnects a same-domain different store', async () => {
+    const { service, integrationService } = makeService({ conflicts: [{ workspaceId: 'ws_other', status: 'connected' }] });
+
+    await expect(service.handle(BODY, signedHeaders())).resolves.toEqual({ disconnected: 1 });
+    expect(integrationService.resolveShopHolders).toHaveBeenCalledWith(SHOP, '1');
+    expect(integrationService.disconnect).not.toHaveBeenCalledWith('ws_other', 'shopify');
+  });
+
   it('is harmless when repeated: an already-disconnected integration is a successful no-op', async () => {
     const { service, integrationService } = makeService({ rows: [{ workspaceId: 'ws_1', status: 'disconnected' }] });
 
@@ -71,10 +89,10 @@ describe('ShopifyUninstallService', () => {
   });
 
   it('rejects a delivery not signed with the app client secret, touching nothing', async () => {
-    const { service, client, integrationService } = makeService();
+    const { service, integrationService } = makeService();
 
     await expect(service.handle(BODY, signedHeaders({}, BODY, 'attacker_secret'))).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
-    expect(client.select).not.toHaveBeenCalled();
+    expect(integrationService.resolveShopHolders).not.toHaveBeenCalled();
     expect(integrationService.disconnect).not.toHaveBeenCalled();
   });
 

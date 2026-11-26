@@ -167,7 +167,7 @@ describe('Automation internal notification (real DB)', { timeout: 120_000 }, () 
     await notifications.createForOpportunity(wsA, customer.id, opportunity.id);
 
     const result = await integrationService.purgeCommerceCustomer(wsA, integration.id, 'erase-1');
-    expect(result).toEqual({ found: true, canonicalCustomerRemoved: true });
+    expect(result).toEqual({ found: true, canonicalCustomerRemoved: true, ordersErased: 0 });
     expect(await db.client.select().from(internalNotifications).where(eq(internalNotifications.canonicalCustomerId, customer.id))).toHaveLength(0);
   });
 
@@ -188,7 +188,7 @@ describe('Automation internal notification (real DB)', { timeout: 120_000 }, () 
 
     const result = await integrationService.purgeCommerceCustomer(wsA, integration.id, 'erase-ai-1');
 
-    expect(result).toEqual({ found: true, canonicalCustomerRemoved: true });
+    expect(result).toEqual({ found: true, canonicalCustomerRemoved: true, ordersErased: 0 });
     expect(await db.client.select().from(canonicalCustomers).where(eq(canonicalCustomers.id, customer.id))).toHaveLength(0);
     const kept = await db.client.select().from(aiActionRequests).where(inArray(aiActionRequests.id, audits.map((audit) => audit.id)));
     expect(kept).toHaveLength(audits.length);

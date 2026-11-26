@@ -156,12 +156,13 @@ describe('WooCommerce reconnect keeps or clears the webhook secret (real DB)', {
   });
 
   it('Shopify keeps its existing behaviour: re-entered credentials replace the stored ones as-is', async () => {
+    const shop = `x-${randomUUID().slice(0, 8)}.myshopify.com`;
     await integrationService.connect(wsB, 'shopify');
     vi.spyOn(moduleRef.get(ShopifyAdapter), 'verifyConnection').mockResolvedValue(true);
-    await integrationService.connectCredentials(wsB, 'shopify', { shopDomain: 'x.myshopify.com', accessToken: 't1', webhookSecret: 's1' });
+    await integrationService.connectCredentials(wsB, 'shopify', { shopDomain: shop, accessToken: 't1', webhookSecret: 's1' });
 
-    await integrationService.connectCredentials(wsB, 'shopify', { shopDomain: 'x.myshopify.com', accessToken: 't2' });
+    await integrationService.connectCredentials(wsB, 'shopify', { shopDomain: shop, accessToken: 't2' });
 
-    expect(await integrationService.getCredentials(wsB, 'shopify')).toEqual({ shopDomain: 'x.myshopify.com', accessToken: 't2' });
+    expect(await integrationService.getCredentials(wsB, 'shopify')).toEqual({ shopDomain: shop, accessToken: 't2' });
   });
 });

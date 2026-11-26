@@ -117,7 +117,7 @@ describe('Durable webhook processing (real DB)', { timeout: 30_000 }, () => {
     const integrationService = moduleRef.get(IntegrationService);
     integrationId = (await integrationService.connect(workspaceId, 'shopify')).id;
     await integrationService.setCredentials(workspaceId, 'shopify', {
-      shopDomain: 'brayn-durability-test.myshopify.com',
+      shopDomain: `brayn-durability-${randomUUID().slice(0, 8)}.myshopify.com`,
       accessToken: 'unused-in-this-test',
       webhookSecret,
     });

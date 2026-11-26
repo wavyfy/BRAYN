@@ -15,7 +15,11 @@ import IntegrationsPage from './page';
 afterEach(cleanup);
 beforeEach(() => apiFetch.mockReset());
 
-function renderPage(integrations: unknown[], role = 'owner') {
+function renderPage(
+  integrations: unknown[],
+  role = 'owner',
+  searchParams: Record<string, string> = {},
+) {
   apiFetch.mockImplementation(async (...args: unknown[]) => {
     const path = String(args[0]);
     if (path.endsWith('/integrations')) return integrations;
@@ -29,7 +33,7 @@ function renderPage(integrations: unknown[], role = 'owner') {
   });
   return IntegrationsPage({
     params: Promise.resolve({ workspaceId: 'ws_1' }),
-    searchParams: Promise.resolve({}),
+    searchParams: Promise.resolve(searchParams),
   });
 }
 
@@ -44,6 +48,14 @@ describe('IntegrationsPage — onboarding v1 launch readiness', () => {
     expect(screen.getAllByText('Coming soon')).toHaveLength(2);
     expect(screen.getByText(/WooCommerce support is being verified/)).toBeTruthy();
     expect(screen.getByText(/Optional — not needed to use BRAYN/)).toBeTruthy();
+  });
+
+  it('explains a store held by another workspace without naming that workspace', async () => {
+    render(await renderPage([], 'owner', { shopify: 'error', reason: 'owned_elsewhere' }));
+
+    expect(screen.getByRole('alert').textContent).toBe(
+      'This Shopify store is already connected to another BRAYN workspace. Disconnect it there first, or contact support to move it.',
+    );
   });
 
   it('keeps an existing WooCommerce connection manageable, labelled not yet verified', async () => {

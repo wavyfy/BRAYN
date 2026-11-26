@@ -63,7 +63,7 @@ describe('Phase 16 — Commerce → Automation loop (e2e, real DB)', () => {
 
   const workspaceId = randomUUID();
   const webhookSecret = 'full-loop-test-secret';
-  const shopDomain = 'brayn-full-loop-test.myshopify.com';
+  const shopDomain = `brayn-full-loop-${randomUUID().slice(0, 8)}.myshopify.com`;
   const customerExternalId = String(Date.now());
   let automationDefinitionId: string;
   let canonicalCustomerId: string;

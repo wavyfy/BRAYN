@@ -1,3 +1,5 @@
+import { ShopifyComplianceMonitorController } from './providers/shopify/shopify-compliance-monitor.controller';
+import { InternalMonitorGuard } from '../../common/auth/internal-monitor.guard';
 import { Module } from '@nestjs/common';
 import { WorkspaceModule } from '../workspace/workspace.module';
 import { CommerceModule } from '../commerce/commerce.module';
@@ -67,8 +69,10 @@ import { ShopifyWebhookMigrationGuard } from './providers/shopify/shopify-webhoo
     FlexyPeWebhookSetupController,
     CustomerErasureController,
     ShopifyWebhookMigrationController,
+    ShopifyComplianceMonitorController,
   ],
   providers: [
+    InternalMonitorGuard,
     IntegrationService,
     CustomerErasureService,
     ProviderRegistry,

@@ -315,7 +315,7 @@ describe('Identity safe merge (real DB)', { timeout: 90_000 }, () => {
     await integrationService.purgeCommerceCustomer(ws.b, shopifyB, 'b1');
     const result = await integrationService.purgeCommerceCustomer(ws.b, shopifyB, 'b2');
 
-    expect(result).toEqual({ found: true, canonicalCustomerRemoved: true });
+    expect(result).toEqual({ found: true, canonicalCustomerRemoved: true, ordersErased: 0 });
     const left = await db.client
       .select()
       .from(canonicalCustomers)

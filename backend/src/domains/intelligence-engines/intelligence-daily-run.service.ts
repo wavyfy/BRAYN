@@ -10,6 +10,7 @@ import { RevenueOpportunityService } from './revenue-opportunity.service';
 import { RecommendationService } from './recommendation.service';
 import { captureException } from '../../common/observability/sentry';
 import { applyCheckoutSessionRetention, DEFAULT_CHECKOUT_UNMATCHED_RETENTION_DAYS } from '../integration/checkout-session.service';
+import { applyCompliancePayloadRetention } from '../integration/providers/shopify/shopify-compliance-retention';
 
 export type IntelligenceDailyRun = typeof intelligenceDailyRuns.$inferSelect;
 
@@ -213,6 +214,14 @@ export class IntelligenceDailyRunService {
     try {
       const retention = await applyCheckoutSessionRetention(this.database.client, new Date(), DEFAULT_CHECKOUT_UNMATCHED_RETENTION_DAYS);
       this.logger.event('log', 'Checkout session retention applied', 'IntelligenceDailyRunService', { runId: run.id, ...retention });
+      // Shopify compliance: expired payloads of unresolved deliveries cleared; open ones escalated daily (counts only).
+      const compliance = await applyCompliancePayloadRetention(this.database.client, new Date());
+      this.logger.event(
+        compliance.complianceOverdue > 0 ? 'error' : 'log',
+        compliance.complianceOverdue > 0 ? 'Shopify compliance deliveries overdue for operator action' : 'Shopify compliance retention applied',
+        'IntelligenceDailyRunService',
+        { runId: run.id, ...compliance },
+      );
     } catch (error) {
       this.logger.event('error', 'Checkout session retention failed', 'IntelligenceDailyRunService', {
         runId: run.id,

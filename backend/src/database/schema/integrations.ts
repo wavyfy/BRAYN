@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { index, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { id, timestamps } from './columns';
 import { workspaces } from './workspaces';
@@ -54,6 +55,13 @@ export const integrations = pgTable(
      * don't have one.
      */
     shopDomain: text('shop_domain'),
+    /**
+     * Shopify's numeric shop id (the `shop_id` of compliance payloads, the `id` of `app/uninstalled`, the number in
+     * `gid://shopify/Shop/<n>`): the store's stable identity, unlike its myshopify domain. Captured at connect from
+     * `shop { id }`, or learned from a verified compliance delivery for a legacy row. Null for legacy rows not yet
+     * backfilled and for other providers.
+     */
+    shopifyShopId: text('shopify_shop_id'),
     /** Set when a sync completes successfully (doc 06 — state must be observable). Null until the first sync. */
     lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
     /** Set when a sync fails; cleared on connect/reconnect/successful sync. */
@@ -63,5 +71,22 @@ export const integrations = pgTable(
   (table) => [
     uniqueIndex('integrations_workspace_provider_unique').on(table.workspaceId, table.provider),
     index('integrations_shop_domain_idx').on(table.shopDomain),
+    /**
+     * Store ownership (doc 22): a Shopify store is live in at most one workspace. Enforced here, not by a pre-insert
+     * read, so two concurrent OAuth callbacks for the same store can't both win. Disconnected rows are excluded: they
+     * keep `shop_domain` for compliance erasure of retained data, and a reconnect in the owning workspace is allowed.
+     */
+    uniqueIndex('integrations_shopify_live_shop_unique')
+      .on(sql`lower(${table.shopDomain})`)
+      .where(
+        sql`${table.provider} = 'shopify' and ${table.status} <> 'disconnected' and ${table.shopDomain} is not null`,
+      ),
+    // Same invariant by stable id, so a store reached under another domain alias is still one store.
+    uniqueIndex('integrations_shopify_live_shop_id_unique')
+      .on(table.shopifyShopId)
+      .where(
+        sql`${table.provider} = 'shopify' and ${table.status} <> 'disconnected' and ${table.shopifyShopId} is not null`,
+      ),
+    index('integrations_shopify_shop_id_idx').on(table.shopifyShopId),
   ],
 );

@@ -912,24 +912,25 @@ describe('IntegrationService', () => {
     });
   });
 
-  describe('findByShopDomain()', () => {
-    it('resolves the most recently updated integration for that shop domain', async () => {
-      const row = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', shopDomain: 'wavyfyy.myshopify.com' };
-      const chain = makeChain([row]);
+  describe('resolveShopHolders()', () => {
+    it('matches by stable shop id first, by domain only for rows without one, and flags a same-domain different store', async () => {
+      const rows = [
+        { id: 'by_id', workspaceId: 'ws_1', status: 'connected', shopDomain: 'new-alias.myshopify.com', shopifyShopId: '42' },
+        { id: 'legacy', workspaceId: 'ws_2', status: 'disconnected', shopDomain: 'wavyfyy.myshopify.com', shopifyShopId: null },
+        { id: 'other_store', workspaceId: 'ws_3', status: 'disconnected', shopDomain: 'WAVYFYY.myshopify.com', shopifyShopId: '99' },
+      ];
+      const chain = makeChain(rows);
       const client = { select: vi.fn(() => chain) };
       const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
-      const result = await service.findByShopDomain('wavyfyy.myshopify.com');
+      const { holders, conflicts } = await service.resolveShopHolders('wavyfyy.myshopify.com', '42');
+      expect(holders.map((h) => h.id)).toEqual(['by_id', 'legacy']);
+      expect(conflicts.map((h) => h.id)).toEqual(['other_store']);
 
-      expect(result).toEqual(row);
-    });
-
-    it('returns null when no integration has that shop domain', async () => {
-      const chain = makeChain([]);
-      const client = { select: vi.fn(() => chain) };
-      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
-
-      await expect(service.findByShopDomain('unknown.myshopify.com')).resolves.toBeNull();
+      // Without a shop id (legacy caller), the domain alone decides.
+      const legacy = await service.resolveShopHolders('wavyfyy.myshopify.com');
+      expect(legacy.holders.map((h) => h.id)).toEqual(['legacy', 'other_store']);
+      expect(legacy.conflicts).toEqual([]);
     });
   });
 
@@ -961,7 +962,7 @@ describe('IntegrationService', () => {
 
       const result = await service.purgeCommerceCustomer('ws_1', 'int_1', 'shopify_customer_999');
 
-      expect(result).toEqual({ found: false, canonicalCustomerRemoved: false });
+      expect(result).toEqual({ found: false, canonicalCustomerRemoved: false, ordersErased: 0 });
       expect(tx.deleteCalls).toHaveLength(0);
     });
 
@@ -976,7 +977,7 @@ describe('IntegrationService', () => {
 
       const result = await service.purgeCommerceCustomer('ws_1', 'int_1', 'shopify_customer_1');
 
-      expect(result).toEqual({ found: true, canonicalCustomerRemoved: false });
+      expect(result).toEqual({ found: true, canonicalCustomerRemoved: false, ordersErased: 0 });
       expect(tx.deleteCalls).toEqual(
         expect.arrayContaining([commerceOrderLineItems, commerceRefundLineItems, commerceFulfillments, commerceRefunds, commerceOrders, commerceCustomers]),
       );
@@ -998,7 +999,7 @@ describe('IntegrationService', () => {
 
       const result = await service.purgeCommerceCustomer('ws_1', 'int_1', 'shopify_customer_1');
 
-      expect(result).toEqual({ found: true, canonicalCustomerRemoved: true });
+      expect(result).toEqual({ found: true, canonicalCustomerRemoved: true, ordersErased: 0 });
       expect(tx.deleteCalls).toContain(commerceCustomers);
       expect(tx.deleteCalls).toContain(canonicalCustomers);
       expect(tx.deleteCalls).toContain(identityMergeHistory);
@@ -1040,7 +1041,7 @@ describe('IntegrationService', () => {
 
       const result = await service.purgeCommerceCustomer('ws_1', 'int_1', 'shopify_customer_1');
 
-      expect(result).toEqual({ found: true, canonicalCustomerRemoved: true });
+      expect(result).toEqual({ found: true, canonicalCustomerRemoved: true, ordersErased: 0 });
       expect(tx.deleteCalls.filter((table) => table === canonicalCustomers)).toHaveLength(2);
       expect(tx.deleteCalls.filter((table) => table === identityMergeHistory)).toHaveLength(2);
       // No linked visitors → no website deletes at all.
@@ -1056,7 +1057,7 @@ describe('IntegrationService', () => {
 
       const result = await service.purgeCommerceCustomer('ws_1', 'int_1', 'shopify_customer_1');
 
-      expect(result).toEqual({ found: true, canonicalCustomerRemoved: false });
+      expect(result).toEqual({ found: true, canonicalCustomerRemoved: false, ordersErased: 0 });
       expect(tx.deleteCalls).not.toContain(canonicalCustomers);
     });
   });
