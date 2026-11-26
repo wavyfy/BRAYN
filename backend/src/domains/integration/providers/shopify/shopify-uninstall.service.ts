@@ -1,8 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, eq, sql } from 'drizzle-orm';
 import { DatabaseService } from '../../../../database/database.service';
-import { integrations } from '../../../../database/schema/integrations';
 import { ProviderError, UnauthenticatedError, ValidationError } from '../../../../common/errors/app-error';
 import { StructuredLoggerService } from '../../../../common/logging/structured-logger.service';
 import { IntegrationService } from '../../integration.service';
@@ -56,21 +54,28 @@ export class ShopifyUninstallService {
       throw new ValidationError('Missing or invalid X-Shopify-Shop-Domain.');
     }
 
-    const connected = await this.database.client
-      .select({ workspaceId: integrations.workspaceId, status: integrations.status })
-      .from(integrations)
-      .where(and(eq(integrations.provider, 'shopify'), sql`lower(${integrations.shopDomain}) = ${shopDomain.toLowerCase()}`));
+    // The payload is the Shop resource: its `id` is the stable shop id, so an uninstall reached under another domain
+    // alias still finds the store; a row whose domain matches but whose id differs is another store and is left alone.
+    let shopId: string | undefined;
+    try {
+      const id = (JSON.parse(rawBody) as { id?: unknown }).id;
+      shopId = typeof id === 'number' || typeof id === 'string' ? String(id) : undefined;
+    } catch {
+      shopId = undefined;
+    }
+    const { holders, conflicts } = await this.integrationService.resolveShopHolders(shopDomain, shopId);
 
     let disconnected = 0;
-    for (const integration of connected) {
+    for (const integration of holders) {
       if (integration.status === 'disconnected') continue;
       await this.integrationService.disconnect(integration.workspaceId, 'shopify');
       disconnected++;
     }
 
-    this.logger.event('log', 'Shopify app/uninstalled processed', 'ShopifyUninstallService', {
+    this.logger.event(holders.length === 0 || conflicts.length > 0 ? 'warn' : 'log', 'Shopify app/uninstalled processed', 'ShopifyUninstallService', {
       shopDomain,
-      matched: connected.length,
+      matched: holders.length,
+      conflicting: conflicts.length,
       disconnected,
     });
     return { disconnected };

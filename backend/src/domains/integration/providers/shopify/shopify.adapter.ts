@@ -187,6 +187,8 @@ const SHOPIFY_WEBHOOK_SUBSCRIPTION_CREATE_MUTATION = `
 
 /** Minimal Admin GraphQL query for verifyConnection() — only `id` is consumed, proving the token works without over-fetching. */
 const SHOPIFY_VERIFY_CONNECTION_QUERY = `{ shop { id } }`;
+/** The store's stable identity: read-only, the Shop of the token itself (no resource scope involved). */
+export const SHOPIFY_SHOP_IDENTITY_QUERY = `{ shop { id myshopifyDomain } }`;
 
 /**
  * fetchCustomers() (slice 2 of the REST→GraphQL migration) — requests
@@ -1256,6 +1258,21 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
    * *why* verification failed instead of a single opaque boolean, without
    * ever logging a credential or response body.
    */
+  /**
+   * Shopify's numeric shop id (from `gid://shopify/Shop/<n>`, the same number Shopify's webhook samples use as the shop
+   * `id` / compliance `shop_id`) and its current myshopify domain. Throws on any failure: a connection must not be
+   * stored without its stable identity.
+   */
+  async fetchShopIdentity(credentials: Record<string, string>): Promise<{ shopId: string; myshopifyDomain: string }> {
+    const data = await this.graphqlRequest(credentials, SHOPIFY_SHOP_IDENTITY_QUERY, {});
+    const shop = data.shop as { id?: unknown; myshopifyDomain?: unknown } | undefined;
+    const shopId = typeof shop?.id === 'string' ? /^gid:\/\/shopify\/Shop\/(\d+)$/.exec(shop.id)?.[1] : undefined;
+    if (!shopId || typeof shop?.myshopifyDomain !== 'string') {
+      throw new ProviderError('Shopify returned no recognizable shop identity.');
+    }
+    return { shopId, myshopifyDomain: shop.myshopifyDomain.toLowerCase() };
+  }
+
   async verifyConnection(
     credentials: Record<string, string>,
     onDiagnostic?: (diagnostic: ShopifyConnectionCheckDiagnostic) => void,

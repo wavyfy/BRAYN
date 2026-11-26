@@ -912,14 +912,25 @@ describe('IntegrationService', () => {
     });
   });
 
-  describe('findAllByShopDomain()', () => {
-    it('returns every matching Shopify integration (the query is covered against the real DB in store-ownership.db.spec)', async () => {
-      const rows = [{ id: 'int_1', workspaceId: 'ws_1', status: 'connected' }];
+  describe('resolveShopHolders()', () => {
+    it('matches by stable shop id first, by domain only for rows without one, and flags a same-domain different store', async () => {
+      const rows = [
+        { id: 'by_id', workspaceId: 'ws_1', status: 'connected', shopDomain: 'new-alias.myshopify.com', shopifyShopId: '42' },
+        { id: 'legacy', workspaceId: 'ws_2', status: 'disconnected', shopDomain: 'wavyfyy.myshopify.com', shopifyShopId: null },
+        { id: 'other_store', workspaceId: 'ws_3', status: 'disconnected', shopDomain: 'WAVYFYY.myshopify.com', shopifyShopId: '99' },
+      ];
       const chain = makeChain(rows);
       const client = { select: vi.fn(() => chain) };
       const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
-      await expect(service.findAllByShopDomain('wavyfyy.myshopify.com')).resolves.toEqual(rows);
+      const { holders, conflicts } = await service.resolveShopHolders('wavyfyy.myshopify.com', '42');
+      expect(holders.map((h) => h.id)).toEqual(['by_id', 'legacy']);
+      expect(conflicts.map((h) => h.id)).toEqual(['other_store']);
+
+      // Without a shop id (legacy caller), the domain alone decides.
+      const legacy = await service.resolveShopHolders('wavyfyy.myshopify.com');
+      expect(legacy.holders.map((h) => h.id)).toEqual(['legacy', 'other_store']);
+      expect(legacy.conflicts).toEqual([]);
     });
   });
 

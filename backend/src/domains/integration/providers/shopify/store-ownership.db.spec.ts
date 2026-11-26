@@ -2,7 +2,7 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { AppModule } from '../../../../app.module';
 import { DatabaseService } from '../../../../database/database.service';
 import { workspaces } from '../../../../database/schema/workspaces';
@@ -489,15 +489,221 @@ describe('Shopify store ownership (real DB)', { timeout: 60_000 }, () => {
       expect(await auditRow(id)).toMatchObject({ status: 'processed', outcome: 'erased' });
     });
 
-    it('an unknown shop (e.g. an alias BRAYN never stored) is acknowledged and audited as unknown_shop', async () => {
+    it('an unknown shop is acknowledged but stays an open privacy exception (never processed) until an operator resolves it', async () => {
       const id = `wh-${randomUUID()}`;
       const shop = newShop();
-      await deliverWithId(id, 'shop/redact', { shop_id: 1, shop_domain: shop });
-      expect(await auditRow(id)).toMatchObject({
-        status: 'processed',
+      await expect(
+        deliverWithId(id, 'shop/redact', { shop_id: 1, shop_domain: shop }),
+      ).resolves.toBeUndefined();
+      const open = await auditRow(id);
+      expect(open).toMatchObject({
+        status: 'exception',
+        exceptionReason: 'unknown_shop',
         outcome: 'unknown_shop',
         matchedIntegrations: 0,
       });
+      expect(open.payload).not.toBeNull(); // kept for replay
+      expect((await compliance.openIssues()).count).toBeGreaterThanOrEqual(1);
+      // A redelivery of an open exception is acknowledged, not reprocessed or 409'd.
+      await expect(
+        deliverWithId(id, 'shop/redact', { shop_id: 1, shop_domain: shop }),
+      ).resolves.toBeUndefined();
+      expect((await auditRow(id)).attempts).toBe(1);
+
+      await compliance.resolve(id, 'Store never connected to BRAYN; nothing held.');
+      expect(await auditRow(id)).toMatchObject({
+        status: 'resolved',
+        payload: null,
+        resolutionNote: 'Store never connected to BRAYN; nothing held.',
+      });
+    });
+  });
+
+  describe('stable shop identity (Shopify numeric shop_id)', () => {
+    const deliverWithId = (webhookId: string, topic: string, payload: object) => {
+      const body = JSON.stringify(payload);
+      return compliance.handle(topic, body, {
+        'x-shopify-hmac-sha256': sign(body),
+        'x-shopify-webhook-id': webhookId,
+      });
+    };
+    const auditRow = async (webhookId: string) =>
+      (
+        await db.client
+          .select()
+          .from(shopifyComplianceWebhooks)
+          .where(eq(shopifyComplianceWebhooks.webhookId, webhookId))
+      )[0];
+    const newShopId = () => String(1_000_000 + Math.floor(Math.random() * 1e9));
+
+    it('a compliance request under a changed domain alias still reaches the store by shop_id', async () => {
+      const a = await workspace();
+      const [oldDomain, alias, shopId] = [newShop(), newShop(), newShopId()];
+      expect(await service.connectStore(a, 'shopify', creds(oldDomain), shopId)).toBe('ok');
+      await addCustomer(a, 'c-1');
+      const id = `wh-${randomUUID()}`;
+      await deliverWithId(id, 'customers/redact', {
+        shop_id: Number(shopId),
+        shop_domain: alias,
+        customer: { id: 'c-1' },
+      });
+      expect(await customerCount(a)).toBe(0);
+      expect(await auditRow(id)).toMatchObject({
+        status: 'processed',
+        outcome: 'erased',
+        matchedIntegrations: 1,
+      });
+    });
+
+    it('a legacy row (no shop id) resolved by domain learns its shop id, so a later alias delivery still finds it', async () => {
+      const a = await workspace();
+      const [domain, alias, shopId] = [newShop(), newShop(), newShopId()];
+      expect(await oauth(a, domain)).toBe('ok'); // legacy: connected without a shop id
+      expect((await row(a)).shopifyShopId).toBeNull();
+      await addCustomer(a, 'c-1');
+      await addCustomer(a, 'c-2');
+
+      await deliverWithId(`wh-${randomUUID()}`, 'customers/redact', {
+        shop_id: shopId,
+        shop_domain: domain,
+        customer: { id: 'c-1' },
+      });
+      expect((await row(a)).shopifyShopId).toBe(shopId);
+      await deliverWithId(`wh-${randomUUID()}`, 'customers/redact', {
+        shop_id: shopId,
+        shop_domain: alias,
+        customer: { id: 'c-2' },
+      });
+      expect(await customerCount(a)).toBe(0);
+    });
+
+    it('a domain that now belongs to a different store id is NOT erased and raises an identity_conflict exception', async () => {
+      const a = await workspace();
+      const [domain, shopId] = [newShop(), newShopId()];
+      expect(await service.connectStore(a, 'shopify', creds(domain), shopId)).toBe('ok');
+      await addCustomer(a, 'c-1');
+      const id = `wh-${randomUUID()}`;
+      await deliverWithId(id, 'shop/redact', { shop_id: newShopId(), shop_domain: domain });
+      expect(await customerCount(a)).toBe(1);
+      expect((await row(a)).status).toBe('connected');
+      expect(await auditRow(id)).toMatchObject({
+        status: 'exception',
+        exceptionReason: 'identity_conflict',
+        matchedIntegrations: 0,
+      });
+    });
+
+    it('legacy holder + id holder for one request: both erased; a same-domain row with another id is a conflict, untouched', async () => {
+      const [legacy, byId, other] = [await workspace(), await workspace(), await workspace()];
+      const [domain, alias, shopId] = [newShop(), newShop(), newShopId()];
+      expect(await oauth(legacy, domain)).toBe('ok');
+      await addCustomer(legacy, 'c-1');
+      await service.disconnect(legacy, 'shopify');
+      // `other`: historical row on the same domain but a different store id (disconnected, retained data).
+      await service.connect(other, 'shopify');
+      await db.client
+        .update(integrations)
+        .set({ shopDomain: domain, shopifyShopId: newShopId(), status: 'disconnected' })
+        .where(eq(integrations.id, (await row(other)).id));
+      await addCustomer(other, 'c-1');
+      expect(await service.connectStore(byId, 'shopify', creds(alias), shopId)).toBe('ok');
+      await addCustomer(byId, 'c-1');
+
+      const id = `wh-${randomUUID()}`;
+      await deliverWithId(id, 'customers/redact', {
+        shop_id: shopId,
+        shop_domain: domain,
+        customer: { id: 'c-1' },
+      });
+      expect(await customerCount(legacy)).toBe(0);
+      expect(await customerCount(byId)).toBe(0);
+      expect(await customerCount(other)).toBe(1);
+      expect(await auditRow(id)).toMatchObject({
+        status: 'exception',
+        exceptionReason: 'identity_conflict',
+        matchedIntegrations: 2,
+      });
+    });
+
+    it('an unresolved delivery is recoverable: once the store identity is known, replay processes it from the stored payload', async () => {
+      const a = await workspace();
+      const [domain, alias, shopId] = [newShop(), newShop(), newShopId()];
+      expect(await oauth(a, domain)).toBe('ok'); // legacy row, no shop id
+      await addCustomer(a, 'c-1');
+      const id = `wh-${randomUUID()}`;
+      await deliverWithId(id, 'customers/redact', {
+        shop_id: shopId,
+        shop_domain: alias,
+        customer: { id: 'c-1' },
+      });
+      expect(await auditRow(id)).toMatchObject({
+        status: 'exception',
+        exceptionReason: 'unknown_shop',
+      });
+      expect(await customerCount(a)).toBe(1);
+
+      expect(await service.recordShopifyShopId([(await row(a)).id], shopId)).toBe('ok'); // ops backfill
+      expect(await compliance.replay(id)).toEqual({ status: 'processed' });
+      expect(await customerCount(a)).toBe(0);
+      expect(await auditRow(id)).toMatchObject({ status: 'processed', payload: null, attempts: 2 });
+    });
+
+    it('a superseded attempt (claim retaken after a timeout) cannot mark the delivery done or commit data-request records', async () => {
+      const a = await workspace();
+      const [domain, shopId] = [newShop(), newShopId()];
+      expect(await service.connectStore(a, 'shopify', creds(domain), shopId)).toBe('ok');
+      const id = `wh-${randomUUID()}`;
+      const original = service.resolveShopHolders.bind(service);
+      const spy = vi
+        .spyOn(service, 'resolveShopHolders')
+        .mockImplementationOnce(async (...args) => {
+          // A newer attempt takes the claim while this one is still running.
+          await db.client
+            .update(shopifyComplianceWebhooks)
+            .set({ attempts: sql`${shopifyComplianceWebhooks.attempts} + 1` })
+            .where(eq(shopifyComplianceWebhooks.webhookId, id));
+          return original(...args);
+        });
+      await expect(
+        deliverWithId(id, 'customers/data_request', {
+          shop_id: shopId,
+          shop_domain: domain,
+          customer: { id: 7 },
+        }),
+      ).rejects.toBeInstanceOf(ConflictError);
+      spy.mockRestore();
+      const records = await db.client
+        .select({ id: customerDataRequests.id })
+        .from(customerDataRequests)
+        .where(eq(customerDataRequests.workspaceId, a));
+      expect(records).toHaveLength(0);
+      expect(await auditRow(id)).toMatchObject({ status: 'processing', attempts: 2 });
+    });
+
+    it('app/uninstalled under a domain alias disconnects the store by its shop id', async () => {
+      const a = await workspace();
+      const [domain, alias, shopId] = [newShop(), newShop(), newShopId()];
+      expect(await service.connectStore(a, 'shopify', creds(domain), shopId)).toBe('ok');
+      const body = JSON.stringify({ id: Number(shopId), myshopify_domain: alias });
+      await uninstall.handle(body, {
+        'x-shopify-topic': 'app/uninstalled',
+        'x-shopify-shop-domain': alias,
+        'x-shopify-hmac-sha256': sign(body),
+      });
+      expect((await row(a)).status).toBe('disconnected');
+    });
+
+    it('the ownership invariant holds by shop id too: the same store under another domain cannot go live twice', async () => {
+      const [a, b] = [await workspace(), await workspace()];
+      const shopId = newShopId();
+      expect(await service.connectStore(a, 'shopify', creds(newShop()), shopId)).toBe('ok');
+      expect(await service.prepareStoreConnection(b, 'shopify', newShop(), shopId)).toBe(
+        'owned_elsewhere',
+      );
+      expect(await service.connectStore(b, 'shopify', creds(newShop()), shopId)).toBe(
+        'owned_elsewhere',
+      );
+      expect(await row(b)).toBeUndefined();
     });
   });
 });

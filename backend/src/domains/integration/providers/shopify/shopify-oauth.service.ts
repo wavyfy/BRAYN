@@ -168,12 +168,18 @@ export class ShopifyOAuthService {
       throw new ProviderError('Could not verify the client-credentials token with Shopify.');
     }
 
-    const prepared = await this.integrationService.prepareStoreConnection(workspaceId, 'shopify', shopDomain);
+    // Stable identity first: ownership and compliance routing key on the numeric shop id, not only the domain.
+    const identity = await this.shopifyAdapter.fetchShopIdentity(credentials);
+    this.noteDomainAlias(workspaceId, shopDomain, identity.myshopifyDomain);
+    const prepared = await this.integrationService.prepareStoreConnection(workspaceId, 'shopify', shopDomain, identity.shopId);
     if (prepared === 'different_store') {
       throw new ConflictError('This workspace still holds data from a different Shopify store. Use a new workspace for this store.');
     }
     // Re-authorizing an already-connected store just refreshes its credentials; another workspace's store is refused.
-    if (prepared === 'owned_elsewhere' || (await this.integrationService.connectStore(workspaceId, 'shopify', credentials)) === 'owned_elsewhere') {
+    if (
+      prepared === 'owned_elsewhere' ||
+      (await this.integrationService.connectStore(workspaceId, 'shopify', credentials, identity.shopId)) === 'owned_elsewhere'
+    ) {
       this.logger.event('warn', 'Shopify connect refused: store is held by another workspace', 'ShopifyOAuth', { workspaceId });
       throw new ConflictError(STORE_OWNED_ELSEWHERE_MESSAGE);
     }
@@ -313,7 +319,15 @@ export class ShopifyOAuthService {
       return `${integrationsUrl}?shopify=error&reason=verification_failed`;
     }
 
-    const prepared = await this.integrationService.prepareStoreConnection(state.workspaceId, 'shopify', shop);
+    let identity: { shopId: string; myshopifyDomain: string };
+    try {
+      identity = await this.shopifyAdapter.fetchShopIdentity(credentials);
+    } catch {
+      this.logger.event('error', 'Shopify OAuth callback: could not read the shop identity', 'ShopifyOAuth', { workspaceId: state.workspaceId });
+      return `${integrationsUrl}?shopify=error&reason=verification_failed`;
+    }
+    this.noteDomainAlias(state.workspaceId, shop, identity.myshopifyDomain);
+    const prepared = await this.integrationService.prepareStoreConnection(state.workspaceId, 'shopify', shop, identity.shopId);
     if (prepared === 'different_store') {
       this.logger.event('warn', 'Shopify OAuth callback: refused a different store for an existing connection', 'ShopifyOAuth', { workspaceId: state.workspaceId });
       return `${integrationsUrl}?shopify=error&reason=different_store`;
@@ -323,7 +337,7 @@ export class ShopifyOAuthService {
     let stored: 'ok' | 'owned_elsewhere' = 'owned_elsewhere';
     if (prepared === 'ok') {
       try {
-        stored = await this.integrationService.connectStore(state.workspaceId, 'shopify', credentials);
+        stored = await this.integrationService.connectStore(state.workspaceId, 'shopify', credentials, identity.shopId);
       } catch {
         // Nothing was written (single statement in one transaction); the merchant can simply retry.
         this.logger.event('error', 'Shopify OAuth callback: storing the connection failed', 'ShopifyOAuth', { workspaceId: state.workspaceId });
@@ -340,6 +354,13 @@ export class ShopifyOAuthService {
     }
 
     return `${integrationsUrl}?shopify=connected`;
+  }
+
+  /** Diagnostic only: Shopify reporting a different current myshopify domain than the one used to connect (an alias). */
+  private noteDomainAlias(workspaceId: string, connectedDomain: string, myshopifyDomain: string): void {
+    if (connectedDomain.toLowerCase() !== myshopifyDomain) {
+      this.logger.event('warn', 'Shopify reports a different myshopify domain than the one connected (alias)', 'ShopifyOAuth', { workspaceId });
+    }
   }
 
   private matchesBoundSecret(cookieValue: string | undefined, expected: string): boolean {

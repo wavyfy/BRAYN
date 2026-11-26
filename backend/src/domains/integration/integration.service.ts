@@ -90,11 +90,25 @@ const integrationPublicColumns = {
 export const STORE_OWNED_ELSEWHERE_MESSAGE =
   'This Shopify store is already connected to another BRAYN workspace. Disconnect it there first, or contact support to move it.';
 
-const LIVE_SHOP_INDEX = 'integrations_shopify_live_shop_unique';
+const LIVE_SHOP_INDEXES = ['integrations_shopify_live_shop_unique', 'integrations_shopify_live_shop_id_unique'];
 
 function isLiveShopConflict(error: unknown): boolean {
   const pg = error as { code?: string; constraint?: string };
-  return pg?.code === '23505' && pg.constraint === LIVE_SHOP_INDEX;
+  return pg?.code === '23505' && LIVE_SHOP_INDEXES.includes(pg.constraint ?? '');
+}
+
+type ShopifyIdentityRow = { id: string; workspaceId: string; status: string; shopDomain: string | null; shopifyShopId: string | null };
+
+/**
+ * Store identity rule: the numeric shop id decides when both sides have one; the domain only decides for a row whose id
+ * is unknown (legacy, not yet backfilled) or when the caller has no id. A row whose domain matches but whose id
+ * differs is a DIFFERENT store (e.g. a reassigned domain) — never treated as the same one.
+ */
+function classifyShopRow(row: ShopifyIdentityRow, shopDomain: string, shopId: string | undefined): 'match' | 'conflict' | 'none' {
+  if (shopId && row.shopifyShopId === shopId) return 'match';
+  if (row.shopDomain?.toLowerCase() !== shopDomain.toLowerCase()) return 'none';
+  if (!shopId || !row.shopifyShopId) return 'match';
+  return 'conflict';
 }
 
 function rethrowLiveShopConflict(error: unknown): never {
@@ -149,8 +163,9 @@ export class IntegrationService {
     workspaceId: string,
     provider: IntegrationProvider,
     shopDomain: string,
+    shopId?: string,
   ): Promise<'ok' | 'different_store' | 'owned_elsewhere'> {
-    if (provider === 'shopify' && (await this.isStoreHeldElsewhere(workspaceId, shopDomain))) {
+    if (provider === 'shopify' && (await this.isStoreHeldElsewhere(workspaceId, shopDomain, shopId))) {
       return 'owned_elsewhere';
     }
     const existing = await this.findByProvider(workspaceId, provider);
@@ -165,23 +180,32 @@ export class IntegrationService {
   }
 
   /** Another workspace's Shopify row for this store is live, or disconnected but still holding the store's data. */
-  private async isStoreHeldElsewhere(workspaceId: string, shopDomain: string): Promise<boolean> {
-    const others = await this.database.client
-      .select({ id: integrations.id, workspaceId: integrations.workspaceId, status: integrations.status })
-      .from(integrations)
-      .where(
-        and(
-          eq(integrations.provider, 'shopify'),
-          sql`lower(${integrations.shopDomain}) = ${shopDomain.toLowerCase()}`,
-          sql`${integrations.workspaceId} <> ${workspaceId}`,
-        ),
-      );
+  private async isStoreHeldElsewhere(workspaceId: string, shopDomain: string, shopId?: string): Promise<boolean> {
+    const others = (await this.selectShopifyIdentityRows(shopDomain, shopId)).filter(
+      (row) => row.workspaceId !== workspaceId && classifyShopRow(row, shopDomain, shopId) === 'match',
+    );
     for (const other of others) {
       if (other.status !== 'disconnected' || (await this.holdsCommerceData(other.workspaceId, other.id))) {
         return true;
       }
     }
     return false;
+  }
+
+  /** Every Shopify row matching the store by domain or by id (any status, oldest first); classify with classifyShopRow. */
+  private async selectShopifyIdentityRows(shopDomain: string, shopId?: string): Promise<ShopifyIdentityRow[]> {
+    const byDomain = sql`lower(${integrations.shopDomain}) = ${shopDomain.toLowerCase()}`;
+    return this.database.client
+      .select({
+        id: integrations.id,
+        workspaceId: integrations.workspaceId,
+        status: integrations.status,
+        shopDomain: integrations.shopDomain,
+        shopifyShopId: integrations.shopifyShopId,
+      })
+      .from(integrations)
+      .where(and(eq(integrations.provider, 'shopify'), shopId ? or(byDomain, eq(integrations.shopifyShopId, shopId)) : byDomain))
+      .orderBy(integrations.createdAt, integrations.id);
   }
 
   private async holdsCommerceData(workspaceId: string, integrationId: string): Promise<boolean> {
@@ -211,6 +235,7 @@ export class IntegrationService {
     workspaceId: string,
     provider: IntegrationProvider,
     credentials: Record<string, string>,
+    shopId?: string,
   ): Promise<'ok' | 'owned_elsewhere'> {
     const encrypted = encryptCredential(JSON.stringify(credentials), this.resolveEncryptionKey());
     const shopDomain = credentials.shopDomain ? credentials.shopDomain.toLowerCase() : null;
@@ -224,7 +249,7 @@ export class IntegrationService {
           .for('update');
         await tx
           .insert(integrations)
-          .values({ workspaceId, provider, credentials: encrypted, shopDomain })
+          .values({ workspaceId, provider, credentials: encrypted, shopDomain, shopifyShopId: shopId ?? null })
           .onConflictDoUpdate({
             target: [integrations.workspaceId, integrations.provider],
             set: {
@@ -232,6 +257,7 @@ export class IntegrationService {
               lastSyncError: sql`case when ${reconnecting} then null else ${integrations.lastSyncError} end`,
               credentials: encrypted,
               ...(shopDomain ? { shopDomain } : {}),
+              ...(shopId ? { shopifyShopId: shopId } : {}),
               updatedAt: new Date(),
             },
           });
@@ -391,12 +417,42 @@ export class IntegrationService {
    * but disconnected rows in other workspaces can still hold that store's retained data, and a compliance request
    * must reach all of it. Never "the most recently updated one": that picks an owner by accident.
    */
-  async findAllByShopDomain(shopDomain: string) {
-    return this.database.client
-      .select({ id: integrations.id, workspaceId: integrations.workspaceId, status: integrations.status })
-      .from(integrations)
-      .where(and(eq(integrations.provider, 'shopify'), sql`lower(${integrations.shopDomain}) = ${shopDomain.toLowerCase()}`))
-      .orderBy(integrations.createdAt, integrations.id);
+  async resolveShopHolders(
+    shopDomain: string,
+    shopId?: string,
+  ): Promise<{ holders: ShopifyIdentityRow[]; conflicts: ShopifyIdentityRow[] }> {
+    const rows = await this.selectShopifyIdentityRows(shopDomain, shopId);
+    return {
+      holders: rows.filter((row) => classifyShopRow(row, shopDomain, shopId) === 'match'),
+      conflicts: rows.filter((row) => classifyShopRow(row, shopDomain, shopId) === 'conflict'),
+    };
+  }
+
+  /**
+   * Records Shopify's verified numeric shop id on legacy rows that lack one (learned from an HMAC-verified compliance
+   * delivery that resolved them by domain alone). Never overwrites an existing id. `conflict` = another live row
+   * already carries this id (one store under two domains) — the caller raises a privacy exception.
+   */
+  async recordShopifyShopId(integrationIds: string[], shopId: string): Promise<'ok' | 'conflict'> {
+    if (integrationIds.length === 0) return 'ok';
+    try {
+      await this.database.client
+        .update(integrations)
+        .set({ shopifyShopId: shopId })
+        .where(and(inArray(integrations.id, integrationIds), isNull(integrations.shopifyShopId)));
+      return 'ok';
+    } catch (error) {
+      if (isLiveShopConflict(error)) return 'conflict';
+      throw error;
+    }
+  }
+
+  /** Ops only: whether a stored credential is past its `expiresAt` (using it would mean a refresh, which rotates it). */
+  async isCredentialExpiring(workspaceId: string, provider: IntegrationProvider): Promise<boolean | null> {
+    const existing = await this.findByProvider(workspaceId, provider);
+    if (!existing?.credentials) return null;
+    const { expiresAt } = JSON.parse(decryptCredential(existing.credentials, this.resolveEncryptionKey())) as Record<string, string>;
+    return Boolean(expiresAt) && new Date(expiresAt).getTime() <= Date.now() + CREDENTIAL_REFRESH_SKEW_MS;
   }
 
   /**

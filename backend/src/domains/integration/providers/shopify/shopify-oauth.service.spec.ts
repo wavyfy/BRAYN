@@ -41,6 +41,7 @@ function makeIntegrationService(overrides: Partial<IntegrationService> = {}): In
 function makeAdapter(overrides: Partial<ShopifyAdapter> = {}): ShopifyAdapter {
   return {
     verifyConnection: vi.fn(async () => true),
+    fetchShopIdentity: vi.fn(async () => ({ shopId: '548380009', myshopifyDomain: 'test-store.myshopify.com' })),
     ensureWebhookSubscriptions: vi.fn(async () => ({ created: [], existing: [] })),
     ...overrides,
   } as unknown as ShopifyAdapter;
@@ -422,7 +423,7 @@ describe('ShopifyOAuthService', () => {
         shopDomain: SHOP,
         accessToken: 'shpat_new',
         grantType: 'authorization_code',
-      });
+      }, '548380009');
       expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=connected');
     });
 
@@ -519,7 +520,7 @@ describe('ShopifyOAuthService', () => {
       const redirect = await startThenCallback(service);
 
       expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=different_store');
-      expect(integrationService.prepareStoreConnection).toHaveBeenCalledWith('ws_1', 'shopify', expect.stringMatching(/myshopify\.com$/));
+      expect(integrationService.prepareStoreConnection).toHaveBeenCalledWith('ws_1', 'shopify', expect.stringMatching(/myshopify\.com$/), '548380009');
       expect(integrationService.connectStore).not.toHaveBeenCalled();
     });
 
@@ -548,6 +549,20 @@ describe('ShopifyOAuthService', () => {
       expect(adapter.ensureWebhookSubscriptions).not.toHaveBeenCalled();
     });
 
+    it('cannot read the stable shop identity → verification_failed, nothing stored', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpat_x' }), { status: 200 })));
+      const integrationService = makeIntegrationService();
+      const adapter = makeAdapter({
+        fetchShopIdentity: vi.fn(async () => {
+          throw new Error('Shopify returned no recognizable shop identity.');
+        }),
+      });
+      const service = new ShopifyOAuthService(makeConfig(), integrationService, adapter, makeLogger());
+
+      expect(await startThenCallback(service)).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=error&reason=verification_failed');
+      expect(integrationService.connectStore).not.toHaveBeenCalled();
+    });
+
     it('a database failure while storing the connection redirects with a generic error (never a raw 500), no webhook registration', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'shpat_x' }), { status: 200 })));
       const integrationService = makeIntegrationService({
@@ -573,7 +588,7 @@ describe('ShopifyOAuthService', () => {
         shopDomain: SHOP,
         accessToken: 'shpat_rotated',
         grantType: 'authorization_code',
-      });
+      }, '548380009');
       expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=connected');
     });
 
@@ -624,7 +639,7 @@ describe('ShopifyOAuthService', () => {
         refreshToken: 'shprt_new',
         grantType: 'authorization_code',
         expiresAt: new Date(1_700_000_000_000 + 3600 * 1000).toISOString(),
-      });
+      }, '548380009');
     });
 
     it('redirects with reason=expired when state is older than the allowed window', async () => {
@@ -693,6 +708,7 @@ describe('ShopifyOAuthService', () => {
         'ws_1',
         'shopify',
         expect.objectContaining({ accessToken: 'shpca_rotated' }),
+        '548380009',
       );
     });
 
