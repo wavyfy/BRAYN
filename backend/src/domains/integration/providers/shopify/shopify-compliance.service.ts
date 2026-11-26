@@ -41,7 +41,7 @@ interface ShopifyShopRedactPayload {
  * the app is installed on, signed with the app's own client secret
  * (`SHOPIFY_APP_CLIENT_SECRET`), with only `shop_domain` in the payload to
  * resolve which workspace/integration it's about (see
- * `IntegrationService.findByShopDomain`). Forcing that through the
+ * `IntegrationService.findAllByShopDomain`). Forcing that through the
  * existing pipeline's `WebhookResourceEvent` shape and per-integration
  * secret lookup would distort it rather than reuse it — hence a small,
  * parallel handler instead of extending it.
@@ -112,21 +112,27 @@ export class ShopifyComplianceService {
     if (!shopDomain) {
       throw new ValidationError('Missing shop_domain in compliance webhook payload.');
     }
-    const integration = await this.integrationService.findByShopDomain(shopDomain);
+    // One record per workspace that holds (or held) this store's data, so each owner sees the request; an unknown
+    // shop is still recorded once, unassigned, for manual handling.
+    const matches = await this.integrationService.findAllByShopDomain(shopDomain);
+    const owners = matches.length > 0 ? matches : [null];
 
-    await this.database.client.insert(customerDataRequests).values({
-      workspaceId: integration?.workspaceId ?? null,
-      integrationId: integration?.id ?? null,
-      provider: 'shopify',
-      shopDomain,
-      shopifyCustomerId: body.customer?.id !== undefined ? String(body.customer.id) : '',
-      customerEmail: body.customer?.email ?? null,
-      ordersRequested: body.orders_requested ?? null,
-    });
+    await this.database.client.insert(customerDataRequests).values(
+      owners.map((integration) => ({
+        workspaceId: integration?.workspaceId ?? null,
+        integrationId: integration?.id ?? null,
+        provider: 'shopify' as const,
+        shopDomain,
+        shopifyCustomerId: body.customer?.id !== undefined ? String(body.customer.id) : '',
+        customerEmail: body.customer?.email ?? null,
+        ordersRequested: body.orders_requested ?? null,
+      })),
+    );
 
     this.logger.event('log', 'Shopify customers/data_request recorded for manual handling', 'ShopifyComplianceService', {
       shopDomain,
-      resolved: Boolean(integration),
+      resolved: matches.length > 0,
+      matchedIntegrations: matches.length,
     });
   }
 
@@ -138,39 +144,51 @@ export class ShopifyComplianceService {
     }
     const externalId = body.customer?.id !== undefined ? String(body.customer.id) : undefined;
 
-    const integration = await this.integrationService.findByShopDomain(shopDomain);
-    if (!integration || !externalId) {
+    const matches = await this.integrationService.findAllByShopDomain(shopDomain);
+    if (matches.length === 0 || !externalId) {
       this.logger.event('log', 'Shopify customers/redact — nothing to erase (shop or customer not recognized)', 'ShopifyComplianceService', {
         shopDomain,
-        resolved: Boolean(integration),
+        resolved: matches.length > 0,
       });
       return;
     }
 
-    const result = await this.integrationService.purgeCommerceCustomer(integration.workspaceId, integration.id, externalId);
+    // Erased from every workspace that holds this store's data (live or retained after a disconnect), each scoped to
+    // its own integration. Sequential: a failure throws (non-2xx) so Shopify redelivers; erasure is idempotent.
+    let found = 0;
+    let canonicalCustomersRemoved = 0;
+    for (const integration of matches) {
+      const result = await this.integrationService.purgeCommerceCustomer(integration.workspaceId, integration.id, externalId);
+      found += result.found ? 1 : 0;
+      canonicalCustomersRemoved += result.canonicalCustomerRemoved ? 1 : 0;
+    }
 
     this.logger.event('log', 'Shopify customers/redact processed', 'ShopifyComplianceService', {
       shopDomain,
-      found: result.found,
-      canonicalCustomerRemoved: result.canonicalCustomerRemoved,
+      matchedIntegrations: matches.length,
+      found,
+      canonicalCustomersRemoved,
     });
   }
 
-  /** Erases everything the resolved integration owns, if the shop is known to BRAYN. */
+  /** Erases everything every matching integration holds for the shop, if the shop is known to BRAYN. */
   private async handleShopRedact(body: ShopifyShopRedactPayload): Promise<void> {
     const shopDomain = body.shop_domain;
     if (!shopDomain) {
       throw new ValidationError('Missing shop_domain in compliance webhook payload.');
     }
 
-    const integration = await this.integrationService.findByShopDomain(shopDomain);
-    if (!integration) {
+    const matches = await this.integrationService.findAllByShopDomain(shopDomain);
+    if (matches.length === 0) {
       this.logger.event('log', 'Shopify shop/redact — shop not recognized, nothing to erase', 'ShopifyComplianceService', { shopDomain });
       return;
     }
 
-    const result = await this.integrationService.eraseIntegrationForShopRedact(integration.id);
+    // Every row that holds this store's data is erased; never just one picked by recency.
+    for (const integration of matches) {
+      await this.integrationService.eraseIntegrationForShopRedact(integration.id);
+    }
 
-    this.logger.event('log', 'Shopify shop/redact processed', 'ShopifyComplianceService', { shopDomain, found: result.found });
+    this.logger.event('log', 'Shopify shop/redact processed', 'ShopifyComplianceService', { shopDomain, matchedIntegrations: matches.length });
   }
 }

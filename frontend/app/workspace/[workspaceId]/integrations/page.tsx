@@ -126,6 +126,7 @@ const OAUTH_ERROR_REASONS: Record<string, string> = {
   token_exchange_failed: 'Shopify rejected the authorization code.',
   verification_failed: 'The new access token could not be verified against your store.',
   different_store: 'This workspace still holds data from a different Shopify store. Use a new workspace for this store.',
+  owned_elsewhere: 'This Shopify store is already connected to another BRAYN workspace. Disconnect it there first, or contact support to move it.',
   webhook_registration_failed: 'Shopify connected, but its webhook subscriptions could not be registered. Connect again to retry.',
 };
 

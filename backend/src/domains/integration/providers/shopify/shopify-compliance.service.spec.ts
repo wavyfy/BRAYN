@@ -32,7 +32,7 @@ function makeDatabase() {
 describe('ShopifyComplianceService', () => {
   it('rejects a request with a missing/invalid signature', async () => {
     const { database } = makeDatabase();
-    const integrationService = { findByShopDomain: vi.fn() } as unknown as IntegrationService;
+    const integrationService = { findAllByShopDomain: vi.fn() } as unknown as IntegrationService;
     const service = new ShopifyComplianceService(makeConfig(), database, integrationService, makeLogger());
 
     const rawBody = JSON.stringify({ shop_domain: 'wavyfyy.myshopify.com' });
@@ -44,7 +44,7 @@ describe('ShopifyComplianceService', () => {
 
   it('fails closed when SHOPIFY_APP_CLIENT_SECRET is not configured', async () => {
     const { database } = makeDatabase();
-    const integrationService = { findByShopDomain: vi.fn() } as unknown as IntegrationService;
+    const integrationService = { findAllByShopDomain: vi.fn() } as unknown as IntegrationService;
     const service = new ShopifyComplianceService(makeConfig(null), database, integrationService, makeLogger());
 
     const rawBody = JSON.stringify({ shop_domain: 'wavyfyy.myshopify.com' });
@@ -58,7 +58,7 @@ describe('ShopifyComplianceService', () => {
     it('persists the request with the resolved workspace/integration when the shop is known', async () => {
       const { database, insert, values } = makeDatabase();
       const integration = { id: 'int_1', workspaceId: 'ws_1' };
-      const integrationService = { findByShopDomain: vi.fn(async () => integration) } as unknown as IntegrationService;
+      const integrationService = { findAllByShopDomain: vi.fn(async () => [integration]) } as unknown as IntegrationService;
       const service = new ShopifyComplianceService(makeConfig(), database, integrationService, makeLogger());
 
       const rawBody = JSON.stringify({
@@ -69,42 +69,67 @@ describe('ShopifyComplianceService', () => {
 
       await service.handle('customers/data_request', rawBody, { 'x-shopify-hmac-sha256': sign(rawBody) });
 
-      expect(integrationService.findByShopDomain).toHaveBeenCalledWith('wavyfyy.myshopify.com');
+      expect(integrationService.findAllByShopDomain).toHaveBeenCalledWith('wavyfyy.myshopify.com');
       expect(insert).toHaveBeenCalledWith(customerDataRequests);
-      expect(values).toHaveBeenCalledWith({
-        workspaceId: 'ws_1',
-        integrationId: 'int_1',
-        provider: 'shopify',
-        shopDomain: 'wavyfyy.myshopify.com',
-        shopifyCustomerId: '191167',
-        customerEmail: 'jane@example.com',
-        ordersRequested: [1, 2, 3],
-      });
+      expect(values).toHaveBeenCalledWith([
+        {
+          workspaceId: 'ws_1',
+          integrationId: 'int_1',
+          provider: 'shopify',
+          shopDomain: 'wavyfyy.myshopify.com',
+          shopifyCustomerId: '191167',
+          customerEmail: 'jane@example.com',
+          ordersRequested: [1, 2, 3],
+        },
+      ]);
+    });
+
+    it('records the request once per workspace holding the store (never one picked by recency)', async () => {
+      const { database, values } = makeDatabase();
+      const integrationService = {
+        findAllByShopDomain: vi.fn(async () => [
+          { id: 'int_old', workspaceId: 'ws_old', status: 'disconnected' },
+          { id: 'int_live', workspaceId: 'ws_live', status: 'connected' },
+        ]),
+      } as unknown as IntegrationService;
+      const service = new ShopifyComplianceService(makeConfig(), database, integrationService, makeLogger());
+
+      const rawBody = JSON.stringify({ shop_domain: 'wavyfyy.myshopify.com', customer: { id: 7 } });
+      await service.handle('customers/data_request', rawBody, { 'x-shopify-hmac-sha256': sign(rawBody) });
+
+      expect(values).toHaveBeenCalledWith([
+        expect.objectContaining({ workspaceId: 'ws_old', integrationId: 'int_old' }),
+        expect.objectContaining({ workspaceId: 'ws_live', integrationId: 'int_live' }),
+      ]);
     });
 
     it('persists the request with null workspace/integration when the shop is unrecognized, and still acknowledges', async () => {
       const { database, values } = makeDatabase();
-      const integrationService = { findByShopDomain: vi.fn(async () => null) } as unknown as IntegrationService;
+      const integrationService = { findAllByShopDomain: vi.fn(async () => []) } as unknown as IntegrationService;
       const service = new ShopifyComplianceService(makeConfig(), database, integrationService, makeLogger());
 
       const rawBody = JSON.stringify({ shop_domain: 'unknown.myshopify.com', customer: { id: 1 } });
 
       await expect(service.handle('customers/data_request', rawBody, { 'x-shopify-hmac-sha256': sign(rawBody) })).resolves.toBeUndefined();
 
-      expect(values).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: null, integrationId: null }));
+      expect(values).toHaveBeenCalledWith([expect.objectContaining({ workspaceId: null, integrationId: null })]);
     });
 
     it('never logs the customer email or id — only shopDomain and a resolved flag', async () => {
       const { database } = makeDatabase();
       const integration = { id: 'int_1', workspaceId: 'ws_1' };
-      const integrationService = { findByShopDomain: vi.fn(async () => integration) } as unknown as IntegrationService;
+      const integrationService = { findAllByShopDomain: vi.fn(async () => [integration]) } as unknown as IntegrationService;
       const logger = makeLogger();
       const service = new ShopifyComplianceService(makeConfig(), database, integrationService, logger);
 
       const rawBody = JSON.stringify({ shop_domain: 'wavyfyy.myshopify.com', customer: { id: 191167, email: 'jane@example.com' } });
       await service.handle('customers/data_request', rawBody, { 'x-shopify-hmac-sha256': sign(rawBody) });
 
-      expect(logger.event).toHaveBeenCalledWith('log', expect.any(String), 'ShopifyComplianceService', { shopDomain: 'wavyfyy.myshopify.com', resolved: true });
+      expect(logger.event).toHaveBeenCalledWith('log', expect.any(String), 'ShopifyComplianceService', {
+        shopDomain: 'wavyfyy.myshopify.com',
+        resolved: true,
+        matchedIntegrations: 1,
+      });
       expect(JSON.stringify((logger.event as ReturnType<typeof vi.fn>).mock.calls)).not.toContain('jane@example.com');
       expect(JSON.stringify((logger.event as ReturnType<typeof vi.fn>).mock.calls)).not.toContain('191167');
     });
@@ -115,7 +140,7 @@ describe('ShopifyComplianceService', () => {
       const { database } = makeDatabase();
       const integration = { id: 'int_1', workspaceId: 'ws_1' };
       const integrationService = {
-        findByShopDomain: vi.fn(async () => integration),
+        findAllByShopDomain: vi.fn(async () => [integration]),
         purgeCommerceCustomer: vi.fn(async () => ({ found: true, canonicalCustomerRemoved: true })),
       } as unknown as IntegrationService;
       const service = new ShopifyComplianceService(makeConfig(), database, integrationService, makeLogger());
@@ -129,7 +154,7 @@ describe('ShopifyComplianceService', () => {
     it('does nothing (but still acknowledges) when the shop is unrecognized', async () => {
       const { database } = makeDatabase();
       const integrationService = {
-        findByShopDomain: vi.fn(async () => null),
+        findAllByShopDomain: vi.fn(async () => []),
         purgeCommerceCustomer: vi.fn(),
       } as unknown as IntegrationService;
       const service = new ShopifyComplianceService(makeConfig(), database, integrationService, makeLogger());
@@ -144,7 +169,7 @@ describe('ShopifyComplianceService', () => {
       const { database } = makeDatabase();
       const integration = { id: 'int_1', workspaceId: 'ws_1' };
       const integrationService = {
-        findByShopDomain: vi.fn(async () => integration),
+        findAllByShopDomain: vi.fn(async () => [integration]),
         purgeCommerceCustomer: vi.fn(),
       } as unknown as IntegrationService;
       const service = new ShopifyComplianceService(makeConfig(), database, integrationService, makeLogger());
@@ -161,7 +186,7 @@ describe('ShopifyComplianceService', () => {
       const { database } = makeDatabase();
       const integration = { id: 'int_1', workspaceId: 'ws_1' };
       const integrationService = {
-        findByShopDomain: vi.fn(async () => integration),
+        findAllByShopDomain: vi.fn(async () => [integration]),
         eraseIntegrationForShopRedact: vi.fn(async () => ({ found: true })),
       } as unknown as IntegrationService;
       const service = new ShopifyComplianceService(makeConfig(), database, integrationService, makeLogger());
@@ -172,10 +197,28 @@ describe('ShopifyComplianceService', () => {
       expect(integrationService.eraseIntegrationForShopRedact).toHaveBeenCalledWith('int_1');
     });
 
+    it('erases every integration that holds the store, live or disconnected', async () => {
+      const { database } = makeDatabase();
+      const integrationService = {
+        findAllByShopDomain: vi.fn(async () => [
+          { id: 'int_old', workspaceId: 'ws_old', status: 'disconnected' },
+          { id: 'int_live', workspaceId: 'ws_live', status: 'connected' },
+        ]),
+        eraseIntegrationForShopRedact: vi.fn(async () => ({ found: true })),
+      } as unknown as IntegrationService;
+      const service = new ShopifyComplianceService(makeConfig(), database, integrationService, makeLogger());
+
+      const rawBody = JSON.stringify({ shop_domain: 'wavyfyy.myshopify.com' });
+      await service.handle('shop/redact', rawBody, { 'x-shopify-hmac-sha256': sign(rawBody) });
+
+      expect(integrationService.eraseIntegrationForShopRedact).toHaveBeenNthCalledWith(1, 'int_old');
+      expect(integrationService.eraseIntegrationForShopRedact).toHaveBeenNthCalledWith(2, 'int_live');
+    });
+
     it('does nothing (but still acknowledges) when the shop is unrecognized', async () => {
       const { database } = makeDatabase();
       const integrationService = {
-        findByShopDomain: vi.fn(async () => null),
+        findAllByShopDomain: vi.fn(async () => []),
         eraseIntegrationForShopRedact: vi.fn(),
       } as unknown as IntegrationService;
       const service = new ShopifyComplianceService(makeConfig(), database, integrationService, makeLogger());
@@ -189,7 +232,7 @@ describe('ShopifyComplianceService', () => {
 
   it('throws ValidationError on a malformed (non-JSON) body', async () => {
     const { database } = makeDatabase();
-    const integrationService = { findByShopDomain: vi.fn() } as unknown as IntegrationService;
+    const integrationService = { findAllByShopDomain: vi.fn() } as unknown as IntegrationService;
     const service = new ShopifyComplianceService(makeConfig(), database, integrationService, makeLogger());
 
     const rawBody = 'not json';
@@ -198,7 +241,7 @@ describe('ShopifyComplianceService', () => {
 
   it('throws ValidationError when shop_domain is missing', async () => {
     const { database } = makeDatabase();
-    const integrationService = { findByShopDomain: vi.fn() } as unknown as IntegrationService;
+    const integrationService = { findAllByShopDomain: vi.fn() } as unknown as IntegrationService;
     const service = new ShopifyComplianceService(makeConfig(), database, integrationService, makeLogger());
 
     const rawBody = JSON.stringify({});

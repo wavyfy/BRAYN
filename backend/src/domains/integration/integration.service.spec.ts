@@ -912,24 +912,14 @@ describe('IntegrationService', () => {
     });
   });
 
-  describe('findByShopDomain()', () => {
-    it('resolves the most recently updated integration for that shop domain', async () => {
-      const row = { id: 'int_1', workspaceId: 'ws_1', provider: 'shopify', shopDomain: 'wavyfyy.myshopify.com' };
-      const chain = makeChain([row]);
+  describe('findAllByShopDomain()', () => {
+    it('returns every matching Shopify integration (the query is covered against the real DB in store-ownership.db.spec)', async () => {
+      const rows = [{ id: 'int_1', workspaceId: 'ws_1', status: 'connected' }];
+      const chain = makeChain(rows);
       const client = { select: vi.fn(() => chain) };
       const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
-      const result = await service.findByShopDomain('wavyfyy.myshopify.com');
-
-      expect(result).toEqual(row);
-    });
-
-    it('returns null when no integration has that shop domain', async () => {
-      const chain = makeChain([]);
-      const client = { select: vi.fn(() => chain) };
-      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
-
-      await expect(service.findByShopDomain('unknown.myshopify.com')).resolves.toBeNull();
+      await expect(service.findAllByShopDomain('wavyfyy.myshopify.com')).resolves.toEqual(rows);
     });
   });
 

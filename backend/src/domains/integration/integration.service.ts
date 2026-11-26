@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DatabaseService } from '../../database/database.service';
 import { integrations } from '../../database/schema/integrations';
@@ -86,6 +86,21 @@ const integrationPublicColumns = {
   updatedAt: integrations.updatedAt,
 };
 
+/** Generic on purpose: never says which workspace holds the store (doc 18: no cross-tenant disclosure). */
+export const STORE_OWNED_ELSEWHERE_MESSAGE =
+  'This Shopify store is already connected to another BRAYN workspace. Disconnect it there first, or contact support to move it.';
+
+const LIVE_SHOP_INDEX = 'integrations_shopify_live_shop_unique';
+
+function isLiveShopConflict(error: unknown): boolean {
+  const pg = error as { code?: string; constraint?: string };
+  return pg?.code === '23505' && pg.constraint === LIVE_SHOP_INDEX;
+}
+
+function rethrowLiveShopConflict(error: unknown): never {
+  throw isLiveShopConflict(error) ? new ConflictError(STORE_OWNED_ELSEWHERE_MESSAGE) : error;
+}
+
 @Injectable()
 export class IntegrationService {
   constructor(
@@ -122,32 +137,105 @@ export class IntegrationService {
    * - reconnecting after a disconnect, or to a different store with no data left, clears the previous connection's
    *   import-run bookkeeping, so "first import" status (onboarding) reflects only the new connection.
    * Re-authorizing the same live store changes nothing.
+   *
+   * Store ownership (doc 22): a store that another workspace holds (live, or disconnected while that workspace still
+   * keeps its data) is refused (`owned_elsewhere`) without revealing which workspace. Moving a store between
+   * workspaces is an explicit, authorized procedure, never a side effect of an OAuth. This read is the friendly path;
+   * the `integrations_shopify_live_shop_unique` index is what makes two concurrent connects of one store impossible
+   * (see connectStore()).
    */
-  async prepareStoreConnection(workspaceId: string, provider: IntegrationProvider, shopDomain: string): Promise<'ok' | 'different_store'> {
+  async prepareStoreConnection(
+    workspaceId: string,
+    provider: IntegrationProvider,
+    shopDomain: string,
+  ): Promise<'ok' | 'different_store' | 'owned_elsewhere'> {
+    if (provider === 'shopify' && (await this.isStoreHeldElsewhere(workspaceId, shopDomain))) {
+      return 'owned_elsewhere';
+    }
     const existing = await this.findByProvider(workspaceId, provider);
     if (!existing) {
       return 'ok';
     }
     const sameStore = !existing.shopDomain || existing.shopDomain.toLowerCase() === shopDomain.toLowerCase();
-    if (!sameStore) {
-      const [data] = await this.database.client
-        .select({ id: commerceCustomers.id })
-        .from(commerceCustomers)
-        .where(and(eq(commerceCustomers.workspaceId, workspaceId), eq(commerceCustomers.integrationId, existing.id)))
-        .limit(1);
-      const [order] = data
-        ? [data]
-        : await this.database.client
-            .select({ id: commerceOrders.id })
-            .from(commerceOrders)
-            .where(and(eq(commerceOrders.workspaceId, workspaceId), eq(commerceOrders.integrationId, existing.id)))
-            .limit(1);
-      if (order) {
-        return 'different_store';
-      }
+    if (!sameStore && (await this.holdsCommerceData(workspaceId, existing.id))) {
+      return 'different_store';
     }
     if (!sameStore || existing.status === 'disconnected') {
       await this.database.client.delete(integrationImportRuns).where(eq(integrationImportRuns.integrationId, existing.id));
+    }
+    return 'ok';
+  }
+
+  /** Another workspace's Shopify row for this store is live, or disconnected but still holding the store's data. */
+  private async isStoreHeldElsewhere(workspaceId: string, shopDomain: string): Promise<boolean> {
+    const others = await this.database.client
+      .select({ id: integrations.id, workspaceId: integrations.workspaceId, status: integrations.status })
+      .from(integrations)
+      .where(
+        and(
+          eq(integrations.provider, 'shopify'),
+          sql`lower(${integrations.shopDomain}) = ${shopDomain.toLowerCase()}`,
+          sql`${integrations.workspaceId} <> ${workspaceId}`,
+        ),
+      );
+    for (const other of others) {
+      if (other.status !== 'disconnected' || (await this.holdsCommerceData(other.workspaceId, other.id))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private async holdsCommerceData(workspaceId: string, integrationId: string): Promise<boolean> {
+    const [customer] = await this.database.client
+      .select({ id: commerceCustomers.id })
+      .from(commerceCustomers)
+      .where(and(eq(commerceCustomers.workspaceId, workspaceId), eq(commerceCustomers.integrationId, integrationId)))
+      .limit(1);
+    if (customer) {
+      return true;
+    }
+    const [order] = await this.database.client
+      .select({ id: commerceOrders.id })
+      .from(commerceOrders)
+      .where(and(eq(commerceOrders.workspaceId, workspaceId), eq(commerceOrders.integrationId, integrationId)))
+      .limit(1);
+    return Boolean(order);
+  }
+
+  /**
+   * Store-bound (Shopify OAuth) connect: creates or reconnects the row and stores the credentials in ONE statement, so
+   * the store-ownership index either accepts the whole connection or rejects it with nothing changed: no
+   * half-connected row without credentials, no reconnected row to revert. `owned_elsewhere` = another workspace holds
+   * this store live (e.g. a concurrent OAuth that won the race). An already-live row keeps its status (re-authorization).
+   */
+  async connectStore(
+    workspaceId: string,
+    provider: IntegrationProvider,
+    credentials: Record<string, string>,
+  ): Promise<'ok' | 'owned_elsewhere'> {
+    const encrypted = encryptCredential(JSON.stringify(credentials), this.resolveEncryptionKey());
+    const shopDomain = credentials.shopDomain ? credentials.shopDomain.toLowerCase() : null;
+    const reconnecting = sql`${integrations.status} = 'disconnected'`;
+    try {
+      await this.database.client
+        .insert(integrations)
+        .values({ workspaceId, provider, credentials: encrypted, shopDomain })
+        .onConflictDoUpdate({
+          target: [integrations.workspaceId, integrations.provider],
+          set: {
+            status: sql`case when ${reconnecting} then 'connected' else ${integrations.status} end`,
+            lastSyncError: sql`case when ${reconnecting} then null else ${integrations.lastSyncError} end`,
+            credentials: encrypted,
+            ...(shopDomain ? { shopDomain } : {}),
+            updatedAt: new Date(),
+          },
+        });
+    } catch (error) {
+      if (isLiveShopConflict(error)) {
+        return 'owned_elsewhere';
+      }
+      throw error;
     }
     return 'ok';
   }
@@ -161,13 +249,17 @@ export class IntegrationService {
     }
 
     if (existing) {
-      const [reconnected] = await this.database.client
-        .update(integrations)
-        .set({ status: 'connected', lastSyncError: null })
-        .where(eq(integrations.id, existing.id))
-        .returning(integrationPublicColumns);
+      try {
+        const [reconnected] = await this.database.client
+          .update(integrations)
+          .set({ status: 'connected', lastSyncError: null })
+          .where(eq(integrations.id, existing.id))
+          .returning(integrationPublicColumns);
 
-      return reconnected;
+        return reconnected;
+      } catch (error) {
+        rethrowLiveShopConflict(error);
+      }
     }
 
     const [created] = await this.database.client
@@ -279,19 +371,16 @@ export class IntegrationService {
    * to. Those webhooks arrive at one fixed URL for every shop the app is
    * installed on — no workspace id to key off, only `shop_domain` in the
    * payload — so this resolves the other direction `findByProvider` does.
-   * Ordered by most-recently-updated: a shop can theoretically appear on
-   * more than one (historical, disconnected) integration row across
-   * workspaces if it was moved; the most recent one is the live one.
+   * Returns EVERY Shopify row for the store, any status, oldest first: at most one is live (store-ownership index),
+   * but disconnected rows in other workspaces can still hold that store's retained data, and a compliance request
+   * must reach all of it. Never "the most recently updated one": that picks an owner by accident.
    */
-  async findByShopDomain(shopDomain: string) {
-    const [integration] = await this.database.client
-      .select()
+  async findAllByShopDomain(shopDomain: string) {
+    return this.database.client
+      .select({ id: integrations.id, workspaceId: integrations.workspaceId, status: integrations.status })
       .from(integrations)
-      .where(eq(integrations.shopDomain, shopDomain))
-      .orderBy(desc(integrations.updatedAt))
-      .limit(1);
-
-    return integration ?? null;
+      .where(and(eq(integrations.provider, 'shopify'), sql`lower(${integrations.shopDomain}) = ${shopDomain.toLowerCase()}`))
+      .orderBy(integrations.createdAt, integrations.id);
   }
 
   /**
@@ -734,6 +823,10 @@ export class IntegrationService {
       // Nothing is written on a failed (re)connect: the previous working credentials stay as they were.
       throw new UnauthenticatedError('Could not verify these credentials with the provider.');
     }
+    // Only after verification: an unverified caller must not learn whether a store is connected to BRAYN.
+    if (provider === 'shopify' && credentials.shopDomain && (await this.isStoreHeldElsewhere(workspaceId, credentials.shopDomain))) {
+      throw new ConflictError(STORE_OWNED_ELSEWHERE_MESSAGE);
+    }
 
     const toStore = adapter.mergeReconnectCredentials
       ? adapter.mergeReconnectCredentials(await this.getCredentials(workspaceId, provider), credentials)
@@ -816,12 +909,16 @@ export class IntegrationService {
 
     // shopDomain is plaintext (unlike the rest of `credentials`) precisely so
     // a Shopify app-level compliance webhook can resolve this row by shop —
-    // see findByShopDomain(). Only ever set from what the credential payload
-    // itself carries, never guessed.
-    await this.database.client
-      .update(integrations)
-      .set({ credentials: encrypted, ...(credentials.shopDomain ? { shopDomain: credentials.shopDomain } : {}) })
-      .where(eq(integrations.id, existing.id));
+    // see findAllByShopDomain(). Only ever set from what the credential payload
+    // itself carries, never guessed. Lowercased: the store-ownership index compares lower(shop_domain).
+    try {
+      await this.database.client
+        .update(integrations)
+        .set({ credentials: encrypted, ...(credentials.shopDomain ? { shopDomain: credentials.shopDomain.toLowerCase() } : {}) })
+        .where(eq(integrations.id, existing.id));
+    } catch (error) {
+      rethrowLiveShopConflict(error);
+    }
   }
 
   /**

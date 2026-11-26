@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { index, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { id, timestamps } from './columns';
 import { workspaces } from './workspaces';
@@ -63,5 +64,15 @@ export const integrations = pgTable(
   (table) => [
     uniqueIndex('integrations_workspace_provider_unique').on(table.workspaceId, table.provider),
     index('integrations_shop_domain_idx').on(table.shopDomain),
+    /**
+     * Store ownership (doc 22): a Shopify store is live in at most one workspace. Enforced here, not by a pre-insert
+     * read, so two concurrent OAuth callbacks for the same store can't both win. Disconnected rows are excluded: they
+     * keep `shop_domain` for compliance erasure of retained data, and a reconnect in the owning workspace is allowed.
+     */
+    uniqueIndex('integrations_shopify_live_shop_unique')
+      .on(sql`lower(${table.shopDomain})`)
+      .where(
+        sql`${table.provider} = 'shopify' and ${table.status} <> 'disconnected' and ${table.shopDomain} is not null`,
+      ),
   ],
 );

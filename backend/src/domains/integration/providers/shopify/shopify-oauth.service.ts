@@ -9,7 +9,7 @@ import {
   parseEncryptionKey,
 } from '../../../../common/crypto/credential-cipher';
 import { StructuredLoggerService } from '../../../../common/logging/structured-logger.service';
-import { IntegrationService } from '../../integration.service';
+import { IntegrationService, STORE_OWNED_ELSEWHERE_MESSAGE } from '../../integration.service';
 import {
   requestShopifyClientCredentialsToken,
   SHOPIFY_AUTHORIZATION_CODE_GRANT_TYPE,
@@ -168,19 +168,15 @@ export class ShopifyOAuthService {
       throw new ProviderError('Could not verify the client-credentials token with Shopify.');
     }
 
-    if ((await this.integrationService.prepareStoreConnection(workspaceId, 'shopify', shopDomain)) === 'different_store') {
+    const prepared = await this.integrationService.prepareStoreConnection(workspaceId, 'shopify', shopDomain);
+    if (prepared === 'different_store') {
       throw new ConflictError('This workspace still holds data from a different Shopify store. Use a new workspace for this store.');
     }
-
-    try {
-      await this.integrationService.connect(workspaceId, 'shopify');
-    } catch (error) {
-      // Already connected (e.g. re-authorizing) — fine, credentials below still get updated to the fresh token.
-      if (!(error instanceof ConflictError)) {
-        throw error;
-      }
+    // Re-authorizing an already-connected store just refreshes its credentials; another workspace's store is refused.
+    if (prepared === 'owned_elsewhere' || (await this.integrationService.connectStore(workspaceId, 'shopify', credentials)) === 'owned_elsewhere') {
+      this.logger.event('warn', 'Shopify connect refused: store is held by another workspace', 'ShopifyOAuth', { workspaceId });
+      throw new ConflictError(STORE_OWNED_ELSEWHERE_MESSAGE);
     }
-    await this.integrationService.setCredentials(workspaceId, 'shopify', credentials);
 
     if (!(await this.ensureWebhookSubscriptions(workspaceId, credentials))) {
       throw new ProviderError('Connected to Shopify, but its webhook subscriptions could not be registered. Reconnect to retry.');
@@ -317,21 +313,17 @@ export class ShopifyOAuthService {
       return `${integrationsUrl}?shopify=error&reason=verification_failed`;
     }
 
-    if ((await this.integrationService.prepareStoreConnection(state.workspaceId, 'shopify', shop)) === 'different_store') {
+    const prepared = await this.integrationService.prepareStoreConnection(state.workspaceId, 'shopify', shop);
+    if (prepared === 'different_store') {
       this.logger.event('warn', 'Shopify OAuth callback: refused a different store for an existing connection', 'ShopifyOAuth', { workspaceId: state.workspaceId });
       return `${integrationsUrl}?shopify=error&reason=different_store`;
     }
-
-    try {
-      await this.integrationService.connect(state.workspaceId, 'shopify');
-    } catch (error) {
-      // Already connected (e.g. re-authorizing) — fine, credentials below still get updated to the fresh token.
-      if (!(error instanceof ConflictError)) {
-        this.logger.event('error', 'Shopify OAuth callback: connect() failed', 'ShopifyOAuth', { workspaceId: state.workspaceId });
-        return `${integrationsUrl}?shopify=error`;
-      }
+    // Re-authorizing an already-connected store just refreshes its credentials; another workspace's store is refused
+    // (the pre-check, or the store-ownership index when a concurrent OAuth for the same store won the race).
+    if (prepared === 'owned_elsewhere' || (await this.integrationService.connectStore(state.workspaceId, 'shopify', credentials)) === 'owned_elsewhere') {
+      this.logger.event('warn', 'Shopify OAuth callback: refused a store held by another workspace', 'ShopifyOAuth', { workspaceId: state.workspaceId });
+      return `${integrationsUrl}?shopify=error&reason=owned_elsewhere`;
     }
-    await this.integrationService.setCredentials(state.workspaceId, 'shopify', credentials);
 
     if (!(await this.ensureWebhookSubscriptions(state.workspaceId, credentials))) {
       return `${integrationsUrl}?shopify=error&reason=webhook_registration_failed`;

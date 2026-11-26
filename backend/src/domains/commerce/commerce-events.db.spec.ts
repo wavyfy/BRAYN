@@ -194,7 +194,7 @@ describe('Commerce domain events (real DB)', { timeout: 60_000 }, () => {
       integrationIds[provider] = (await integrationService.connect(workspaceId, provider)).id;
     }
     await integrationService.setCredentials(workspaceId, 'shopify', {
-      shopDomain: 'brayn-commerce-events-test.myshopify.com',
+      shopDomain: `brayn-commerce-events-${randomUUID().slice(0, 8)}.myshopify.com`,
       accessToken: 'unused-in-this-test',
       webhookSecret,
     });

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { DatabaseService } from '../../../../database/database.service';
 import { integrations } from '../../../../database/schema/integrations';
 import { ProviderError, UnauthenticatedError, ValidationError } from '../../../../common/errors/app-error';
@@ -59,7 +59,7 @@ export class ShopifyUninstallService {
     const connected = await this.database.client
       .select({ workspaceId: integrations.workspaceId, status: integrations.status })
       .from(integrations)
-      .where(and(eq(integrations.provider, 'shopify'), eq(integrations.shopDomain, shopDomain)));
+      .where(and(eq(integrations.provider, 'shopify'), sql`lower(${integrations.shopDomain}) = ${shopDomain.toLowerCase()}`));
 
     let disconnected = 0;
     for (const integration of connected) {

@@ -59,7 +59,10 @@ describe('Checkout sessions — identity, activity, privacy (real DB)', { timeou
   let ucir: CustomerIntelligenceService;
   const emitted: DomainEvent<CheckoutAbandonedPayload>[] = [];
   const ws = { a: randomUUID(), b: randomUUID() };
-  const shop = { a: 'checkout-spec-a.myshopify.com', b: 'checkout-spec-b.myshopify.com' };
+  const shop = {
+    a: `checkout-spec-a-${randomUUID().slice(0, 8)}.myshopify.com`,
+    b: `checkout-spec-b-${randomUUID().slice(0, 8)}.myshopify.com`,
+  };
   const shopifyId: Record<string, string> = {};
   const secret: Record<string, string> = {};
 
