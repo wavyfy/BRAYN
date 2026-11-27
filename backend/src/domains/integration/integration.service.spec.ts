@@ -637,7 +637,7 @@ describe('IntegrationService', () => {
 
       expect(adapter.refreshCredentials).toHaveBeenCalledWith(stale);
       expect(result).toEqual(refreshed);
-      expect(tx.execute).toHaveBeenCalledTimes(1);
+      expect(tx.execute).toHaveBeenCalledTimes(2); // set local lock_timeout, then the advisory lock
       expect(tx.update).toHaveBeenCalled();
     });
 

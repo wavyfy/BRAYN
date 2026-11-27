@@ -57,6 +57,10 @@ export const envSchema = z.object({
   // an OAuth route is actually invoked without them configured.
   SHOPIFY_APP_CLIENT_ID: z.string().optional(),
   SHOPIFY_APP_CLIENT_SECRET: z.string().optional(),
+  // Shopify credential keep-alive inside the daily intelligence run (refresh-token renewal + shop-id backfill — Admin
+  // API calls and credential writes). OFF unless explicitly 'true' on that backend: deploying code never enables it.
+  // Exactly 'true' | 'false'; anything else fails startup rather than guessing.
+  SHOPIFY_CREDENTIAL_KEEPALIVE_ENABLED: z.enum(['true', 'false']).default('false'),
 
   // AI provider — OpenAI (locked, doc 02 Pre-Implementation Decisions,
   // doc 12 AI Architecture). Optional, same convention as

@@ -654,6 +654,16 @@ export async function requestShopifyClientCredentialsToken(
 
 const SHOPIFY_REFRESH_TIMEOUT_MS = 15_000;
 
+/** Shopify's OAuth `error` code from a token-endpoint response body, or null when the body isn't that JSON shape. */
+async function shopifyOAuthErrorCode(response: Response): Promise<string | null> {
+  try {
+    const body = (await response.json()) as { error?: unknown };
+    return typeof body?.error === 'string' ? body.error : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Tags a stored credential as having come from the standalone-app authorization-code grant (doc 20 Part 28) — see ShopifyOAuthService.handleCallback and ShopifyAdapter.refreshCredentials. */
 export const SHOPIFY_AUTHORIZATION_CODE_GRANT_TYPE = 'authorization_code';
 
@@ -686,8 +696,10 @@ async function requestShopifyRefreshedToken(
     }).toString(),
   });
 
-  if (response.status === 401) {
-    // shopify.dev: 401 = the refresh token is unknown, already replaced, expired or revoked — final, stop retrying.
+  if (response.status === 401 && (await shopifyOAuthErrorCode(response)) === 'invalid_request') {
+    // shopify.dev: 401 {"error":"invalid_request"} = the refresh token is unknown, already replaced, expired or revoked
+    // — final, stop retrying. Any other 401 (e.g. a rejected client secret, a proxy page) is NOT treated as a dead
+    // token: it would otherwise flag every store for reauthorization on an app-level misconfiguration.
     throw new CredentialRevokedError();
   }
   if (!response.ok) {

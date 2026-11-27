@@ -1,11 +1,14 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { and, eq, inArray, isNotNull, isNull, lt, ne, or } from 'drizzle-orm';
 import { DatabaseService } from '../../../../database/database.service';
 import { integrations } from '../../../../database/schema/integrations';
 import { ConflictError, CredentialRevokedError } from '../../../../common/errors/app-error';
 import { StructuredLoggerService } from '../../../../common/logging/structured-logger.service';
 import { captureException } from '../../../../common/observability/sentry';
+import type { Env } from '../../../../config/env.schema';
 import {
+  CREDENTIAL_EXPIRY_UNKNOWN,
   CREDENTIAL_REAUTHORIZATION_REQUIRED,
   IntegrationService,
   isAccessTokenExpiring,
@@ -28,6 +31,8 @@ export function isRefreshTokenDue(credentials: Record<string, string>, renewBefo
 }
 
 export interface ShopifyKeepAliveCounts {
+  /** False = SHOPIFY_CREDENTIAL_KEEPALIVE_ENABLED is not 'true' on this backend: nothing was read, called or written. */
+  enabled: boolean;
   due: number;
   renewed: number;
   shopIdsRecorded: number;
@@ -56,13 +61,39 @@ export class ShopifyCredentialKeepAliveService {
     private readonly integrationService: IntegrationService,
     private readonly shopifyAdapter: ShopifyAdapter,
     private readonly logger: StructuredLoggerService,
+    private readonly config: ConfigService<Env, true>,
   ) {}
+
+  /** Read per run (not cached at boot) so the operator's env change is the only way to turn it on. */
+  isEnabled(): boolean {
+    return this.config.get('SHOPIFY_CREDENTIAL_KEEPALIVE_ENABLED', { infer: true }) === 'true';
+  }
 
   /** `scope.workspaceIds` limits the run to those workspaces (tests on a shared database); production runs all. */
   async run(
     now = new Date(),
     scope: { workspaceIds?: string[] } = {},
   ): Promise<ShopifyKeepAliveCounts> {
+    const disabled: ShopifyKeepAliveCounts = {
+      enabled: false,
+      due: 0,
+      renewed: 0,
+      shopIdsRecorded: 0,
+      aliasesRecorded: 0,
+      identityConflicts: 0,
+      reauthorizationRequired: 0,
+      failed: 0,
+    };
+    if (!this.isEnabled()) {
+      // Switch off: no database read, no Shopify call, no credential or identity write.
+      this.logger.event(
+        'log',
+        'Shopify credential keep-alive disabled on this backend',
+        'ShopifyCredentialKeepAlive',
+        {},
+      );
+      return disabled;
+    }
     const renewBefore = new Date(now.getTime() + SHOPIFY_REFRESH_RENEW_WITHIN_DAYS * DAY_MS);
     const rows = await this.database.client
       .select({
@@ -88,6 +119,7 @@ export class ShopifyCredentialKeepAliveService {
       );
 
     const counts: ShopifyKeepAliveCounts = {
+      enabled: true,
       due: rows.length,
       renewed: 0,
       shopIdsRecorded: 0,
@@ -117,7 +149,30 @@ export class ShopifyCredentialKeepAliveService {
           },
         );
         if (refreshing) counts.renewed++;
+        // A pre-0057 credential with no refresh token (client-credentials grant) has no lineage to lose: clear the
+        // migration's "expiry unknown" marker so it never alerts. Any credential write already clears it.
+        if (
+          credentials &&
+          !credentials.refreshToken &&
+          row.renewalError === CREDENTIAL_EXPIRY_UNKNOWN
+        ) {
+          await this.database.client
+            .update(integrations)
+            .set({ credentialRenewalError: null })
+            .where(
+              and(
+                eq(integrations.id, row.id),
+                eq(integrations.credentialRenewalError, CREDENTIAL_EXPIRY_UNKNOWN),
+              ),
+            );
+        }
         if (!needsIdentity || !credentials) continue;
+        // Another backend's keep-alive may have recorded it while this one waited for the refresh lock.
+        const [latest] = await this.database.client
+          .select({ shopifyShopId: integrations.shopifyShopId })
+          .from(integrations)
+          .where(eq(integrations.id, row.id));
+        if (latest?.shopifyShopId) continue;
 
         const identity = await this.shopifyAdapter.fetchShopIdentity(credentials);
         if (

@@ -66,6 +66,10 @@ const CREDENTIAL_REFRESH_SKEW_MS = 60_000;
 /** `integrations.credential_renewal_error` values. */
 export const CREDENTIAL_REAUTHORIZATION_REQUIRED = 'reauthorization_required';
 export const CREDENTIAL_RENEWAL_FAILED = 'renewal_failed';
+/** Set by migration 0057 on credentials written before refresh-token expiry was recorded; cleared by any credential write. */
+export const CREDENTIAL_EXPIRY_UNKNOWN = 'expiry_unknown';
+/** A refresher waits at most this long for another backend's refresh of the same store (bounded by its 15 s call). */
+const CREDENTIAL_REFRESH_LOCK_TIMEOUT = '30s';
 
 /** True when an access token's `expiresAt` is past or within the refresh skew. */
 export function isAccessTokenExpiring(credentials: Record<string, string>, now = Date.now()): boolean {
@@ -1219,6 +1223,8 @@ export class IntegrationService {
         const where = and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, provider));
         const [target] = await tx.select({ id: integrations.id }).from(integrations).where(where);
         if (!target) return null;
+        // Bounded wait: a stuck holder makes this caller fail (no flag, nothing written) instead of queueing forever.
+        await tx.execute(sql.raw(`set local lock_timeout = '${CREDENTIAL_REFRESH_LOCK_TIMEOUT}'`));
         await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`credential-refresh:${target.id}`}, 0))`);
         const [row] = await tx
           .select({ credentials: integrations.credentials, renewalError: integrations.credentialRenewalError })

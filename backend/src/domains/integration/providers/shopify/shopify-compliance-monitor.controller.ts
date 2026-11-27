@@ -21,7 +21,10 @@ export class ShopifyComplianceMonitorController {
       await this.complianceService.openIssues();
     // A transient renewal failure alone is not an alert (the next daily keep-alive retries); it escalates through
     // `expiringSoon` if it keeps failing for ~3 weeks.
-    const credentialsHealthy = credentials.reauthorizationRequired === 0 && credentials.expired === 0 && credentials.expiringSoon === 0;
+    const credentialsHealthy = credentials.reauthorizationRequired === 0 &&
+      credentials.expired === 0 &&
+      credentials.expiringSoon === 0 &&
+      credentials.unknownExpiryOverdue === 0;
     const healthy = count === 0 && quarantinedWebhooks === 0 && credentialsHealthy;
     reply.header('Cache-Control', 'no-store');
     reply.status(healthy ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE);

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Test, type TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
 import { and, eq, inArray } from 'drizzle-orm';
 import { AppModule } from '../../../../app.module';
 import { DatabaseService } from '../../../../database/database.service';
@@ -24,10 +25,10 @@ describe('Shopify credential lifecycle (real DB)', { timeout: 120_000 }, () => {
   let serviceB: IntegrationService;
   let keepAlive: ShopifyCredentialKeepAliveService;
   const workspaceIds: string[] = [];
-  let savedEnv: { id?: string; secret?: string } = {};
+  let savedEnv: { id?: string; secret?: string; keepAlive?: string } = {};
 
   type FakeShop = {
-    mode: 'ok' | '401' | '500';
+    mode: 'ok' | '401' | '401client' | '500' | 'network';
     delayMs: number;
     presented: string[];
     issued: number;
@@ -46,7 +47,9 @@ describe('Shopify credential lifecycle (real DB)', { timeout: 120_000 }, () => {
     savedEnv = {
       id: process.env.SHOPIFY_APP_CLIENT_ID,
       secret: process.env.SHOPIFY_APP_CLIENT_SECRET,
+      keepAlive: process.env.SHOPIFY_CREDENTIAL_KEEPALIVE_ENABLED,
     };
+    process.env.SHOPIFY_CREDENTIAL_KEEPALIVE_ENABLED = 'true';
     process.env.SHOPIFY_APP_CLIENT_ID ||= 'lifecycle-spec-client-id';
     process.env.SHOPIFY_APP_CLIENT_SECRET ||= 'lifecycle-spec-client-secret';
     appA = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -72,8 +75,11 @@ describe('Shopify credential lifecycle (real DB)', { timeout: 120_000 }, () => {
         shop.presented.push(form.get('refresh_token') ?? '');
         await new Promise((r) => setTimeout(r, shop.delayMs));
         await shop.duringRefresh?.();
+        if (shop.mode === 'network') throw new TypeError('fetch failed');
         if (shop.mode === '401')
           return Response.json({ error: 'invalid_request' }, { status: 401 });
+        if (shop.mode === '401client')
+          return Response.json({ error: 'invalid_client' }, { status: 401 });
         if (shop.mode === '500') return new Response('upstream', { status: 500 });
         shop.issued++;
         return Response.json({
@@ -111,6 +117,7 @@ describe('Shopify credential lifecycle (real DB)', { timeout: 120_000 }, () => {
     for (const [key, value] of [
       ['SHOPIFY_APP_CLIENT_ID', savedEnv.id],
       ['SHOPIFY_APP_CLIENT_SECRET', savedEnv.secret],
+      ['SHOPIFY_CREDENTIAL_KEEPALIVE_ENABLED', savedEnv.keepAlive],
     ] as const) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -425,5 +432,142 @@ describe('Shopify credential lifecycle (real DB)', { timeout: 120_000 }, () => {
     });
     expect(fake.presented).toEqual([]);
     expect(fake.graphql).toBe(0);
+  });
+
+  describe('activation switch and review hardening', () => {
+    const credentialRow = async (ws: string) => {
+      const r = await row(ws);
+      return {
+        credentials: r.credentials,
+        shopId: r.shopifyShopId,
+        error: r.credentialRenewalError,
+        expiry: r.credentialRefreshExpiresAt,
+        aliases: r.shopDomainAliases,
+      };
+    };
+
+    it('switch off (the default): no database read, no Shopify call, no credential or identity write', async () => {
+      const { domain, fake } = newShop();
+      const ws = await store(domain);
+      const before = await credentialRow(ws);
+      const config = appA.get(ConfigService);
+      const original = config.get.bind(config);
+      const spy = vi
+        .spyOn(config, 'get')
+        .mockImplementation(((key: string, opts?: unknown) =>
+          key === 'SHOPIFY_CREDENTIAL_KEEPALIVE_ENABLED'
+            ? 'false'
+            : original(key as never, opts as never)) as typeof config.get);
+      const dbSelect = vi.spyOn(db.client, 'select');
+      try {
+        expect(await keepAlive.run(new Date())).toMatchObject({
+          enabled: false,
+          due: 0,
+          renewed: 0,
+        });
+        expect(dbSelect).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+        dbSelect.mockRestore();
+      }
+      expect(fake.presented).toEqual([]);
+      expect(fake.graphql).toBe(0);
+      expect(await credentialRow(ws)).toEqual(before);
+    });
+
+    it('only 401 invalid_request is final; 401 invalid_client and network errors are transient (renewal_failed)', async () => {
+      for (const mode of ['401client', 'network'] as const) {
+        const { domain } = newShop({ mode });
+        const ws = await store(domain);
+        const before = (await row(ws)).credentials;
+        const error = await serviceA.getCredentials(ws, 'shopify').catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(Error);
+        expect(error).not.toBeInstanceOf(CredentialRevokedError);
+        expect(await row(ws)).toMatchObject({
+          credentials: before,
+          status: 'connected',
+          credentialRenewalError: 'renewal_failed',
+        });
+      }
+    });
+
+    it('unknown expiry is never healthy forever: alerts 60 days after the row was created, until a renewal records it', async () => {
+      const { domain, fake } = newShop();
+      const ws = await store(domain);
+      // As migration 0057 marks every pre-existing Shopify credential.
+      await db.client
+        .update(integrations)
+        .set({ credentialRenewalError: 'expiry_unknown' })
+        .where(eq(integrations.workspaceId, ws));
+      const overdue = async () =>
+        (await complianceOpenIssueCounts(db.client, new Date())).credentials.unknownExpiryOverdue;
+      const base = await overdue();
+      await db.client
+        .update(integrations)
+        .set({ createdAt: new Date(Date.now() - 61 * DAY) })
+        .where(eq(integrations.workspaceId, ws));
+      expect(await overdue()).toBe(base + 1);
+
+      expect(await keepAlive.run(new Date(), { workspaceIds: [ws] })).toMatchObject({
+        renewed: 1,
+        shopIdsRecorded: 1,
+        failed: 0,
+      });
+      expect(fake.presented).toEqual(['shprt_old']);
+      const r = await row(ws);
+      expect(r.credentialRenewalError).toBeNull();
+      expect(r.credentialRefreshExpiresAt).not.toBeNull();
+      expect(await overdue()).toBe(base);
+    });
+
+    it('a pre-0057 client-credentials row (no refresh token) gets its expiry_unknown marker cleared with no Shopify call', async () => {
+      const { domain, fake } = newShop();
+      const workspaceId = randomUUID();
+      workspaceIds.push(workspaceId);
+      await db.client
+        .insert(workspaces)
+        .values({ id: workspaceId, name: 'Credential lifecycle spec' });
+      await serviceA.connectStore(
+        workspaceId,
+        'shopify',
+        {
+          shopDomain: domain,
+          accessToken: 'shpat_cc',
+          grantType: 'client_credentials',
+          expiresAt: new Date(Date.now() + HOUR).toISOString(),
+        },
+        fake.shopId,
+      );
+      await db.client
+        .update(integrations)
+        .set({ credentialRenewalError: 'expiry_unknown' })
+        .where(eq(integrations.workspaceId, workspaceId));
+      await keepAlive.run(new Date(), { workspaceIds: [workspaceId] });
+      expect((await row(workspaceId)).credentialRenewalError).toBeNull();
+      expect(fake.presented).toEqual([]);
+      expect(fake.graphql).toBe(0);
+    });
+
+    it('keep-alive running on both backends at once: one Shopify refresh, one consistent identity', async () => {
+      const { domain, fake } = newShop({ delayMs: 1_500 });
+      const ws = await store(domain);
+      await Promise.all(
+        [db, appB.get(DatabaseService)].flatMap((d) => Array.from({ length: 3 }, () => d.ping())),
+      );
+      const [a, b] = await Promise.all([
+        keepAlive.run(new Date(), { workspaceIds: [ws] }),
+        appB.get(ShopifyCredentialKeepAliveService).run(new Date(), { workspaceIds: [ws] }),
+      ]);
+      expect(fake.presented).toEqual(['shprt_old']);
+      expect(a.renewed + b.renewed).toBe(1);
+      expect(a.failed + b.failed + a.identityConflicts + b.identityConflicts).toBe(0);
+      expect(await row(ws)).toMatchObject({
+        shopifyShopId: fake.shopId,
+        credentialRenewalError: null,
+        status: 'connected',
+      });
+      expect(await stored(ws)).toMatchObject({ refreshToken: 'shprt_new_1' });
+      expect(fake.graphql).toBeLessThanOrEqual(2);
+    });
   });
 });
