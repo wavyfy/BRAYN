@@ -24,6 +24,7 @@ describe('Shopify credential lifecycle (real DB)', { timeout: 120_000 }, () => {
   let serviceB: IntegrationService;
   let keepAlive: ShopifyCredentialKeepAliveService;
   const workspaceIds: string[] = [];
+  let savedEnv: { id?: string; secret?: string } = {};
 
   type FakeShop = {
     mode: 'ok' | '401' | '500';
@@ -40,6 +41,14 @@ describe('Shopify credential lifecycle (real DB)', { timeout: 120_000 }, () => {
   const DAY = 24 * HOUR;
 
   beforeAll(async () => {
+    // The refresh path needs the app's client id/secret; Shopify itself is faked below, so test values suffice where
+    // none are configured (CI). A configured value is left as is.
+    savedEnv = {
+      id: process.env.SHOPIFY_APP_CLIENT_ID,
+      secret: process.env.SHOPIFY_APP_CLIENT_SECRET,
+    };
+    process.env.SHOPIFY_APP_CLIENT_ID ||= 'lifecycle-spec-client-id';
+    process.env.SHOPIFY_APP_CLIENT_SECRET ||= 'lifecycle-spec-client-secret';
     appA = await Test.createTestingModule({ imports: [AppModule] }).compile();
     await appA.init();
     appB = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -99,6 +108,13 @@ describe('Shopify credential lifecycle (real DB)', { timeout: 120_000 }, () => {
     }
     await appB?.close();
     await appA?.close();
+    for (const [key, value] of [
+      ['SHOPIFY_APP_CLIENT_ID', savedEnv.id],
+      ['SHOPIFY_APP_CLIENT_SECRET', savedEnv.secret],
+    ] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   }, 60_000);
 
   const newShop = (fake: Partial<FakeShop> = {}) => {
