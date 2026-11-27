@@ -94,6 +94,13 @@ describe('middleware (Clerk sign-in protection) — regression', () => {
       expect(call.response?.headers.get('cache-control')).toBe('no-store');
     });
 
+    it('covers prefetches too (a cached sign-in redirect would surface on the next click), with an empty body', async () => {
+      await load();
+      const call = await run(DETAIL, { headers: rsc(SIGNED_IN, { 'next-router-prefetch': '1' }) });
+      expect(call.response?.status).toBe(401);
+      expect(await call.response?.text()).toBe('');
+    });
+
     it('recognises the instance-suffixed Clerk cookie names', async () => {
       await load();
       const call = await run(DETAIL, { headers: rsc('__client_uat_u57Fgn4t=1795800000; __session_u57Fgn4t=eyJ.x.y') });

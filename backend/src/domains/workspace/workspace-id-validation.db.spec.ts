@@ -158,5 +158,16 @@ describe(
       const noSession = await get(`/api/v1/workspaces/not-a-uuid`);
       expect(noSession.statusCode).toBe(401);
     });
+
+    it('no existence oracle: a non-member gets the same 403 for a real workspace whatever the child id, and the same 404 for any malformed workspace id', async () => {
+      for (const child of ['not-a-uuid', randomUUID()]) {
+        const res = await get(`/api/v1/workspaces/${workspaceId}/customers/${child}`, outsider);
+        expect(res.statusCode, child).toBe(403);
+      }
+      const forMember = await get(`/api/v1/workspaces/not-a-uuid`, member);
+      const forOutsider = await get(`/api/v1/workspaces/not-a-uuid`, outsider);
+      expect([forMember.statusCode, forOutsider.statusCode]).toEqual([404, 404]);
+      expect(forOutsider.json().error.message).toBe(forMember.json().error.message);
+    });
   },
 );

@@ -11,6 +11,11 @@ const isPublicRoute = createRouteMatcher(['/sign-in(.*)']);
  * Clerk session, answer such a request with a non-RSC response instead: Next's router then performs a full document
  * navigation to the same URL, which refreshes the token via the handshake (or, if the session really ended, reaches
  * the normal sign-in redirect). Server Actions (POST, `Next-Action`) are not navigations and keep Clerk's behaviour.
+ * Security: this branch only ever *withholds* a response (empty 401) — it never lets a request through, so spoofed
+ * headers/cookies gain nothing; tenant authorization stays with the API's bearer-token + membership checks.
+ * Relies on Next's router treating any non-200 / non-RSC response as a full-page (MPA) navigation, prefetches
+ * included (`fetch-server-response`: "If the fetch was not 200, we also handle it like a mpa navigation") and on
+ * Clerk's handshake for document requests — verified on next 15.5.29 + @clerk/nextjs 7.8.3; re-verify on upgrade.
  */
 function isStaleSessionClientNavigation(req: NextRequest): boolean {
   // Next strips its own `RSC` header and `_rsc` query before middleware runs; what middleware sees of a client

@@ -32,14 +32,19 @@ const STATUS_TO_CODE: Partial<Record<number, ErrorCode>> = {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * A malformed id in the URL (e.g. /workspaces/not-a-uuid): Postgres rejected a uuid cast (22P02 — DatabaseService
- * already unwraps drizzle's query error) and the route has a path param that is not a uuid. Any other invalid uuid
- * cast is a server bug and stays a 500.
+ * F2 — a malformed id in the URL (e.g. /workspaces/not-a-uuid): Postgres rejected a uuid cast (`22P02` raised by
+ * `string_to_uuid` — locale-independent; DatabaseService already unwraps drizzle's query error) AND the route has an
+ * id path param (`id` / `…Id`, uuids by convention) that is not a canonical uuid. Every other failure — including a
+ * uuid cast failing while all id params are well-formed — is a server bug and stays a 500 (logged + Sentry).
+ * Central rather than per-route: the guard and every service query the param directly, and the cast fails before
+ * any row is read, so the 404 says nothing about which workspaces or customers exist.
  */
 function isMalformedPathId(exception: unknown, params: unknown): boolean {
-  const pg = exception as { code?: unknown; message?: unknown } | null;
-  if (pg?.code !== '22P02' || typeof pg.message !== 'string' || !pg.message.includes('type uuid')) return false;
-  return Object.values((params ?? {}) as Record<string, unknown>).some((v) => typeof v === 'string' && !UUID.test(v));
+  const pg = exception as { code?: unknown; routine?: unknown } | null;
+  if (pg?.code !== '22P02' || pg.routine !== 'string_to_uuid') return false;
+  return Object.entries((params ?? {}) as Record<string, unknown>).some(
+    ([name, value]) => (name === 'id' || name.endsWith('Id')) && typeof value === 'string' && !UUID.test(value),
+  );
 }
 
 interface ErrorResponseBody {
@@ -102,8 +107,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       return;
     }
 
-    // F2: no resource can have a malformed id, so it is a clean 404 — never a 500. The cast fails before any row is
-    // read, so the workspace guard still answers 403 for every well-formed id the caller is not a member of.
+    // F2: no resource can have a malformed id, so it is a clean 404 — never a 500 (see isMalformedPathId).
     if (isMalformedPathId(exception, request.params)) {
       this.logger.event('warn', 'Malformed resource id', 'AllExceptionsFilter', { code: ErrorCode.NOT_FOUND, requestId });
       this.send(reply, HttpStatus.NOT_FOUND, {
