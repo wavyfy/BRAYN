@@ -639,6 +639,7 @@ describe('ShopifyOAuthService', () => {
         refreshToken: 'shprt_new',
         grantType: 'authorization_code',
         expiresAt: new Date(1_700_000_000_000 + 3600 * 1000).toISOString(),
+        refreshTokenExpiresAt: new Date(1_700_000_000_000 + 7776000 * 1000).toISOString(),
       }, '548380009', 'test-store.myshopify.com');
     });
 

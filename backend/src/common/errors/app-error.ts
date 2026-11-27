@@ -58,6 +58,16 @@ export class ProviderError extends AppError {
 }
 
 /**
+ * The provider refused the stored refresh token outright (Shopify: 401 `invalid_request` — unknown, replaced, expired
+ * or revoked; "don't branch on which one it was"). Final: retrying cannot succeed; the merchant must reconnect.
+ */
+export class CredentialRevokedError extends ProviderError {
+  constructor(message = 'The provider no longer accepts this connection\'s refresh token; reconnect the store.') {
+    super(message);
+  }
+}
+
+/**
  * Doc14 Human Approval flow — the request is understood and permitted in
  * principle, but its risk tier requires merchant approval before it may
  * execute (doc03 rule 7 — "Write actions require stronger validation and

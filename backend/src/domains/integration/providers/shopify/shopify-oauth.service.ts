@@ -277,12 +277,14 @@ export class ShopifyOAuthService {
     let accessToken: string;
     let refreshToken: string | null = null;
     let expiresAt: string | null = null;
+    let refreshTokenExpiresAt: string | null = null;
     let grantedScopes: string | null = null;
     try {
       const exchanged = await this.exchangeCodeForToken(shop, query.code);
       accessToken = exchanged.accessToken;
       refreshToken = exchanged.refreshToken;
       expiresAt = exchanged.expiresAt;
+      refreshTokenExpiresAt = exchanged.refreshTokenExpiresAt;
       grantedScopes = exchanged.scope;
     } catch {
       this.logger.event('error', 'Shopify OAuth callback: token exchange failed', 'ShopifyOAuth', { workspaceId: state.workspaceId });
@@ -299,6 +301,9 @@ export class ShopifyOAuthService {
     }
     if (expiresAt) {
       credentials.expiresAt = expiresAt;
+    }
+    if (refreshToken && refreshTokenExpiresAt) {
+      credentials.refreshTokenExpiresAt = refreshTokenExpiresAt;
     }
 
     // Diagnostic only (doc 20 Part 20/25) — a status-code category, the non-sensitive
@@ -467,9 +472,9 @@ export class ShopifyOAuthService {
    * token — Shopify now rejects non-expiring offline tokens for public
    * apps outright ("API Non-expiring access tokens are no longer accepted
    * for the Admin API"). An expiring token additionally returns
-   * `refresh_token`/`expires_in` (and `refresh_token_expires_in`, which
-   * BRAYN doesn't currently persist — nothing reads it, and the existing
-   * credential model has no use for it yet).
+   * `refresh_token`/`expires_in`/`refresh_token_expires_in` (90 days) — the
+   * last is stored as `refreshTokenExpiresAt` so the credential keep-alive
+   * renews the refresh token before it lapses.
    *
    * `scope` (doc 20 Part 25) is Shopify's own report of which scopes this
    * token actually carries — not a secret (it's a permission-name list,
@@ -481,7 +486,13 @@ export class ShopifyOAuthService {
   private async exchangeCodeForToken(
     shop: string,
     code: string,
-  ): Promise<{ accessToken: string; refreshToken: string | null; expiresAt: string | null; scope: string | null }> {
+  ): Promise<{
+    accessToken: string;
+    refreshToken: string | null;
+    expiresAt: string | null;
+    refreshTokenExpiresAt: string | null;
+    scope: string | null;
+  }> {
     const clientId = this.config.get('SHOPIFY_APP_CLIENT_ID', { infer: true });
     const clientSecret = this.config.get('SHOPIFY_APP_CLIENT_SECRET', { infer: true });
     if (!clientId || !clientSecret) {
@@ -512,6 +523,8 @@ export class ShopifyOAuthService {
       accessToken: body.access_token,
       refreshToken: typeof body.refresh_token === 'string' ? body.refresh_token : null,
       expiresAt: typeof body.expires_in === 'number' ? new Date(Date.now() + body.expires_in * 1000).toISOString() : null,
+      refreshTokenExpiresAt:
+        typeof body.refresh_token_expires_in === 'number' ? new Date(Date.now() + body.refresh_token_expires_in * 1000).toISOString() : null,
       scope: typeof body.scope === 'string' ? body.scope : null,
     };
   }

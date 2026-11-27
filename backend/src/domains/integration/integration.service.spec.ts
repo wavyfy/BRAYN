@@ -627,14 +627,18 @@ describe('IntegrationService', () => {
       const adapter = { refreshCredentials: vi.fn(async () => refreshed) };
       const storedRow = { ...existing, credentials: encrypted };
       const updateChain = makeChain([storedRow]);
-      const client = { select: makeSelectQueue([[storedRow], [storedRow]]), update: vi.fn(() => updateChain) };
-      const service = new IntegrationService({ client } as unknown as DatabaseService, makeConfig(), makeRegistry(adapter), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
+      const client = { select: makeSelectQueue([[storedRow]]) };
+      // The refresh runs in a transaction under the per-integration lock: target row, lock, re-read, compare-and-set write.
+      const tx = { select: makeSelectQueue([[storedRow], [storedRow]]), execute: vi.fn(async () => undefined), update: vi.fn(() => updateChain) };
+      const database = { client, transaction: vi.fn((fn: (t: unknown) => unknown) => fn(tx)) };
+      const service = new IntegrationService(database as unknown as DatabaseService, makeConfig(), makeRegistry(adapter), makeImportRunService(), makeReconciliationRunService(), makeEventBus());
 
       const result = await service.getCredentials('ws_1', 'shopify');
 
       expect(adapter.refreshCredentials).toHaveBeenCalledWith(stale);
       expect(result).toEqual(refreshed);
-      expect(client.update).toHaveBeenCalled();
+      expect(tx.execute).toHaveBeenCalledTimes(2); // set local lock_timeout, then the advisory lock
+      expect(tx.update).toHaveBeenCalled();
     });
 
     it('getCredentials() falls back to the stale credentials when the adapter has no refreshCredentials (e.g. WooCommerce)', async () => {

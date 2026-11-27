@@ -20,6 +20,7 @@ describe('ShopifyComplianceMonitorController', () => {
         nearDeadline: 0,
         payloadExpired: 0,
         oldestReceivedAt: null,
+        credentials: { reauthorizationRequired: 0, renewalFailed: 0, expired: 0, expiringSoon: 0, unknownExpiry: 0, unknownExpiryOverdue: 0 },
       })),
     } as unknown as ShopifyComplianceService;
     const reply = makeReply();
@@ -36,6 +37,7 @@ describe('ShopifyComplianceMonitorController', () => {
       nearDeadline: 0,
       payloadExpired: 0,
       oldestOpenReceivedAt: null,
+      credentials: { reauthorizationRequired: 0, renewalFailed: 0, expired: 0, expiringSoon: 0, unknownExpiry: 0, unknownExpiryOverdue: 0 },
     });
   });
 
@@ -49,6 +51,7 @@ describe('ShopifyComplianceMonitorController', () => {
         nearDeadline: 1,
         payloadExpired: 0,
         oldestReceivedAt: at,
+        credentials: { reauthorizationRequired: 0, renewalFailed: 0, expired: 0, expiringSoon: 0, unknownExpiry: 0, unknownExpiryOverdue: 0 },
       })),
     } as unknown as ShopifyComplianceService;
     const reply = makeReply();
@@ -64,6 +67,7 @@ describe('ShopifyComplianceMonitorController', () => {
       nearDeadline: 1,
       payloadExpired: 0,
       oldestOpenReceivedAt: at.toISOString(),
+      credentials: { reauthorizationRequired: 0, renewalFailed: 0, expired: 0, expiringSoon: 0, unknownExpiry: 0, unknownExpiryOverdue: 0 },
     });
   });
 
@@ -76,6 +80,7 @@ describe('ShopifyComplianceMonitorController', () => {
         nearDeadline: 0,
         payloadExpired: 0,
         oldestReceivedAt: null,
+        credentials: { reauthorizationRequired: 0, renewalFailed: 0, expired: 0, expiringSoon: 0, unknownExpiry: 0, unknownExpiryOverdue: 0 },
       })),
     } as unknown as ShopifyComplianceService;
     const reply = makeReply();
@@ -84,5 +89,41 @@ describe('ShopifyComplianceMonitorController', () => {
     );
     expect(reply.status).toHaveBeenCalledWith(503);
     expect(body).toMatchObject({ healthy: false, openIssues: 0, quarantinedWebhooks: 1 });
+  });
+
+  const credentialCase = (credentials: Partial<Record<string, number>>) => ({
+    openIssues: vi.fn(async () => ({
+      count: 0,
+      quarantinedWebhooks: 0,
+      overdue: 0,
+      nearDeadline: 0,
+      payloadExpired: 0,
+      oldestReceivedAt: null,
+      credentials: { reauthorizationRequired: 0, renewalFailed: 0, expired: 0, expiringSoon: 0, unknownExpiry: 0, unknownExpiryOverdue: 0, ...credentials },
+    })),
+  }) as unknown as ShopifyComplianceService;
+
+  it.each([{ reauthorizationRequired: 1 }, { expired: 1 }, { expiringSoon: 1 }, { unknownExpiryOverdue: 1 }])(
+    '503 while a live Shopify connection is losing Admin API access (%o)',
+    async (credentials) => {
+      const reply = makeReply();
+      const body = await new ShopifyComplianceMonitorController(credentialCase(credentials)).status(reply as unknown as FastifyReply);
+      expect(reply.status).toHaveBeenCalledWith(503);
+      expect(body).toMatchObject({ healthy: false, credentials });
+    },
+  );
+
+  it('200 while an unknown expiry is still inside its 60-day margin (reported, not alerted)', async () => {
+    const reply = makeReply();
+    const body = await new ShopifyComplianceMonitorController(credentialCase({ unknownExpiry: 1 })).status(reply as unknown as FastifyReply);
+    expect(reply.status).toHaveBeenCalledWith(200);
+    expect(body).toMatchObject({ healthy: true, credentials: { unknownExpiry: 1 } });
+  });
+
+  it('200 with only a transient renewal failure (retried by the next keep-alive; escalates via expiringSoon)', async () => {
+    const reply = makeReply();
+    const body = await new ShopifyComplianceMonitorController(credentialCase({ renewalFailed: 1 })).status(reply as unknown as FastifyReply);
+    expect(reply.status).toHaveBeenCalledWith(200);
+    expect(body).toMatchObject({ healthy: true, credentials: { renewalFailed: 1 } });
   });
 });

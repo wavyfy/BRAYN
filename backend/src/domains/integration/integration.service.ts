@@ -36,7 +36,14 @@ import { websiteVisitors } from '../../database/schema/website-visitors';
 import { websiteSessions } from '../../database/schema/website-sessions';
 import { websiteEvents } from '../../database/schema/website-events';
 import { aiActionRequests } from '../../database/schema/ai-action-requests';
-import { ConflictError, NotFoundError, ProviderError, UnauthenticatedError, ValidationError } from '../../common/errors/app-error';
+import {
+  ConflictError,
+  CredentialRevokedError,
+  NotFoundError,
+  ProviderError,
+  UnauthenticatedError,
+  ValidationError,
+} from '../../common/errors/app-error';
 import {
   decryptCredential,
   encryptCredential,
@@ -56,6 +63,18 @@ import type { Env } from '../../config/env.schema';
 
 /** Refresh a bit before actual expiry (shopify.dev's own offline-token example refreshes ~60s early) rather than racing a request against the exact cutoff. */
 const CREDENTIAL_REFRESH_SKEW_MS = 60_000;
+/** `integrations.credential_renewal_error` values. */
+export const CREDENTIAL_REAUTHORIZATION_REQUIRED = 'reauthorization_required';
+export const CREDENTIAL_RENEWAL_FAILED = 'renewal_failed';
+/** Set by migration 0057 on credentials written before refresh-token expiry was recorded; cleared by any credential write. */
+export const CREDENTIAL_EXPIRY_UNKNOWN = 'expiry_unknown';
+/** A refresher waits at most this long for another backend's refresh of the same store (bounded by its 15 s call). */
+const CREDENTIAL_REFRESH_LOCK_TIMEOUT = '30s';
+
+/** True when an access token's `expiresAt` is past or within the refresh skew. */
+export function isAccessTokenExpiring(credentials: Record<string, string>, now = Date.now()): boolean {
+  return Boolean(credentials.expiresAt) && new Date(credentials.expiresAt).getTime() <= now + CREDENTIAL_REFRESH_SKEW_MS;
+}
 
 /**
  * How long a disconnected integration's customer data is retained before
@@ -275,7 +294,7 @@ export class IntegrationService {
     shopId?: string,
     domainAlias?: string,
   ): Promise<'ok' | 'owned_elsewhere'> {
-    const encrypted = encryptCredential(JSON.stringify(credentials), this.resolveEncryptionKey());
+    const stored = this.credentialColumns(credentials);
     const shopDomain = credentials.shopDomain ? credentials.shopDomain.toLowerCase() : null;
     // Shopify's current myshopify domain, when it differs from the one connected (a renamed store) — reported by Shopify
     // for this token's own store, but never recorded if another workspace already has that domain.
@@ -295,7 +314,7 @@ export class IntegrationService {
           .values({
             workspaceId,
             provider,
-            credentials: encrypted,
+            ...stored,
             shopDomain,
             shopifyShopId: shopId ?? null,
             shopDomainAliases: alias ? [alias] : [],
@@ -305,7 +324,7 @@ export class IntegrationService {
             set: {
               status: sql`case when ${reconnecting} then 'connected' else ${integrations.status} end`,
               lastSyncError: sql`case when ${reconnecting} then null else ${integrations.lastSyncError} end`,
-              credentials: encrypted,
+              ...stored,
               ...(shopDomain ? { shopDomain } : {}),
               ...(shopId ? { shopifyShopId: shopId } : {}),
               ...(alias
@@ -1082,8 +1101,7 @@ export class IntegrationService {
       throw new NotFoundError('This workspace has no connection for that provider.');
     }
 
-    const key = this.resolveEncryptionKey();
-    const encrypted = encryptCredential(JSON.stringify(credentials), key);
+    const stored = this.credentialColumns(credentials);
 
     // shopDomain is plaintext (unlike the rest of `credentials`) precisely so
     // a Shopify app-level compliance webhook can resolve this row by shop —
@@ -1092,7 +1110,7 @@ export class IntegrationService {
     try {
       await this.database.client
         .update(integrations)
-        .set({ credentials: encrypted, ...(credentials.shopDomain ? { shopDomain: credentials.shopDomain.toLowerCase() } : {}) })
+        .set({ ...stored, ...(credentials.shopDomain ? { shopDomain: credentials.shopDomain.toLowerCase() } : {}) })
         .where(eq(integrations.id, existing.id));
     } catch (error) {
       rethrowLiveShopConflict(error);
@@ -1171,19 +1189,97 @@ export class IntegrationService {
     provider: IntegrationProvider,
     credentials: Record<string, string>,
   ): Promise<Record<string, string> | null> {
-    const expiresAt = credentials.expiresAt;
-    if (!expiresAt || new Date(expiresAt).getTime() > Date.now() + CREDENTIAL_REFRESH_SKEW_MS) {
+    if (!isAccessTokenExpiring(credentials)) {
       return null;
     }
+    return this.renewCredentials(workspaceId, provider, (current) => isAccessTokenExpiring(current));
+  }
 
+  /**
+   * Refreshes a provider credential when `isDue(current)` says so, one refresh per integration at a time across every
+   * process and backend on this database (Shopify: "Refresh one store at a time" — two concurrent refreshes leave one
+   * worker holding a token the other already replaced). Holds a transaction-scoped advisory lock keyed by the
+   * integration, RE-READS the credential under it (another worker may have refreshed while this one waited) and
+   * decides on that value. Returns the current credential (refreshed or not); `null` = nothing stored / no refresh.
+   *
+   * Failure never overwrites the stored credential and never changes `status`: the transaction rolls back and only
+   * `credential_renewal_error` is set — `reauthorization_required` when the provider refused the refresh token
+   * (final: later calls fail fast without calling the provider until a reconnect stores a new credential),
+   * `renewal_failed` otherwise. If the provider answered but the commit failed, the presented refresh token stays
+   * valid (Shopify keeps it until the replacement is used), so a retry recovers.
+   */
+  async renewCredentials(
+    workspaceId: string,
+    provider: IntegrationProvider,
+    isDue: (current: Record<string, string>) => boolean,
+  ): Promise<Record<string, string> | null> {
     const adapter = this.providerRegistry.get(provider);
-    const refreshed = await adapter.refreshCredentials?.(credentials);
-    if (!refreshed) {
-      return null;
+    if (!adapter.refreshCredentials) return null; // nothing to renew (e.g. WooCommerce's non-expiring keys)
+    const key = this.resolveEncryptionKey();
+    let failure: string | null = null;
+    let readCiphertext: string | null = null;
+    try {
+      return await this.database.transaction(async (tx) => {
+        const where = and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, provider));
+        const [target] = await tx.select({ id: integrations.id }).from(integrations).where(where);
+        if (!target) return null;
+        // Bounded wait: a stuck holder makes this caller fail (no flag, nothing written) instead of queueing forever.
+        await tx.execute(sql.raw(`set local lock_timeout = '${CREDENTIAL_REFRESH_LOCK_TIMEOUT}'`));
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`credential-refresh:${target.id}`}, 0))`);
+        const [row] = await tx
+          .select({ credentials: integrations.credentials, renewalError: integrations.credentialRenewalError })
+          .from(integrations)
+          .where(eq(integrations.id, target.id));
+        if (!row?.credentials) return null;
+        readCiphertext = row.credentials;
+        const current = JSON.parse(decryptCredential(row.credentials, key)) as Record<string, string>;
+        if (!isDue(current)) return current;
+        if (row.renewalError === CREDENTIAL_REAUTHORIZATION_REQUIRED) {
+          throw new CredentialRevokedError();
+        }
+        let refreshed: Record<string, string> | null;
+        try {
+          refreshed = await adapter.refreshCredentials!(current);
+        } catch (error) {
+          failure = error instanceof CredentialRevokedError ? CREDENTIAL_REAUTHORIZATION_REQUIRED : CREDENTIAL_RENEWAL_FAILED;
+          throw error;
+        }
+        if (!refreshed) return current;
+        // Compare-and-set: a reconnect (OAuth stores a new credential without this lock) may have landed meanwhile;
+        // Shopify retires every older refresh token on a new acquisition, so the reconnect's credential must win.
+        const [written] = await tx
+          .update(integrations)
+          .set(this.credentialColumns(refreshed))
+          .where(and(eq(integrations.id, target.id), eq(integrations.credentials, readCiphertext)))
+          .returning({ id: integrations.id });
+        if (!written) {
+          const [now] = await tx.select({ credentials: integrations.credentials }).from(integrations).where(eq(integrations.id, target.id));
+          return now?.credentials ? (JSON.parse(decryptCredential(now.credentials, key)) as Record<string, string>) : null;
+        }
+        return refreshed;
+      });
+    } catch (error) {
+      // Only flag the credential that actually failed: a reconnect that stored a new one meanwhile stays clean.
+      if (failure && readCiphertext) {
+        await this.database.client
+          .update(integrations)
+          .set({ credentialRenewalError: failure })
+          .where(
+            and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, provider), eq(integrations.credentials, readCiphertext)),
+          );
+      }
+      throw error;
     }
+  }
 
-    await this.setCredentials(workspaceId, provider, refreshed);
-    return refreshed;
+  /** The columns a credential write sets: the encrypted payload, its plaintext refresh-token expiry, a cleared renewal error. */
+  private credentialColumns(credentials: Record<string, string>) {
+    const refreshExpiry = credentials.refreshToken && credentials.refreshTokenExpiresAt ? new Date(credentials.refreshTokenExpiresAt) : null;
+    return {
+      credentials: encryptCredential(JSON.stringify(credentials), this.resolveEncryptionKey()),
+      credentialRefreshExpiresAt: refreshExpiry && !Number.isNaN(refreshExpiry.getTime()) ? refreshExpiry : null,
+      credentialRenewalError: null,
+    };
   }
 
   private resolveEncryptionKey() {

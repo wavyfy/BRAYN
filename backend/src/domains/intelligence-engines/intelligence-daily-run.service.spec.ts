@@ -1,3 +1,4 @@
+import type { ShopifyCredentialKeepAliveService } from '../integration/providers/shopify/shopify-credential-keepalive.service';
 import { describe, expect, it, vi } from 'vitest';
 import { DAILY_RUN_HEARTBEAT_MS, DAILY_RUN_MAX_CONSECUTIVE_FAILURES, DAILY_RUN_PAGE_SIZE, IntelligenceDailyRunService, startOfUtcDay, type IntelligenceDailyRun } from './intelligence-daily-run.service';
 import type { DatabaseService } from '../../database/database.service';
@@ -48,6 +49,7 @@ function setup(pages: { workspaceId: string; id: string }[][], findCurrent: (id:
   const opportunities = { detect: vi.fn(async () => []), evaluateConversions: vi.fn(async () => 0) };
   const recommendations = { generate: vi.fn(async () => []) };
   const logger = { event: vi.fn() };
+  const keepAlive = { run: vi.fn(async () => ({})) };
   const service = new IntelligenceDailyRunService(
     { client } as unknown as DatabaseService,
     { listActiveCustomerKeys } as unknown as CustomerIntelligenceService,
@@ -55,11 +57,24 @@ function setup(pages: { workspaceId: string; id: string }[][], findCurrent: (id:
     opportunities as unknown as RevenueOpportunityService,
     recommendations as unknown as RecommendationService,
     logger as unknown as StructuredLoggerService,
+    keepAlive as unknown as ShopifyCredentialKeepAliveService,
   );
-  return { service, client, lease, sets, listActiveCustomerKeys, health, opportunities, recommendations, logger, final: () => sets.at(-1)! };
+  return { keepAlive, service, client, lease, sets, listActiveCustomerKeys, health, opportunities, recommendations, logger, final: () => sets.at(-1)! };
 }
 
 describe('IntelligenceDailyRunService.execute()', () => {
+  it('runs the Shopify credential keep-alive once per run; its failure never fails the intelligence run', async () => {
+    const t = setup([keys(1)]);
+    t.keepAlive.run.mockRejectedValueOnce(new Error('credential key not configured'));
+
+    await t.service.execute(run);
+
+    expect(t.keepAlive.run).toHaveBeenCalledTimes(1);
+    expect(t.health.recalculate).toHaveBeenCalledTimes(1);
+    expect(t.final()).toMatchObject({ status: 'succeeded', customersFailed: 0 });
+    expect(t.logger.event).toHaveBeenCalledWith('error', 'Shopify credential keep-alive could not run', 'IntelligenceDailyRunService', expect.any(Object));
+  });
+
   it('records a retention-maintenance failure on the run (prefixed) without failing the intelligence run', async () => {
     const t = setup([keys(1)]);
     applyRetention.mockRejectedValueOnce(new Error('relation "checkout_sessions" does not exist'));

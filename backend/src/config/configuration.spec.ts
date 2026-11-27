@@ -20,6 +20,17 @@ describe('loadConfiguration', () => {
     expect(config.AI_MODEL).toBe('gpt-5.6-luna');
   });
 
+  it('Shopify credential keep-alive is off by default; only the exact value "true" enables it', () => {
+    process.env = { NODE_ENV: 'test' } as NodeJS.ProcessEnv;
+    expect(loadConfiguration().SHOPIFY_CREDENTIAL_KEEPALIVE_ENABLED).toBe('false');
+    process.env = { NODE_ENV: 'test', SHOPIFY_CREDENTIAL_KEEPALIVE_ENABLED: 'true' } as NodeJS.ProcessEnv;
+    expect(loadConfiguration().SHOPIFY_CREDENTIAL_KEEPALIVE_ENABLED).toBe('true');
+    for (const value of ['1', 'TRUE', 'yes', '']) {
+      process.env = { NODE_ENV: 'test', SHOPIFY_CREDENTIAL_KEEPALIVE_ENABLED: value } as NodeJS.ProcessEnv;
+      expect(() => loadConfiguration()).toThrow(/Invalid environment configuration/);
+    }
+  });
+
   it('rejects an empty OPENAI_API_KEY rather than treating it as unset', () => {
     process.env = { ...originalEnv, NODE_ENV: 'test', OPENAI_API_KEY: '' } as NodeJS.ProcessEnv;
 

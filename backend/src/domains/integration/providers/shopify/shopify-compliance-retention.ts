@@ -2,6 +2,7 @@ import { and, eq, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { shopifyComplianceWebhooks } from '../../../../database/schema/shopify-compliance-webhooks';
 import { integrationWebhookEvents } from '../../../../database/schema/integration-webhook-events';
+import { integrations } from '../../../../database/schema/integrations';
 
 /**
  * PROVISIONAL (user, Nov 26, 2026; privacy/legal confirmation pending): an unresolved compliance delivery keeps its
@@ -16,6 +17,14 @@ export const COMPLIANCE_NEAR_DEADLINE_DAYS = 25;
 
 const OPEN = sql`(${shopifyComplianceWebhooks.status} in ('failed', 'exception') or (${shopifyComplianceWebhooks.status} = 'processing' and ${shopifyComplianceWebhooks.claimedAt} < now() - interval '5 minutes'))`;
 const daysAgo = (now: Date, days: number) => new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+/** Monitor escalation: a live connection's refresh token lapses within this many days (renewal starts at 30). */
+export const SHOPIFY_CREDENTIAL_ALERT_DAYS = 7;
+/**
+ * Unknown refresh-token expiry (a credential written before expiry was recorded, or one whose renewal keeps failing):
+ * never "healthy forever". A refresh token can be no older than its integration row, so it lives at least until
+ * created_at + 90 days; alert from created_at + 60 days (≥ 30 days of margin) until a renewal records the expiry.
+ */
+export const SHOPIFY_UNKNOWN_EXPIRY_ALERT_AFTER_DAYS = 60;
 
 /** Open-issue counts for alerting. Counts and one timestamp only — never a shop, customer or payload value. */
 export async function complianceOpenIssueCounts(db: NodePgDatabase, now: Date) {
@@ -35,7 +44,31 @@ export async function complianceOpenIssueCounts(db: NodePgDatabase, now: Date) {
     .select({ n: sql<number>`count(*)::int` })
     .from(integrationWebhookEvents)
     .where(eq(integrationWebhookEvents.status, 'quarantined'));
+  // Live Shopify connections whose Admin API access is lost or about to be (credential keep-alive); counts only.
+  const i = integrations;
+  const UNKNOWN = sql`${i.credentialRefreshExpiresAt} is null and ${i.credentialRenewalError} in ('expiry_unknown', 'renewal_failed')`;
+  const [cred] = await db
+    .select({
+      reauthorizationRequired: sql<number>`(count(*) filter (where ${i.credentialRenewalError} = 'reauthorization_required'))::int`,
+      renewalFailed: sql<number>`(count(*) filter (where ${i.credentialRenewalError} = 'renewal_failed'))::int`,
+      expired: sql<number>`(count(*) filter (where ${i.credentialRefreshExpiresAt} <= ${now}))::int`,
+      unknownExpiry: sql<number>`(count(*) filter (where ${UNKNOWN}))::int`,
+      unknownExpiryOverdue: sql<number>`(count(*) filter (where ${UNKNOWN} and ${i.createdAt} < ${daysAgo(now, SHOPIFY_UNKNOWN_EXPIRY_ALERT_AFTER_DAYS)}))::int`,
+      expiringSoon: sql<number>`(count(*) filter (where ${i.credentialRefreshExpiresAt} > ${now} and ${i.credentialRefreshExpiresAt} < ${new Date(now.getTime() + SHOPIFY_CREDENTIAL_ALERT_DAYS * 24 * 60 * 60 * 1000)}))::int`,
+    })
+    .from(i)
+    .where(
+      and(eq(i.provider, 'shopify'), sql`${i.status} <> 'disconnected'`, isNotNull(i.credentials)),
+    );
   return {
+    credentials: {
+      reauthorizationRequired: cred?.reauthorizationRequired ?? 0,
+      renewalFailed: cred?.renewalFailed ?? 0,
+      expired: cred?.expired ?? 0,
+      expiringSoon: cred?.expiringSoon ?? 0,
+      unknownExpiry: cred?.unknownExpiry ?? 0,
+      unknownExpiryOverdue: cred?.unknownExpiryOverdue ?? 0,
+    },
     count: row?.count ?? 0,
     quarantinedWebhooks: quarantine?.n ?? 0,
     overdue: row?.overdue ?? 0,
