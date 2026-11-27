@@ -5,6 +5,8 @@ import { AppModule } from '../app.module';
 import { DatabaseService } from '../database/database.service';
 import { integrations } from '../database/schema/integrations';
 import { shopifyComplianceWebhooks } from '../database/schema/shopify-compliance-webhooks';
+import { integrationWebhookEvents } from '../database/schema/integration-webhook-events';
+import { WebhookIngestService } from '../domains/integration/webhook-ingest.service';
 import { IntegrationService } from '../domains/integration/integration.service';
 import { ShopifyAdapter } from '../domains/integration/providers/shopify/shopify.adapter';
 import { ShopifyComplianceService } from '../domains/integration/providers/shopify/shopify-compliance.service';
@@ -17,6 +19,9 @@ import { ShopifyComplianceService } from '../domains/integration/providers/shopi
  *   open                                   open privacy issues (failed / exception / abandoned claims)
  *   replay <webhookId>                     reprocess a stored delivery (idempotent)
  *   resolve <webhookId> <note…>            close an exception handled outside BRAYN (clears its payload)
+ *   quarantined                            Shopify business webhooks held for a shop that isn't the integration's store
+ *   add-shop-alias <workspaceId> <domain>  record an operator-confirmed myshopify alias of that workspace's store
+ *   release-webhook <webhookEventId>       process one quarantined delivery (after confirming it is this store's)
  *   shop-ids                               Shopify rows without a stable shop id, and whether their token is expired
  *   backfill-shop-id <workspaceId> --apply ONE read-only Admin API call `{ shop { id myshopifyDomain } }`; if the
  *                                          stored token is expired this first REFRESHES it (Shopify rotates the
@@ -63,6 +68,37 @@ async function main() {
           required(args.slice(1).join(' '), 'note'),
         );
         console.log('resolved');
+        return;
+      case 'quarantined': {
+        const w = integrationWebhookEvents;
+        console.table(
+          await db
+            .select({
+              id: w.id,
+              workspaceId: w.workspaceId,
+              eventType: w.eventType,
+              reason: w.error,
+              createdAt: w.createdAt,
+            })
+            .from(w)
+            .where(eq(w.status, 'quarantined')),
+        );
+        return;
+      }
+      case 'add-shop-alias':
+        console.log({
+          updated: await integrationService.addShopDomainAlias(
+            required(args[0], 'workspaceId'),
+            required(args[1], 'domain'),
+          ),
+        });
+        return;
+      case 'release-webhook':
+        console.log(
+          await app
+            .get(WebhookIngestService)
+            .releaseQuarantined(required(args[0], 'webhookEventId')),
+        );
         return;
       case 'shop-ids': {
         const rows = await db

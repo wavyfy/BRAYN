@@ -14,7 +14,7 @@ import type {
   ProviderAdapter,
   WebhookResourceEvent,
 } from '../../provider-adapter.interface';
-import type { NormalizedCustomer } from '../../../commerce/customer.service';
+import type { CustomerProfileField, NormalizedCustomer } from '../../../commerce/customer.service';
 import type { NormalizedFulfillment, NormalizedOrder, NormalizedRefund } from '../../../commerce/order.service';
 import type { NormalizedProduct } from '../../../commerce/product.service';
 import type { NormalizedCollect, NormalizedCollection } from '../../../commerce/collection.service';
@@ -1856,7 +1856,9 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
     // rather than reject an otherwise-valid, signature-verified delivery.
     const externalEventId = headers['x-shopify-webhook-id'] ?? `${topic}:${createHash('sha256').update(rawBody).digest('hex')}`;
 
-    return { externalEventId, eventType: topic!, payload };
+    // The shop Shopify says sent this (lowercased; '' if absent): WebhookIngestService quarantines a delivery whose shop
+    // isn't the integration's store (or a recorded alias) — e.g. a lingering subscription of a store that moved.
+    return { externalEventId, eventType: topic!, payload, store: { provider: 'shopify', domain: (headers['x-shopify-shop-domain'] ?? '').toLowerCase() } };
   }
 
   /**
@@ -1972,14 +1974,19 @@ function graphqlCustomerToRestShape(node: ShopifyGraphqlCustomerNode): ShopifyCu
 }
 
 function normalizeCustomer(customer: ShopifyCustomer): NormalizedCustomer {
+  // A field Shopify omitted (e.g. withheld protected customer data) stays `undefined` = "not provided" and is never
+  // written; an explicit `null` is an authoritative clear (see CustomerService.upsertMany).
+  const source = { email: 'email', firstName: 'first_name', lastName: 'last_name', phone: 'phone' } as const;
+  const omitted = (Object.keys(source) as CustomerProfileField[]).filter((field) => !(source[field] in customer));
   return {
     externalId: String(customer.id),
-    email: customer.email,
-    firstName: customer.first_name,
-    lastName: customer.last_name,
-    phone: customer.phone,
-    sourceUpdatedAt: new Date(customer.updated_at),
+    email: customer.email ?? null,
+    firstName: customer.first_name ?? null,
+    lastName: customer.last_name ?? null,
+    phone: customer.phone ?? null,
+    sourceUpdatedAt: customer.updated_at ? new Date(customer.updated_at) : null,
     sourceCreatedAt: customer.created_at ? new Date(customer.created_at) : null,
+    ...(omitted.length > 0 ? { omitted } : {}),
   };
 }
 

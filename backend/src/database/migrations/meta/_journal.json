@@ -393,6 +393,13 @@
       "when": 1795695750678,
       "tag": "0055_shopify_shop_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1795766744508,
+      "tag": "0056_shopify_shop_domain_aliases",
+      "breakpoints": true
     }
   ]
 }

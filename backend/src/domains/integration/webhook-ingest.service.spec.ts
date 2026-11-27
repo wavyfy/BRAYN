@@ -64,7 +64,11 @@ function makeDeps(overrides: {
   };
 
   const integrationService = {
-    getCredentials: vi.fn(async () => (overrides.credentials === undefined ? { webhookSecret: 'shh' } : overrides.credentials)),
+    getStoredCredentials: vi.fn(async () => (overrides.credentials === undefined ? { webhookSecret: 'shh' } : overrides.credentials)),
+    // The refreshing read must never be used by webhook ingestion (a delivery must not rotate a token).
+    getCredentials: vi.fn(async () => {
+      throw new Error('getCredentials (refresh-on-read) must not be called by webhook ingestion');
+    }),
   } as unknown as IntegrationService;
 
   const providerRegistry = {
@@ -204,6 +208,72 @@ describe('WebhookIngestService', () => {
 
     await expect(service.ingest('ws_1', 'shopify', '{}', {})).resolves.toMatchObject({ status: 'accepted' });
     expect(verifyWebhookSignature).toHaveBeenCalledWith('{}', {}, 'app_secret');
+  });
+
+  it('D2: an app-level secret that verifies means no credential access at all', async () => {
+    const { service, integrationService } = makeDeps({
+      adapter: makeAdapter({ verifyWebhookSignature: vi.fn((_b, _h, secret) => secret === 'app_secret'), resolveWebhookSecret: vi.fn(() => 'app_secret') }),
+    });
+
+    await expect(service.ingest('ws_1', 'shopify', '{}', {})).resolves.toMatchObject({ status: 'accepted' });
+    expect(integrationService.getStoredCredentials).not.toHaveBeenCalled();
+    expect(integrationService.getCredentials).not.toHaveBeenCalled();
+  });
+
+  it('D2: an unsigned/invalid delivery never refreshes credentials and writes nothing (stored secret only decrypted for the per-store check)', async () => {
+    const { service, client, integrationService } = makeDeps({
+      credentials: { webhookSecret: 'store_secret' },
+      adapter: makeAdapter({ verifyWebhookSignature: vi.fn(() => false), resolveWebhookSecret: vi.fn((c) => c?.webhookSecret ?? 'app_secret') }),
+    });
+
+    await expect(service.ingest('ws_1', 'shopify', '{}', {})).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+    expect(integrationService.getCredentials).not.toHaveBeenCalled();
+    expect(client.insert).not.toHaveBeenCalled();
+    expect(client.update).not.toHaveBeenCalled();
+  });
+
+  it('D3: a Shopify delivery whose shop is not the integration store is quarantined: stored, acknowledged, not processed', async () => {
+    const owner = { shopDomain: 'mine.myshopify.com', shopDomainAliases: [], status: 'connected' };
+    const { service, insertChain, eventBus } = makeDeps({
+      select: [[integration], [owner]],
+      adapter: makeAdapter({
+        parseWebhookEvent: vi.fn(() => ({ externalEventId: 'evt_1', eventType: 'customers/update', payload: {}, store: { provider: 'shopify' as const, domain: 'other.myshopify.com' } })),
+      }),
+    });
+
+    await expect(service.ingest('ws_1', 'shopify', '{}', {})).resolves.toEqual({ status: 'quarantined', webhookEventId: 'wh_1' });
+    expect((insertChain.values as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
+      status: 'quarantined',
+      error: 'store_mismatch: received other.myshopify.com',
+    });
+    expect(eventBus.emit).not.toHaveBeenCalled();
+  });
+
+  it('D3: the integration store or a recorded alias is accepted normally', async () => {
+    for (const domain of ['mine.myshopify.com', 'renamed.myshopify.com']) {
+      const owner = { shopDomain: 'mine.myshopify.com', shopDomainAliases: ['renamed.myshopify.com'], status: 'connected' };
+      const { service } = makeDeps({
+        select: [[integration], [owner]],
+        adapter: makeAdapter({
+          parseWebhookEvent: vi.fn(() => ({ externalEventId: 'evt_1', eventType: 'customers/update', payload: {}, store: { provider: 'shopify' as const, domain } })),
+        }),
+      });
+      await expect(service.ingest('ws_1', 'shopify', '{}', {})).resolves.toMatchObject({ status: 'accepted' });
+    }
+  });
+
+  it('a signal source bound to another provider store (FlexyPe) is still rejected on mismatch, persisting nothing', async () => {
+    const owner = { shopDomain: 'mine.myshopify.com', shopDomainAliases: [], status: 'connected' };
+    const { service, client } = makeDeps({
+      select: [[{ ...integration }], [owner]],
+      adapter: makeAdapter({
+        provider: 'flexype',
+        parseWebhookEvent: vi.fn(() => ({ externalEventId: 'evt_1', eventType: 'checkout', payload: {}, store: { provider: 'shopify' as const, domain: 'other.myshopify.com' } })),
+      }),
+    });
+
+    await expect(service.ingest('ws_1', 'flexype', '{}', {})).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(client.insert).not.toHaveBeenCalled();
   });
 
   it('throws UnauthenticatedError when signature verification fails, persisting nothing', async () => {

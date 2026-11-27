@@ -178,7 +178,8 @@ export class ShopifyOAuthService {
     // Re-authorizing an already-connected store just refreshes its credentials; another workspace's store is refused.
     if (
       prepared === 'owned_elsewhere' ||
-      (await this.integrationService.connectStore(workspaceId, 'shopify', credentials, identity.shopId)) === 'owned_elsewhere'
+      (await this.integrationService.connectStore(workspaceId, 'shopify', credentials, identity.shopId, identity.myshopifyDomain)) ===
+        'owned_elsewhere'
     ) {
       this.logger.event('warn', 'Shopify connect refused: store is held by another workspace', 'ShopifyOAuth', { workspaceId });
       throw new ConflictError(STORE_OWNED_ELSEWHERE_MESSAGE);
@@ -337,7 +338,7 @@ export class ShopifyOAuthService {
     let stored: 'ok' | 'owned_elsewhere' = 'owned_elsewhere';
     if (prepared === 'ok') {
       try {
-        stored = await this.integrationService.connectStore(state.workspaceId, 'shopify', credentials, identity.shopId);
+        stored = await this.integrationService.connectStore(state.workspaceId, 'shopify', credentials, identity.shopId, identity.myshopifyDomain);
       } catch {
         // Nothing was written (single statement in one transaction); the merchant can simply retry.
         this.logger.event('error', 'Shopify OAuth callback: storing the connection failed', 'ShopifyOAuth', { workspaceId: state.workspaceId });

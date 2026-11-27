@@ -49,6 +49,8 @@ describe('Commerce domain events (real DB)', { timeout: 60_000 }, () => {
   let emitted: DomainEvent[] = [];
 
   const workspaceId = randomUUID();
+  // The store this workspace's Shopify integration holds: business webhooks for any other shop are quarantined.
+  const shopDomain = `brayn-commerce-events-${randomUUID().slice(0, 8)}.myshopify.com`;
   const webhookSecret = 'commerce-events-test-secret';
   const customerExternalId = '7001';
   const integrationIds: Record<string, string> = {};
@@ -84,6 +86,7 @@ describe('Commerce domain events (real DB)', { timeout: 60_000 }, () => {
   function signed(topic: string, body: string, webhookId: string = randomUUID()) {
     return {
       'x-shopify-topic': topic,
+      'x-shopify-shop-domain': shopDomain,
       'x-shopify-hmac-sha256': createHmac('sha256', webhookSecret).update(body, 'utf8').digest('base64'),
       'x-shopify-webhook-id': webhookId,
     };
@@ -194,7 +197,7 @@ describe('Commerce domain events (real DB)', { timeout: 60_000 }, () => {
       integrationIds[provider] = (await integrationService.connect(workspaceId, provider)).id;
     }
     await integrationService.setCredentials(workspaceId, 'shopify', {
-      shopDomain: `brayn-commerce-events-${randomUUID().slice(0, 8)}.myshopify.com`,
+      shopDomain,
       accessToken: 'unused-in-this-test',
       webhookSecret,
     });
@@ -328,6 +331,7 @@ describe('Commerce domain events (real DB)', { timeout: 60_000 }, () => {
     const body = orderBody(order);
     const sign = () => ({
       'x-shopify-topic': 'orders/updated',
+      'x-shopify-shop-domain': shopDomain,
       'x-shopify-hmac-sha256': createHmac('sha256', webhookSecret).update(body, 'utf8').digest('base64'),
       'x-shopify-webhook-id': randomUUID(),
     });

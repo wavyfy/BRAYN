@@ -2,7 +2,9 @@ import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } fr
 import { id, timestamps, workspaceId } from './columns';
 import { integrations } from './integrations';
 
-export const webhookEventStatuses = ['pending', 'processing', 'processed', 'dead_letter'] as const;
+// `quarantined`: verified delivery whose shop is not the integration's store — stored, never processed, alerted, released
+// only by an operator (see WebhookIngestService).
+export const webhookEventStatuses = ['pending', 'processing', 'processed', 'dead_letter', 'quarantined'] as const;
 
 /**
  * One row per accepted webhook delivery — and the durable work item for

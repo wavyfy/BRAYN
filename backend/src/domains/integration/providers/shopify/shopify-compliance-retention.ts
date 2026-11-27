@@ -1,6 +1,7 @@
-import { and, inArray, isNotNull, lt, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { shopifyComplianceWebhooks } from '../../../../database/schema/shopify-compliance-webhooks';
+import { integrationWebhookEvents } from '../../../../database/schema/integration-webhook-events';
 
 /**
  * PROVISIONAL (user, Nov 26, 2026; privacy/legal confirmation pending): an unresolved compliance delivery keeps its
@@ -29,8 +30,14 @@ export async function complianceOpenIssueCounts(db: NodePgDatabase, now: Date) {
     })
     .from(t)
     .where(OPEN);
+  // Shopify business webhooks quarantined for a shop that isn't the integration's store (WebhookIngestService).
+  const [quarantine] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(integrationWebhookEvents)
+    .where(eq(integrationWebhookEvents.status, 'quarantined'));
   return {
     count: row?.count ?? 0,
+    quarantinedWebhooks: quarantine?.n ?? 0,
     overdue: row?.overdue ?? 0,
     nearDeadline: row?.nearDeadline ?? 0,
     payloadExpired: row?.payloadExpired ?? 0,
@@ -52,9 +59,24 @@ export async function applyCompliancePayloadRetention(db: NodePgDatabase, now: D
       ),
     )
     .returning({ id: t.id });
+  // Same window for a quarantined business webhook's payload (customer data from a store that isn't the integration's):
+  // the row stays quarantined and alerted; its payload does not outlive 30 days.
+  const quarantineCleared = await db
+    .update(integrationWebhookEvents)
+    .set({ payload: null })
+    .where(
+      and(
+        eq(integrationWebhookEvents.status, 'quarantined'),
+        isNotNull(integrationWebhookEvents.payload),
+        lt(integrationWebhookEvents.createdAt, daysAgo(now, COMPLIANCE_PAYLOAD_RETENTION_DAYS)),
+      ),
+    )
+    .returning({ id: integrationWebhookEvents.id });
   const open = await complianceOpenIssueCounts(db, now);
   return {
     compliancePayloadsCleared: cleared.length,
+    quarantinedPayloadsCleared: quarantineCleared.length,
+    quarantinedWebhooks: open.quarantinedWebhooks,
     complianceOpen: open.count,
     complianceOverdue: open.overdue,
     complianceNearDeadline: open.nearDeadline,
