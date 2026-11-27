@@ -1,0 +1,1 @@
+ALTER TABLE "integrations" ADD COLUMN "shop_domain_aliases" text[] DEFAULT '{}'::text[] NOT NULL;

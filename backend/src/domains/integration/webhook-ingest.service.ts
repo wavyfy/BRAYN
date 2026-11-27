@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
 import { DatabaseService } from '../../database/database.service';
 import { integrations } from '../../database/schema/integrations';
+import { isStoreDomainOf } from './integration.service';
 import { integrationWebhookEvents } from '../../database/schema/integration-webhook-events';
 import { ConflictError, NotFoundError, ProviderError, UnauthenticatedError, UnauthorizedError } from '../../common/errors/app-error';
 import { createEvent } from '../../common/events/domain-event';
@@ -14,6 +15,7 @@ import type { IntegrationProvider } from './dto/connect-integration.schema';
 
 export type WebhookIngestResult =
   | { status: 'accepted'; webhookEventId: string }
+  | { status: 'quarantined'; webhookEventId: string }
   | { status: 'duplicate' }
   | { status: 'ignored' };
 
@@ -65,13 +67,20 @@ export class WebhookIngestService {
       throw new ProviderError(`Provider "${provider}" does not support webhooks.`);
     }
 
-    const credentials = await this.integrationService.getCredentials(workspaceId, provider);
-    const secret = adapter.resolveWebhookSecret ? adapter.resolveWebhookSecret(credentials) : credentials?.webhookSecret;
-    if (!secret) {
-      throw new ProviderError('No webhook secret is configured for this integration.');
+    // Authenticate before any side effect: the app-level secret (no credential access at all) first; only if that
+    // doesn't verify, a per-integration secret read from the stored credentials WITHOUT the refresh-on-read — a
+    // webhook (signed or not) must never trigger a token refresh/rotation.
+    const appSecret = adapter.resolveWebhookSecret?.(null) ?? null;
+    let verified = Boolean(appSecret) && adapter.verifyWebhookSignature(rawBody, headers, appSecret!);
+    if (!verified) {
+      const stored = await this.integrationService.getStoredCredentials(workspaceId, provider);
+      const secret = adapter.resolveWebhookSecret ? adapter.resolveWebhookSecret(stored) : stored?.webhookSecret;
+      if (!secret) {
+        throw new ProviderError('No webhook secret is configured for this integration.');
+      }
+      verified = secret !== appSecret && adapter.verifyWebhookSignature(rawBody, headers, secret);
     }
-
-    if (!adapter.verifyWebhookSignature(rawBody, headers, secret)) {
+    if (!verified) {
       throw new UnauthenticatedError('Webhook signature verification failed.');
     }
 
@@ -79,8 +88,18 @@ export class WebhookIngestService {
     if (!parsed) {
       return { status: 'ignored' };
     }
+    // A delivery naming its own provider's store (Shopify) whose shop isn't this integration's store is quarantined:
+    // stored and acknowledged (a rejection would make Shopify retry and eventually drop the subscription) but never
+    // processed — alerted through the compliance monitor and released only by an operator. A signal source bound to
+    // another provider's store (FlexyPe) is still rejected.
+    let quarantine: string | null = null;
     if (parsed.store !== undefined) {
-      await this.requireWorkspaceStore(workspaceId, provider, parsed.store);
+      const mismatch = await this.workspaceStoreMismatch(workspaceId, provider, parsed.store);
+      if (mismatch && parsed.store.provider === provider) {
+        quarantine = mismatch;
+      } else if (mismatch) {
+        throw new UnauthorizedError('This delivery is for a store that is not connected to this workspace.');
+      }
     }
 
     // The durable row is both the dedup and the acknowledgement: once this
@@ -95,13 +114,19 @@ export class WebhookIngestService {
         integrationId: integration.id,
         externalEventId: parsed.externalEventId,
         eventType: parsed.eventType,
-        payload: parsed.payload,
+        // A quarantined payload may be another store's customer data: sealed with the credential key (readable only in
+        // the production runtime), with the received shop kept beside it for the release check.
+        payload: quarantine ? this.integrationService.sealJson(parsed.payload, { shop: parsed.store?.domain ?? '' }) : parsed.payload,
+        ...(quarantine ? { status: 'quarantined' as const, error: quarantine } : {}),
       })
       .onConflictDoNothing({ target: [integrationWebhookEvents.integrationId, integrationWebhookEvents.externalEventId] })
       .returning({ id: integrationWebhookEvents.id });
 
     if (!row) {
       return { status: 'duplicate' };
+    }
+    if (quarantine) {
+      return { status: 'quarantined', webhookEventId: row.id };
     }
 
     this.wake(workspaceId, integration.id, row.id);
@@ -141,6 +166,38 @@ export class WebhookIngestService {
     return { status: 'accepted' };
   }
 
+  /**
+   * Ops only (operator confirmed the delivery belongs to this store, e.g. after recording an alias): puts a quarantined
+   * row back to `pending` for normal processing.
+   */
+  async releaseQuarantined(webhookEventId: string): Promise<{ status: 'accepted' }> {
+    const t = integrationWebhookEvents;
+    const [held] = await this.database.client
+      .select({ payload: t.payload, shopDomain: integrations.shopDomain, shopDomainAliases: integrations.shopDomainAliases, status: integrations.status })
+      .from(t)
+      .innerJoin(integrations, eq(integrations.id, t.integrationId))
+      .where(and(eq(t.id, webhookEventId), eq(t.status, 'quarantined')))
+      .limit(1);
+    if (!held) {
+      throw new NotFoundError('No quarantined webhook event with that id.');
+    }
+    // Release is not an override: the received shop must now be this integration's store (or a verified alias).
+    const shop = (held.payload as { meta?: { shop?: unknown } } | null)?.meta?.shop;
+    if (held.status === 'disconnected' || typeof shop !== 'string' || !shop || !isStoreDomainOf(held, shop)) {
+      throw new ConflictError('This delivery\'s shop is still not the integration\'s store; record a verified alias first.');
+    }
+    const [released] = await this.database.client
+      .update(t)
+      .set({ status: 'pending', retryCount: 0, nextAttemptAt: sql`now()`, error: null })
+      .where(and(eq(t.id, webhookEventId), eq(t.status, 'quarantined')))
+      .returning({ id: t.id, integrationId: t.integrationId, workspaceId: t.workspaceId });
+    if (!released) {
+      throw new NotFoundError('No quarantined webhook event with that id.');
+    }
+    this.wake(released.workspaceId, released.integrationId, released.id);
+    return { status: 'accepted' };
+  }
+
   /** Best-effort immediate processing; correctness never depends on it — the recovery poller claims the row regardless. */
   private wake(workspaceId: string, integrationId: string, webhookEventId: string): void {
     try {
@@ -168,28 +225,31 @@ export class WebhookIngestService {
    * copy-paste between workspaces) would otherwise attach that store's shoppers to this workspace. Rejected before
    * anything is stored; the provider sees the failure in its delivery log.
    */
-  private async requireWorkspaceStore(
+  private async workspaceStoreMismatch(
     workspaceId: string,
     provider: IntegrationProvider,
     store: { provider: IntegrationProvider; domain: string },
-  ): Promise<void> {
+  ): Promise<string | null> {
     const [owner] = await this.database.client
-      .select({ shopDomain: integrations.shopDomain, status: integrations.status })
+      .select({ shopDomain: integrations.shopDomain, shopDomainAliases: integrations.shopDomainAliases, status: integrations.status })
       .from(integrations)
       .where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, store.provider)))
       .limit(1);
-    const expected = owner && owner.status !== 'disconnected' ? owner.shopDomain?.toLowerCase() : undefined;
-    const storeDomain = store.domain;
-    if (!expected || expected !== storeDomain.toLowerCase()) {
-      this.logger.event('warn', 'Rejected webhook for a store that is not this workspace\'s connected Shopify store', 'WebhookIngestService', {
-        workspaceId,
-        provider,
-        storeDomain,
-        storeProvider: store.provider,
-        reason: expected ? 'store_mismatch' : 'no_connected_store',
-      });
-      throw new UnauthorizedError('This delivery is for a store that is not connected to this workspace.');
+    const connected = owner && owner.status !== 'disconnected' && owner.shopDomain ? owner : undefined;
+    const storeDomain = store.domain.toLowerCase();
+    if (connected && storeDomain && isStoreDomainOf(connected, storeDomain)) {
+      return null;
     }
+    const reason = !connected ? 'no_connected_store' : storeDomain ? 'store_mismatch' : 'store_missing';
+    this.logger.event('warn', 'Webhook for a store that is not this workspace\'s connected store', 'WebhookIngestService', {
+      workspaceId,
+      provider,
+      storeDomain,
+      storeProvider: store.provider,
+      reason,
+    });
+    // Recorded on a quarantined row (domain names only — not personal data) so an operator can decide on an alias.
+    return `${reason}: received ${storeDomain || '(none)'}`.slice(0, 200);
   }
 
   private async findIntegration(workspaceId: string, provider: IntegrationProvider) {

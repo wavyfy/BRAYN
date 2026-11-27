@@ -1,3 +1,4 @@
+import { IntegrationService } from './integration.service';
 import { Injectable, type OnModuleDestroy } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { and, asc, eq, inArray, lt, lte, or, sql } from 'drizzle-orm';
@@ -129,6 +130,7 @@ export class WebhookEventProcessorService implements OnModuleDestroy {
     private readonly logger: StructuredLoggerService,
     private readonly eventBus: EventBus,
     private readonly checkoutSessionService: CheckoutSessionService,
+    private readonly integrationService?: IntegrationService,
   ) {}
 
   @OnEvent('integration.webhook.received')
@@ -241,7 +243,9 @@ export class WebhookEventProcessorService implements OnModuleDestroy {
       await this.complete(claimed);
       return;
     }
-    const payload = reviveDates(claimed.payload);
+    // A released quarantined delivery is sealed (see WebhookIngestService); it opens only with the production key.
+    const opened = this.integrationService?.openSealedJson(claimed.payload);
+    const payload = reviveDates(opened === undefined ? claimed.payload : opened);
     if (!isWebhookResourceEvent(payload)) {
       await this.fail(claimed, 'Stored payload is not a recognized webhook resource event.', { permanent: true });
       return;

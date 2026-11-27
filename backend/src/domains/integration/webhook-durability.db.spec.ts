@@ -36,6 +36,7 @@ describe('Durable webhook processing (real DB)', { timeout: 30_000 }, () => {
   let eventBus: EventBus;
 
   const workspaceId = randomUUID();
+  const shopDomain = `brayn-durability-${randomUUID().slice(0, 8)}.myshopify.com`;
   const webhookSecret = 'durability-test-secret';
   let integrationId: string;
 
@@ -66,6 +67,7 @@ describe('Durable webhook processing (real DB)', { timeout: 30_000 }, () => {
     });
     const headers = {
       'x-shopify-topic': 'customers/create',
+      'x-shopify-shop-domain': shopDomain,
       'x-shopify-hmac-sha256': createHmac('sha256', webhookSecret).update(body, 'utf8').digest('base64'),
       'x-shopify-webhook-id': randomUUID(),
     };
@@ -117,7 +119,7 @@ describe('Durable webhook processing (real DB)', { timeout: 30_000 }, () => {
     const integrationService = moduleRef.get(IntegrationService);
     integrationId = (await integrationService.connect(workspaceId, 'shopify')).id;
     await integrationService.setCredentials(workspaceId, 'shopify', {
-      shopDomain: `brayn-durability-${randomUUID().slice(0, 8)}.myshopify.com`,
+      shopDomain,
       accessToken: 'unused-in-this-test',
       webhookSecret,
     });

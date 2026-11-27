@@ -11,10 +11,10 @@ export interface ParsedWebhookEvent {
   eventType: string;
   payload: unknown;
   /**
-   * The commerce store the delivery says it belongs to, for a signal-only source bound to a commerce store (FlexyPe →
-   * its Shopify store). When set, WebhookIngestService accepts the delivery only if the workspace's connected
-   * `store.provider` integration has this store domain. Omitted → no store check. The adapter names the provider; the
-   * core pipeline assumes none.
+   * The commerce store the delivery says it belongs to. When set, WebhookIngestService accepts the delivery only if the
+   * workspace's connected `store.provider` integration has this store domain (or a recorded alias). A signal source
+   * bound to another provider's store (FlexyPe → its Shopify store) is rejected on mismatch; a delivery naming its own
+   * provider (Shopify business webhooks) is quarantined instead. Omitted → no store check.
    */
   store?: { provider: IntegrationProvider; domain: string };
 }

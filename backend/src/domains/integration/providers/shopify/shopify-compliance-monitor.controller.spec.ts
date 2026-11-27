@@ -15,6 +15,7 @@ describe('ShopifyComplianceMonitorController', () => {
     const service = {
       openIssues: vi.fn(async () => ({
         count: 0,
+        quarantinedWebhooks: 0,
         overdue: 0,
         nearDeadline: 0,
         payloadExpired: 0,
@@ -30,6 +31,7 @@ describe('ShopifyComplianceMonitorController', () => {
     expect(body).toEqual({
       healthy: true,
       openIssues: 0,
+      quarantinedWebhooks: 0,
       overdue: 0,
       nearDeadline: 0,
       payloadExpired: 0,
@@ -42,6 +44,7 @@ describe('ShopifyComplianceMonitorController', () => {
     const service = {
       openIssues: vi.fn(async () => ({
         count: 2,
+        quarantinedWebhooks: 0,
         overdue: 1,
         nearDeadline: 1,
         payloadExpired: 0,
@@ -56,10 +59,30 @@ describe('ShopifyComplianceMonitorController', () => {
     expect(body).toEqual({
       healthy: false,
       openIssues: 2,
+      quarantinedWebhooks: 0,
       overdue: 1,
       nearDeadline: 1,
       payloadExpired: 0,
       oldestOpenReceivedAt: at.toISOString(),
     });
+  });
+
+  it('503 while a business webhook is quarantined (shop mismatch), even with no compliance issue', async () => {
+    const service = {
+      openIssues: vi.fn(async () => ({
+        count: 0,
+        quarantinedWebhooks: 1,
+        overdue: 0,
+        nearDeadline: 0,
+        payloadExpired: 0,
+        oldestReceivedAt: null,
+      })),
+    } as unknown as ShopifyComplianceService;
+    const reply = makeReply();
+    const body = await new ShopifyComplianceMonitorController(service).status(
+      reply as unknown as FastifyReply,
+    );
+    expect(reply.status).toHaveBeenCalledWith(503);
+    expect(body).toMatchObject({ healthy: false, openIssues: 0, quarantinedWebhooks: 1 });
   });
 });

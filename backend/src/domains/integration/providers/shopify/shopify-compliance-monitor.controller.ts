@@ -17,13 +17,16 @@ export class ShopifyComplianceMonitorController {
 
   @Get()
   async status(@Res({ passthrough: true }) reply: FastifyReply) {
-    const { count, overdue, nearDeadline, payloadExpired, oldestReceivedAt } =
+    const { count, quarantinedWebhooks, overdue, nearDeadline, payloadExpired, oldestReceivedAt } =
       await this.complianceService.openIssues();
+    const healthy = count === 0 && quarantinedWebhooks === 0;
     reply.header('Cache-Control', 'no-store');
-    reply.status(count === 0 ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE);
+    reply.status(healthy ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE);
     return {
-      healthy: count === 0,
+      healthy,
       openIssues: count,
+      // Business webhooks held because their shop isn't the integration's store (operator decision needed).
+      quarantinedWebhooks,
       // Escalation: open > 7 days, > 25 days (Shopify's 30-day deadline is close), and past retention (payload cleared).
       overdue,
       nearDeadline,

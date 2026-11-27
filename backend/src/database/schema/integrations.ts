@@ -62,6 +62,15 @@ export const integrations = pgTable(
      * backfilled and for other providers.
      */
     shopifyShopId: text('shopify_shop_id'),
+    /**
+     * Other myshopify domains of the same store (lowercase): Shopify's current `myshopifyDomain` when it differs from the
+     * connected `shop_domain` (captured at connect), or one an operator confirmed. A Shopify business webhook whose
+     * `X-Shopify-Shop-Domain` is neither `shop_domain` nor an alias is quarantined, not processed.
+     */
+    shopDomainAliases: text('shop_domain_aliases')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     /** Set when a sync completes successfully (doc 06 — state must be observable). Null until the first sync. */
     lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
     /** Set when a sync fails; cleared on connect/reconnect/successful sync. */

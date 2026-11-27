@@ -148,6 +148,7 @@ describe('Phase 16 — Commerce → Automation loop (e2e, real DB)', () => {
       });
       await webhookIngestService.ingest(workspaceId, 'shopify', customerBody, {
         'x-shopify-topic': 'customers/create',
+        'x-shopify-shop-domain': shopDomain,
         'x-shopify-hmac-sha256': sign(customerBody, webhookSecret),
       });
 
@@ -178,6 +179,7 @@ describe('Phase 16 — Commerce → Automation loop (e2e, real DB)', () => {
       });
       await webhookIngestService.ingest(workspaceId, 'shopify', orderBody, {
         'x-shopify-topic': 'orders/create',
+        'x-shopify-shop-domain': shopDomain,
         'x-shopify-hmac-sha256': sign(orderBody, webhookSecret),
       });
 

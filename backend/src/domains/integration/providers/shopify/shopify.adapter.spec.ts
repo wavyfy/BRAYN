@@ -2089,6 +2089,7 @@ describe('ShopifyAdapter', () => {
       expect(result).toEqual({
         externalEventId: 'wh_evt_1',
         eventType: 'customers/update',
+        store: { provider: 'shopify', domain: '' },
         payload: {
           resource: 'customer',
           data: {
@@ -2203,6 +2204,7 @@ describe('ShopifyAdapter', () => {
       expect(result).toEqual({
         externalEventId: 'wh_evt_refund',
         eventType: 'refunds/create',
+        store: { provider: 'shopify', domain: '' },
         payload: {
           resource: 'refund',
           data: {

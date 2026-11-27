@@ -423,7 +423,7 @@ describe('ShopifyOAuthService', () => {
         shopDomain: SHOP,
         accessToken: 'shpat_new',
         grantType: 'authorization_code',
-      }, '548380009');
+      }, '548380009', 'test-store.myshopify.com');
       expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=connected');
     });
 
@@ -588,7 +588,7 @@ describe('ShopifyOAuthService', () => {
         shopDomain: SHOP,
         accessToken: 'shpat_rotated',
         grantType: 'authorization_code',
-      }, '548380009');
+      }, '548380009', 'test-store.myshopify.com');
       expect(redirect).toBe('http://localhost:3000/workspace/ws_1/integrations?shopify=connected');
     });
 
@@ -639,7 +639,7 @@ describe('ShopifyOAuthService', () => {
         refreshToken: 'shprt_new',
         grantType: 'authorization_code',
         expiresAt: new Date(1_700_000_000_000 + 3600 * 1000).toISOString(),
-      }, '548380009');
+      }, '548380009', 'test-store.myshopify.com');
     });
 
     it('redirects with reason=expired when state is older than the allowed window', async () => {
@@ -709,6 +709,7 @@ describe('ShopifyOAuthService', () => {
         'shopify',
         expect.objectContaining({ accessToken: 'shpca_rotated' }),
         '548380009',
+        'test-store.myshopify.com',
       );
     });
 

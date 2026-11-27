@@ -915,9 +915,9 @@ describe('IntegrationService', () => {
   describe('resolveShopHolders()', () => {
     it('matches by stable shop id first, by domain only for rows without one, and flags a same-domain different store', async () => {
       const rows = [
-        { id: 'by_id', workspaceId: 'ws_1', status: 'connected', shopDomain: 'new-alias.myshopify.com', shopifyShopId: '42' },
-        { id: 'legacy', workspaceId: 'ws_2', status: 'disconnected', shopDomain: 'wavyfyy.myshopify.com', shopifyShopId: null },
-        { id: 'other_store', workspaceId: 'ws_3', status: 'disconnected', shopDomain: 'WAVYFYY.myshopify.com', shopifyShopId: '99' },
+        { id: 'by_id', workspaceId: 'ws_1', status: 'connected', shopDomain: 'new-alias.myshopify.com', shopifyShopId: '42', shopDomainAliases: [] },
+        { id: 'legacy', workspaceId: 'ws_2', status: 'disconnected', shopDomain: 'wavyfyy.myshopify.com', shopifyShopId: null, shopDomainAliases: [] },
+        { id: 'other_store', workspaceId: 'ws_3', status: 'disconnected', shopDomain: 'WAVYFYY.myshopify.com', shopifyShopId: '99', shopDomainAliases: [] },
       ];
       const chain = makeChain(rows);
       const client = { select: vi.fn(() => chain) };

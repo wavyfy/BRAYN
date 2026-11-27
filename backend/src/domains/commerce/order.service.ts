@@ -97,7 +97,7 @@ export interface UpsertOrdersOptions {
  * retry or a re-import must be able to re-apply the same data. Unknown
  * (null) versions can't be compared and are applied as before.
  */
-const NOT_STALE = (table: 'commerce_orders' | 'commerce_fulfillments') =>
+export const NOT_STALE = (table: 'commerce_orders' | 'commerce_fulfillments' | 'commerce_customers') =>
   sql.raw(
     `excluded.source_updated_at IS NULL OR ${table}.source_updated_at IS NULL OR excluded.source_updated_at >= ${table}.source_updated_at`,
   );

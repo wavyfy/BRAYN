@@ -36,7 +36,7 @@ import { websiteVisitors } from '../../database/schema/website-visitors';
 import { websiteSessions } from '../../database/schema/website-sessions';
 import { websiteEvents } from '../../database/schema/website-events';
 import { aiActionRequests } from '../../database/schema/ai-action-requests';
-import { ConflictError, NotFoundError, ProviderError, UnauthenticatedError } from '../../common/errors/app-error';
+import { ConflictError, NotFoundError, ProviderError, UnauthenticatedError, ValidationError } from '../../common/errors/app-error';
 import {
   decryptCredential,
   encryptCredential,
@@ -97,7 +97,20 @@ function isLiveShopConflict(error: unknown): boolean {
   return pg?.code === '23505' && LIVE_SHOP_INDEXES.includes(pg.constraint ?? '');
 }
 
-type ShopifyIdentityRow = { id: string; workspaceId: string; status: string; shopDomain: string | null; shopifyShopId: string | null };
+type ShopifyIdentityRow = {
+  id: string;
+  workspaceId: string;
+  status: string;
+  shopDomain: string | null;
+  shopifyShopId: string | null;
+  shopDomainAliases: string[];
+};
+
+/** The integration's own store domain or one of its recorded aliases (all lowercase). */
+export function isStoreDomainOf(row: { shopDomain: string | null; shopDomainAliases: string[] }, domain: string): boolean {
+  const d = domain.toLowerCase();
+  return row.shopDomain?.toLowerCase() === d || row.shopDomainAliases.includes(d);
+}
 
 /**
  * Store identity rule: the numeric shop id decides when both sides have one; the domain only decides for a row whose id
@@ -106,7 +119,7 @@ type ShopifyIdentityRow = { id: string; workspaceId: string; status: string; sho
  */
 function classifyShopRow(row: ShopifyIdentityRow, shopDomain: string, shopId: string | undefined): 'match' | 'conflict' | 'none' {
   if (shopId && row.shopifyShopId === shopId) return 'match';
-  if (row.shopDomain?.toLowerCase() !== shopDomain.toLowerCase()) return 'none';
+  if (!isStoreDomainOf(row, shopDomain)) return 'none';
   if (!shopId || !row.shopifyShopId) return 'match';
   return 'conflict';
 }
@@ -194,7 +207,8 @@ export class IntegrationService {
 
   /** Every Shopify row matching the store by domain or by id (any status, oldest first); classify with classifyShopRow. */
   private async selectShopifyIdentityRows(shopDomain: string, shopId?: string): Promise<ShopifyIdentityRow[]> {
-    const byDomain = sql`lower(${integrations.shopDomain}) = ${shopDomain.toLowerCase()}`;
+    const d = shopDomain.toLowerCase();
+    const byDomain = sql`(lower(${integrations.shopDomain}) = ${d} or ${d} = any(${integrations.shopDomainAliases}))`;
     return this.database.client
       .select({
         id: integrations.id,
@@ -202,10 +216,33 @@ export class IntegrationService {
         status: integrations.status,
         shopDomain: integrations.shopDomain,
         shopifyShopId: integrations.shopifyShopId,
+        shopDomainAliases: integrations.shopDomainAliases,
       })
       .from(integrations)
       .where(and(eq(integrations.provider, 'shopify'), shopId ? or(byDomain, eq(integrations.shopifyShopId, shopId)) : byDomain))
       .orderBy(integrations.createdAt, integrations.id);
+  }
+
+  /** Any other workspace's Shopify row (any status) whose domain or alias is `domain`. */
+  private async isDomainUsedElsewhere(workspaceId: string, domain: string): Promise<boolean> {
+    return (await this.selectShopifyIdentityRows(domain)).some((row) => row.workspaceId !== workspaceId);
+  }
+
+  /**
+   * Seals a JSON value with the credential key (AES-256-GCM) for storage, keeping a non-secret `meta` beside it; the
+   * value can only be opened inside the production runtime. Used for quarantined webhook payloads.
+   */
+  sealJson(value: unknown, meta: Record<string, string> = {}): { v: 1; ciphertext: string; meta: Record<string, string> } {
+    return { v: 1, ciphertext: encryptCredential(JSON.stringify(value), this.resolveEncryptionKey()), meta };
+  }
+
+  /** The value of a `sealJson` payload, or `undefined` when `stored` is not sealed. */
+  openSealedJson(stored: unknown): unknown {
+    const sealed = stored as { v?: unknown; ciphertext?: unknown } | null;
+    if (sealed?.v !== 1 || typeof sealed.ciphertext !== 'string') {
+      return undefined;
+    }
+    return JSON.parse(decryptCredential(sealed.ciphertext, this.resolveEncryptionKey()));
   }
 
   private async holdsCommerceData(workspaceId: string, integrationId: string): Promise<boolean> {
@@ -236,9 +273,15 @@ export class IntegrationService {
     provider: IntegrationProvider,
     credentials: Record<string, string>,
     shopId?: string,
+    domainAlias?: string,
   ): Promise<'ok' | 'owned_elsewhere'> {
     const encrypted = encryptCredential(JSON.stringify(credentials), this.resolveEncryptionKey());
     const shopDomain = credentials.shopDomain ? credentials.shopDomain.toLowerCase() : null;
+    // Shopify's current myshopify domain, when it differs from the one connected (a renamed store) — reported by Shopify
+    // for this token's own store, but never recorded if another workspace already has that domain.
+    const candidate = domainAlias && domainAlias.toLowerCase() !== shopDomain ? domainAlias.toLowerCase() : undefined;
+    const alias = candidate && !(await this.isDomainUsedElsewhere(workspaceId, candidate)) ? candidate : undefined;
+
     const reconnecting = sql`${integrations.status} = 'disconnected'`;
     try {
       await this.database.transaction(async (tx) => {
@@ -249,7 +292,14 @@ export class IntegrationService {
           .for('update');
         await tx
           .insert(integrations)
-          .values({ workspaceId, provider, credentials: encrypted, shopDomain, shopifyShopId: shopId ?? null })
+          .values({
+            workspaceId,
+            provider,
+            credentials: encrypted,
+            shopDomain,
+            shopifyShopId: shopId ?? null,
+            shopDomainAliases: alias ? [alias] : [],
+          })
           .onConflictDoUpdate({
             target: [integrations.workspaceId, integrations.provider],
             set: {
@@ -258,6 +308,9 @@ export class IntegrationService {
               credentials: encrypted,
               ...(shopDomain ? { shopDomain } : {}),
               ...(shopId ? { shopifyShopId: shopId } : {}),
+              ...(alias
+                ? { shopDomainAliases: sql`array(select distinct unnest(${integrations.shopDomainAliases} || array[${alias}]::text[]))` }
+                : {}),
               updatedAt: new Date(),
             },
           });
@@ -1051,6 +1104,44 @@ export class IntegrationService {
    * as setCredentials(). Transparently re-mints it first if it's
    * expiring — see refreshIfExpiring's doc comment.
    */
+  /**
+   * The stored credential payload, decrypted, WITHOUT the refresh-on-read: no provider call, no write. For callers that
+   * only need a static field (a webhook signing secret) — a webhook delivery must never rotate a token.
+   */
+  async getStoredCredentials(workspaceId: string, provider: IntegrationProvider): Promise<Record<string, string> | null> {
+    const existing = await this.findByProvider(workspaceId, provider);
+    if (!existing?.credentials) {
+      return null;
+    }
+    return JSON.parse(decryptCredential(existing.credentials, this.resolveEncryptionKey())) as Record<string, string>;
+  }
+
+  /**
+   * Ops: records an operator-confirmed alias domain of one Shopify integration's store. Requires written evidence that
+   * Shopify itself identifies the domain with this store (e.g. the store's Shopify admin domain settings, or the
+   * `myshopifyDomain` the store's own token returns) — a storefront redirect alone is not enough. Refused when any other
+   * workspace's Shopify row (any status) has that domain or alias: an alias must never make two workspaces hold one
+   * store (compliance erasure would reach both; webhooks would be accepted into the wrong one).
+   */
+  async addShopDomainAlias(workspaceId: string, domain: string, evidence: string): Promise<boolean> {
+    const d = domain.toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(d)) {
+      throw new ValidationError('Not a myshopify.com domain.');
+    }
+    if (evidence.trim().length < 20) {
+      throw new ValidationError('Describe the Shopify evidence that this domain is the same store (at least 20 characters).');
+    }
+    if (await this.isDomainUsedElsewhere(workspaceId, d)) {
+      throw new ConflictError('That domain belongs to another workspace\'s Shopify connection; it cannot be an alias here.');
+    }
+    const [row] = await this.database.client
+      .update(integrations)
+      .set({ shopDomainAliases: sql`array(select distinct unnest(${integrations.shopDomainAliases} || array[${d}]::text[]))` })
+      .where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, 'shopify')))
+      .returning({ id: integrations.id });
+    return Boolean(row);
+  }
+
   async getCredentials(workspaceId: string, provider: IntegrationProvider): Promise<Record<string, string> | null> {
     const existing = await this.findByProvider(workspaceId, provider);
     if (!existing?.credentials) {

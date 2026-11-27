@@ -1,3 +1,4 @@
+import { NOT_STALE } from './order.service';
 import { Injectable } from '@nestjs/common';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -8,12 +9,21 @@ import { ErasedIdentifierService, emailIdentifier, sourceIdentifier } from './er
 import type { IntegrationProvider } from '../integration/dto/connect-integration.schema';
 
 /** A provider's customer record, already mapped into BRAYN's shape (doc 06 — Normalization output). */
+export const CUSTOMER_PROFILE_FIELDS = ['email', 'firstName', 'lastName', 'phone'] as const;
+export type CustomerProfileField = (typeof CUSTOMER_PROFILE_FIELDS)[number];
+
 export interface NormalizedCustomer {
   externalId: string;
+  /** `null` = the source says the field is empty: an authoritative clear, written as such. */
   email: string | null;
   firstName: string | null;
   lastName: string | null;
   phone: string | null;
+  /**
+   * Fields the source did not send at all (e.g. a webhook that withheld protected customer data) — not provided, so the
+   * stored value is kept rather than cleared. Absent = every field was provided.
+   */
+  omitted?: CustomerProfileField[];
   sourceUpdatedAt: Date | null;
   /** When the provider says the customer was added to the store — see commerce_customers.sourceCreatedAt. */
   sourceCreatedAt: Date | null;
@@ -94,30 +104,48 @@ export class CustomerService {
       if (allowed.length === 0) {
         return 0;
       }
-      await tx
-        .insert(commerceCustomers)
-        .values(
-          allowed.map((customer) => ({
-            workspaceId,
-            integrationId,
-            provider,
-            ...customer,
-            phoneE164: normalizePhoneE164(customer.phone),
-          })),
-        )
-        .onConflictDoUpdate({
-          target: [commerceCustomers.workspaceId, commerceCustomers.provider, commerceCustomers.externalId],
-          set: {
-            email: sql`excluded.email`,
-            firstName: sql`excluded.first_name`,
-            lastName: sql`excluded.last_name`,
-            phone: sql`excluded.phone`,
-            phoneE164: sql`excluded.phone_e164`,
-            sourceUpdatedAt: sql`excluded.source_updated_at`,
-            sourceCreatedAt: sql`excluded.source_created_at`,
-            updatedAt: new Date(),
-          },
-        });
+      // One statement per set of provided fields (normally exactly one): a field the source omitted is neither inserted
+      // nor overwritten. `setWhere` makes the update atomic newer-or-equal-only at the database level, so an older or
+      // reordered delivery can never replace newer data, whatever the concurrency.
+      const groups = new Map<string, NormalizedCustomer[]>();
+      for (const customer of allowed) {
+        const key = [...(customer.omitted ?? [])].sort().join(',');
+        groups.set(key, [...(groups.get(key) ?? []), customer]);
+      }
+      for (const group of groups.values()) {
+        const omitted = new Set(group[0].omitted ?? []);
+        const provided = (field: CustomerProfileField) => !omitted.has(field);
+        await tx
+          .insert(commerceCustomers)
+          .values(
+            group.map(({ externalId, email, firstName, lastName, phone, sourceUpdatedAt, sourceCreatedAt }) => ({
+              workspaceId,
+              integrationId,
+              provider,
+              externalId,
+              email,
+              firstName,
+              lastName,
+              phone,
+              phoneE164: normalizePhoneE164(phone),
+              sourceUpdatedAt,
+              sourceCreatedAt,
+            })),
+          )
+          .onConflictDoUpdate({
+            target: [commerceCustomers.workspaceId, commerceCustomers.provider, commerceCustomers.externalId],
+            set: {
+              ...(provided('email') ? { email: sql`excluded.email` } : {}),
+              ...(provided('firstName') ? { firstName: sql`excluded.first_name` } : {}),
+              ...(provided('lastName') ? { lastName: sql`excluded.last_name` } : {}),
+              ...(provided('phone') ? { phone: sql`excluded.phone`, phoneE164: sql`excluded.phone_e164` } : {}),
+              sourceUpdatedAt: sql`coalesce(excluded.source_updated_at, ${commerceCustomers.sourceUpdatedAt})`,
+              sourceCreatedAt: sql`coalesce(excluded.source_created_at, ${commerceCustomers.sourceCreatedAt})`,
+              updatedAt: new Date(),
+            },
+            setWhere: NOT_STALE('commerce_customers'),
+          });
+      }
 
       return allowed.length;
     });

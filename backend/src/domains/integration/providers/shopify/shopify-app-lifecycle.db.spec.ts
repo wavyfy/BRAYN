@@ -43,7 +43,7 @@ describe('Shopify app-installed store lifecycle (real DB)', { timeout: 30_000 },
 
   function customerDelivery(secret: string) {
     const body = JSON.stringify({ id: Number(customerId), email: null, first_name: 'Life', last_name: 'Cycle', phone: null, updated_at: '2026-01-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z' });
-    return { body, headers: { 'x-shopify-topic': 'customers/create', 'x-shopify-hmac-sha256': sign(body, secret), 'x-shopify-webhook-id': randomUUID() } };
+    return { body, headers: { 'x-shopify-topic': 'customers/create', 'x-shopify-shop-domain': shopDomain, 'x-shopify-hmac-sha256': sign(body, secret), 'x-shopify-webhook-id': randomUUID() } };
   }
 
   function uninstallDelivery() {
