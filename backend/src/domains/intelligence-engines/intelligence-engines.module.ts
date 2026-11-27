@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { WorkspaceModule } from '../workspace/workspace.module';
 import { CustomerIntelligenceModule } from '../customer-intelligence/customer-intelligence.module';
+import { IntegrationModule } from '../integration/integration.module';
 import { CustomerHealthService } from './customer-health.service';
 import { CustomerHealthController } from './customer-health.controller';
 import { RevenueOpportunityService } from './revenue-opportunity.service';
@@ -38,7 +39,7 @@ import { IntelligenceDailyRunMonitorController } from './intelligence-daily-run-
  * the tenant-isolation/authorization boundary.
  */
 @Module({
-  imports: [WorkspaceModule, CustomerIntelligenceModule],
+  imports: [WorkspaceModule, CustomerIntelligenceModule, IntegrationModule],
   controllers: [CustomerHealthController, RevenueOpportunityController, RecommendationController, IntelligenceDailyRunController, IntelligenceDailyRunMonitorController, InternalNotificationController],
   providers: [CustomerHealthService, RevenueOpportunityService, RecommendationService, IntelligenceDailyRunService, InternalNotificationService, InternalCronGuard, InternalMonitorGuard],
   exports: [CustomerHealthService, RevenueOpportunityService, RecommendationService, InternalNotificationService],

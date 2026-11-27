@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { isSameRouteOnOtherOrigin, SHOPIFY_API_VERSION, SHOPIFY_REGISTERED_BUSINESS_TOPICS, ShopifyAdapter, shopifyTopicEnum } from './shopify.adapter';
+import { CredentialRevokedError } from '../../../../common/errors/app-error';
 import type { ProviderRegistry } from '../../provider-registry.service';
 import type { ConfigService } from '@nestjs/config';
 import type { Env } from '../../../../config/env.schema';
@@ -2449,6 +2450,39 @@ describe('ShopifyAdapter', () => {
         const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
 
         await expect(adapter.refreshCredentials(staleCredentials)).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+      });
+
+      it('a 401 is final: CredentialRevokedError (shopify.dev — unknown, replaced, expired or revoked refresh token)', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401, { error: 'invalid_request' })));
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+        await expect(adapter.refreshCredentials(staleCredentials)).rejects.toBeInstanceOf(CredentialRevokedError);
+      });
+
+      it('a 5xx/429 is transient: ProviderError, not CredentialRevokedError', async () => {
+        for (const status of [500, 429]) {
+          vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(status)));
+          const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+          const error = await adapter.refreshCredentials(staleCredentials).catch((e: unknown) => e);
+          expect(error).toMatchObject({ code: 'PROVIDER_ERROR' });
+          expect(error).not.toBeInstanceOf(CredentialRevokedError);
+        }
+      });
+
+      it('records refresh_token_expires_in as refreshTokenExpiresAt (each refresh starts a new 90-day window)', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () =>
+            jsonResponse(200, { access_token: 'shpat_new', refresh_token: 'shprt_new', expires_in: 3600, refresh_token_expires_in: 7776000 }),
+          ),
+        );
+        const adapter = new ShopifyAdapter(makeRegistry(), makeConfig());
+
+        const result = await adapter.refreshCredentials(staleCredentials);
+
+        expect(result?.refreshTokenExpiresAt).toBe(new Date(1_700_000_000_000 + 7776000 * 1000).toISOString());
+        vi.restoreAllMocks();
       });
 
       it('throws when the refresh response is missing an access or refresh token', async () => {

@@ -17,9 +17,12 @@ export class ShopifyComplianceMonitorController {
 
   @Get()
   async status(@Res({ passthrough: true }) reply: FastifyReply) {
-    const { count, quarantinedWebhooks, overdue, nearDeadline, payloadExpired, oldestReceivedAt } =
+    const { count, quarantinedWebhooks, overdue, nearDeadline, payloadExpired, oldestReceivedAt, credentials } =
       await this.complianceService.openIssues();
-    const healthy = count === 0 && quarantinedWebhooks === 0;
+    // A transient renewal failure alone is not an alert (the next daily keep-alive retries); it escalates through
+    // `expiringSoon` if it keeps failing for ~3 weeks.
+    const credentialsHealthy = credentials.reauthorizationRequired === 0 && credentials.expired === 0 && credentials.expiringSoon === 0;
+    const healthy = count === 0 && quarantinedWebhooks === 0 && credentialsHealthy;
     reply.header('Cache-Control', 'no-store');
     reply.status(healthy ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE);
     return {
@@ -32,6 +35,9 @@ export class ShopifyComplianceMonitorController {
       nearDeadline,
       payloadExpired,
       oldestOpenReceivedAt: oldestReceivedAt?.toISOString() ?? null,
+      // Live Shopify connections: refresh token refused (merchant must reconnect), lapsed, lapsing within 7 days, or
+      // last renewal failed transiently.
+      credentials,
     };
   }
 }

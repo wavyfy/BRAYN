@@ -71,6 +71,18 @@ export const integrations = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
+    /**
+     * When the stored refresh token stops working (Shopify: 90 days from issue; each refresh issues a new one). Not
+     * secret — a copy of the encrypted credential's `refreshTokenExpiresAt`, kept in plaintext so monitoring can see an
+     * expiring credential without the encryption key. Null = unknown (legacy credential) or no refresh token.
+     */
+    credentialRefreshExpiresAt: timestamp('credential_refresh_expires_at', { withTimezone: true }),
+    /**
+     * Last credential renewal failure: `reauthorization_required` (Shopify answered 401 — final; no further refresh is
+     * attempted until the merchant reconnects) or `renewal_failed` (transient; retried by the next keep-alive). Cleared
+     * by every successful credential write. Never changes `status`: a failed renewal does not disconnect the store.
+     */
+    credentialRenewalError: text('credential_renewal_error'),
     /** Set when a sync completes successfully (doc 06 — state must be observable). Null until the first sync. */
     lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
     /** Set when a sync fails; cleared on connect/reconnect/successful sync. */

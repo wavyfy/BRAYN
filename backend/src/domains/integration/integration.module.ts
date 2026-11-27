@@ -17,6 +17,7 @@ import { ReconciliationRunService } from './reconciliation-run.service';
 import { ReconciliationProcessorService } from './reconciliation-processor.service';
 import { SyncProcessorService } from './sync-processor.service';
 import { ShopifyAdapter } from './providers/shopify/shopify.adapter';
+import { ShopifyCredentialKeepAliveService } from './providers/shopify/shopify-credential-keepalive.service';
 import { ShopifyOAuthService } from './providers/shopify/shopify-oauth.service';
 import { ShopifyOAuthHandoffService } from './providers/shopify/shopify-oauth-handoff.service';
 import { ShopifyOAuthHandoffGuard } from './providers/shopify/shopify-oauth-handoff.guard';
@@ -97,6 +98,7 @@ import { ShopifyWebhookMigrationGuard } from './providers/shopify/shopify-webhoo
     CheckoutSessionService,
     ShopifyWebhookMigrationService,
     ShopifyWebhookMigrationGuard,
+    ShopifyCredentialKeepAliveService,
   ],
   exports: [
     IntegrationService,
@@ -105,6 +107,7 @@ import { ShopifyWebhookMigrationGuard } from './providers/shopify/shopify-webhoo
     WebhookIngestService,
     IntegrationHealthService,
     ReconciliationRunService,
+    ShopifyCredentialKeepAliveService,
   ],
 })
 export class IntegrationModule {}

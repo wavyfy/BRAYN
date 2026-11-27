@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { ShopifyCredentialKeepAliveService } from '../integration/providers/shopify/shopify-credential-keepalive.service';
 import { and, desc, eq, gte } from 'drizzle-orm';
 import { DatabaseService } from '../../database/database.service';
 import { intelligenceDailyRuns } from '../../database/schema/intelligence-daily-runs';
@@ -101,6 +102,7 @@ export class IntelligenceDailyRunService {
     private readonly revenueOpportunityService: RevenueOpportunityService,
     private readonly recommendationService: RecommendationService,
     private readonly logger: StructuredLoggerService,
+    @Optional() private readonly shopifyCredentialKeepAlive?: ShopifyCredentialKeepAliveService,
   ) {}
 
   /** Starts a run unless one is active or today already succeeded; the work continues after this returns. */
@@ -231,6 +233,18 @@ export class IntelligenceDailyRunService {
       // like every Sentry event). No-op when Sentry isn't configured.
       captureException(error);
       retentionError = `${RETENTION_ERROR_PREFIX}${error instanceof Error ? error.message : String(error)}`.slice(0, 500);
+    }
+
+    // Shopify credential keep-alive rides on the same daily job, in this runtime (it holds the credential key). Per-store
+    // failures are recorded on the integration and alerted by the Shopify monitor; they never fail the intelligence run.
+    try {
+      await this.shopifyCredentialKeepAlive?.run(new Date());
+    } catch (error) {
+      this.logger.event('error', 'Shopify credential keep-alive could not run', 'IntelligenceDailyRunService', {
+        runId: run.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      captureException(error);
     }
 
     try {

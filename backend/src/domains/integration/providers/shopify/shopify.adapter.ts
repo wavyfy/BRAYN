@@ -1,7 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { Injectable, type OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ProviderError } from '../../../../common/errors/app-error';
+import { CredentialRevokedError, ProviderError } from '../../../../common/errors/app-error';
 import { ProviderRegistry } from '../../provider-registry.service';
 import type {
   CollectionPage,
@@ -652,6 +652,8 @@ export async function requestShopifyClientCredentialsToken(
   return { accessToken: body.access_token, expiresIn: body.expires_in ?? 86399 };
 }
 
+const SHOPIFY_REFRESH_TIMEOUT_MS = 15_000;
+
 /** Tags a stored credential as having come from the standalone-app authorization-code grant (doc 20 Part 28) — see ShopifyOAuthService.handleCallback and ShopifyAdapter.refreshCredentials. */
 export const SHOPIFY_AUTHORIZATION_CODE_GRANT_TYPE = 'authorization_code';
 
@@ -670,10 +672,12 @@ async function requestShopifyRefreshedToken(
   clientId: string,
   clientSecret: string,
   refreshToken: string,
-): Promise<{ accessToken: string; refreshToken: string; expiresIn: number }> {
+): Promise<{ accessToken: string; refreshToken: string; expiresIn: number; refreshTokenExpiresIn: number | null }> {
   const response = await fetch(`https://${shopDomain}/admin/oauth/access_token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    // Bounded: the caller holds the per-integration refresh lock (and a DB transaction) while this runs.
+    signal: AbortSignal.timeout(SHOPIFY_REFRESH_TIMEOUT_MS),
     body: new URLSearchParams({
       grant_type: 'refresh_token',
       client_id: clientId,
@@ -682,7 +686,12 @@ async function requestShopifyRefreshedToken(
     }).toString(),
   });
 
+  if (response.status === 401) {
+    // shopify.dev: 401 = the refresh token is unknown, already replaced, expired or revoked — final, stop retrying.
+    throw new CredentialRevokedError();
+  }
   if (!response.ok) {
+    // 5xx / 429 / other: transient — shopify.dev: "safe to retry with the same refresh_token".
     throw new ProviderError('Shopify rejected the refresh token request.');
   }
 
@@ -697,7 +706,12 @@ async function requestShopifyRefreshedToken(
   }
 
   // shopify.dev: access tokens from this grant expire in 1 hour (3600s) — falling back only if a future response omits the field.
-  return { accessToken: body.access_token, refreshToken: body.refresh_token, expiresIn: body.expires_in ?? 3600 };
+  return {
+    accessToken: body.access_token,
+    refreshToken: body.refresh_token,
+    expiresIn: body.expires_in ?? 3600,
+    refreshTokenExpiresIn: typeof body.refresh_token_expires_in === 'number' ? body.refresh_token_expires_in : null,
+  };
 }
 
 interface ShopifyCustomer {
@@ -1047,6 +1061,10 @@ export class ShopifyAdapter implements ProviderAdapter, OnModuleInit {
         refreshToken: refreshed.refreshToken,
         grantType: SHOPIFY_AUTHORIZATION_CODE_GRANT_TYPE,
         expiresAt: new Date(Date.now() + refreshed.expiresIn * 1000).toISOString(),
+        // Each refresh issues a new refresh token with a new 90-day expiry (shopify.dev); the keep-alive renews before it.
+        ...(refreshed.refreshTokenExpiresIn !== null
+          ? { refreshTokenExpiresAt: new Date(Date.now() + refreshed.refreshTokenExpiresIn * 1000).toISOString() }
+          : {}),
       };
     }
 
