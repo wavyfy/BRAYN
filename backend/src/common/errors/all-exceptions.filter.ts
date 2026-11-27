@@ -29,6 +29,19 @@ const STATUS_TO_CODE: Partial<Record<number, ErrorCode>> = {
   [HttpStatus.SERVICE_UNAVAILABLE]: ErrorCode.SERVICE_UNAVAILABLE,
 };
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A malformed id in the URL (e.g. /workspaces/not-a-uuid): Postgres rejected a uuid cast (22P02 — DatabaseService
+ * already unwraps drizzle's query error) and the route has a path param that is not a uuid. Any other invalid uuid
+ * cast is a server bug and stays a 500.
+ */
+function isMalformedPathId(exception: unknown, params: unknown): boolean {
+  const pg = exception as { code?: unknown; message?: unknown } | null;
+  if (pg?.code !== '22P02' || typeof pg.message !== 'string' || !pg.message.includes('type uuid')) return false;
+  return Object.values((params ?? {}) as Record<string, unknown>).some((v) => typeof v === 'string' && !UUID.test(v));
+}
+
 interface ErrorResponseBody {
   error: {
     code: ErrorCode;
@@ -86,6 +99,16 @@ export class AllExceptionsFilter implements ExceptionFilter {
         { code, requestId },
       );
       this.send(reply, status, { error: { code, message, requestId } });
+      return;
+    }
+
+    // F2: no resource can have a malformed id, so it is a clean 404 — never a 500. The cast fails before any row is
+    // read, so the workspace guard still answers 403 for every well-formed id the caller is not a member of.
+    if (isMalformedPathId(exception, request.params)) {
+      this.logger.event('warn', 'Malformed resource id', 'AllExceptionsFilter', { code: ErrorCode.NOT_FOUND, requestId });
+      this.send(reply, HttpStatus.NOT_FOUND, {
+        error: { code: ErrorCode.NOT_FOUND, message: 'The requested resource was not found.', requestId },
+      });
       return;
     }
 

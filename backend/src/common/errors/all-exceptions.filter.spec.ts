@@ -1,4 +1,4 @@
-import { BadRequestException, Controller, Get } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Param, Query } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -26,6 +26,13 @@ class ThrowingController {
   @Get('unknown')
   throwUnknown() {
     throw new Error('connection string: postgres://user:secret@host/db');
+  }
+
+  // Shape of a Postgres error after DatabaseService unwraps drizzle's wrapper (code + severity, value redacted).
+  @Get('pg/:id')
+  throwPgCast(@Param('id') id: string, @Query('type') type = 'uuid') {
+    void id;
+    throw Object.assign(new Error(`invalid input syntax for type ${type}: "[redacted]"`), { code: '22P02', severity: 'ERROR' });
   }
 
   @Get('unknown-with-pii')
@@ -103,5 +110,24 @@ describe('AllExceptionsFilter (e2e)', () => {
     expect(logged.trace).toContain('Upstream call for [redacted-email] failed using Bearer [redacted-token]');
     expect(JSON.stringify(logged)).not.toContain('jane@example.com');
     expect(JSON.stringify(logged)).not.toContain('sometoken123456789012345678901234');
+  });
+
+  describe('F2 — malformed id in the URL', () => {
+    it('a uuid cast failure on a malformed path id is a 404 NOT_FOUND, not a 500', async () => {
+      const res = await app.inject({ method: 'GET', url: '/test/pg/not-a-uuid' });
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toEqual({ error: { code: 'NOT_FOUND', message: 'The requested resource was not found.', requestId: expect.any(String) } });
+    });
+
+    it('stays a 500 when every path id is a well-formed uuid (a server bug, not a bad URL)', async () => {
+      const res = await app.inject({ method: 'GET', url: '/test/pg/6f1c1f8e-5a4e-4b8c-9f3e-2d1a0b9c8d7e' });
+      expect(res.statusCode).toBe(500);
+      expect(res.json().error.code).toBe('INTERNAL_ERROR');
+    });
+
+    it('stays a 500 for other invalid-input casts (not a uuid)', async () => {
+      const res = await app.inject({ method: 'GET', url: '/test/pg/not-a-uuid?type=integer' });
+      expect(res.statusCode).toBe(500);
+    });
   });
 });
