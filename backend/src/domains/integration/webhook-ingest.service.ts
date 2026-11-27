@@ -114,7 +114,9 @@ export class WebhookIngestService {
         integrationId: integration.id,
         externalEventId: parsed.externalEventId,
         eventType: parsed.eventType,
-        payload: parsed.payload,
+        // A quarantined payload may be another store's customer data: sealed with the credential key (readable only in
+        // the production runtime), with the received shop kept beside it for the release check.
+        payload: quarantine ? this.integrationService.sealJson(parsed.payload, { shop: parsed.store?.domain ?? '' }) : parsed.payload,
         ...(quarantine ? { status: 'quarantined' as const, error: quarantine } : {}),
       })
       .onConflictDoNothing({ target: [integrationWebhookEvents.integrationId, integrationWebhookEvents.externalEventId] })
@@ -170,6 +172,20 @@ export class WebhookIngestService {
    */
   async releaseQuarantined(webhookEventId: string): Promise<{ status: 'accepted' }> {
     const t = integrationWebhookEvents;
+    const [held] = await this.database.client
+      .select({ payload: t.payload, shopDomain: integrations.shopDomain, shopDomainAliases: integrations.shopDomainAliases, status: integrations.status })
+      .from(t)
+      .innerJoin(integrations, eq(integrations.id, t.integrationId))
+      .where(and(eq(t.id, webhookEventId), eq(t.status, 'quarantined')))
+      .limit(1);
+    if (!held) {
+      throw new NotFoundError('No quarantined webhook event with that id.');
+    }
+    // Release is not an override: the received shop must now be this integration's store (or a verified alias).
+    const shop = (held.payload as { meta?: { shop?: unknown } } | null)?.meta?.shop;
+    if (held.status === 'disconnected' || typeof shop !== 'string' || !shop || !isStoreDomainOf(held, shop)) {
+      throw new ConflictError('This delivery\'s shop is still not the integration\'s store; record a verified alias first.');
+    }
     const [released] = await this.database.client
       .update(t)
       .set({ status: 'pending', retryCount: 0, nextAttemptAt: sql`now()`, error: null })

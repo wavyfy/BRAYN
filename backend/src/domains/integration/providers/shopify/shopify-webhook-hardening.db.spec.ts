@@ -2,7 +2,7 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, like } from 'drizzle-orm';
 import { AppModule } from '../../../../app.module';
 import { DatabaseService } from '../../../../database/database.service';
 import { workspaces } from '../../../../database/schema/workspaces';
@@ -19,6 +19,9 @@ import {
   applyCompliancePayloadRetention,
   complianceOpenIssueCounts,
 } from './shopify-compliance-retention';
+import { ShopifyComplianceService } from './shopify-compliance.service';
+import { ShopifyUninstallService } from './shopify-uninstall.service';
+import { shopifyComplianceWebhooks } from '../../../../database/schema/shopify-compliance-webhooks';
 import type { Env } from '../../../../config/env.schema';
 
 /**
@@ -69,6 +72,9 @@ describe('Shopify business webhook hardening (real DB)', { timeout: 60_000 }, ()
 
   afterAll(async () => {
     if (db?.isConfigured() && workspaceIds.length > 0) {
+      await db.client
+        .delete(shopifyComplianceWebhooks)
+        .where(like(shopifyComplianceWebhooks.shopDomain, 'hardening-%'));
       await db.client
         .delete(integrationWebhookEvents)
         .where(inArray(integrationWebhookEvents.workspaceId, workspaceIds));
@@ -272,21 +278,129 @@ describe('Shopify business webhook hardening (real DB)', { timeout: 60_000 }, ()
         ),
       ).toMatchObject({ status: 'quarantined' });
 
-      // Operator confirms the domain is A's alias (legacy/renamed store), then releases the held delivery.
-      expect(await integrationService.addShopDomainAlias(a.workspaceId, shopB.toUpperCase())).toBe(
-        true,
+      // The quarantined payload is sealed (no customer data readable in the row).
+      expect(JSON.stringify(row.payload)).not.toContain('b-customer@x.com');
+      expect(row.payload).toMatchObject({
+        v: 1,
+        ciphertext: expect.any(String),
+        meta: { shop: shopB },
+      });
+
+      // B's domain belongs to another workspace: it can never become A's alias, and the delivery can't be released.
+      const evidence = 'Shopify admin Settings > Domains lists this myshopify domain for the store';
+      await expect(
+        integrationService.addShopDomainAlias(a.workspaceId, shopB, evidence),
+      ).rejects.toMatchObject({ code: 'CONFLICT' });
+      await expect(ingest.releaseQuarantined(row.id)).rejects.toMatchObject({ code: 'CONFLICT' });
+      expect(await customerRow(a.workspaceId, '21')).toBeUndefined();
+    });
+
+    it('a renamed store: release is refused until a verified alias exists, then the held delivery is processed once', async () => {
+      const [shop, renamed] = [newShop(), newShop()];
+      const a = await store(shop);
+      await deliver(
+        a.workspaceId,
+        customerDelivery(renamed, { id: 24, email: 'r@x.com', updated_at: '2026-01-01T00:00:00Z' }),
       );
+      const [row] = await db.client
+        .select()
+        .from(integrationWebhookEvents)
+        .where(eq(integrationWebhookEvents.workspaceId, a.workspaceId));
+      expect(row.status).toBe('quarantined');
+      await expect(ingest.releaseQuarantined(row.id)).rejects.toMatchObject({ code: 'CONFLICT' });
+      await expect(
+        integrationService.addShopDomainAlias(a.workspaceId, renamed, 'redirect'),
+      ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+
+      expect(
+        await integrationService.addShopDomainAlias(
+          a.workspaceId,
+          renamed.toUpperCase(),
+          'Shopify admin Settings > Domains shows this domain for the store',
+        ),
+      ).toBe(true);
       await ingest.releaseQuarantined(row.id);
       await processor.processDue(10, { workspaceId: a.workspaceId });
-      expect((await customerRow(a.workspaceId, '21'))?.email).toBe('b-customer@x.com');
-      // …and later deliveries under that alias are accepted directly.
+      expect((await customerRow(a.workspaceId, '24'))?.email).toBe('r@x.com');
+      await expect(ingest.releaseQuarantined(row.id)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      // Later deliveries under the alias are accepted directly.
       expect(
         await deliver(
           a.workspaceId,
-          customerDelivery(shopB, { id: 23, email: 'y@x.com', updated_at: '2026-01-01T00:00:00Z' }),
+          customerDelivery(renamed, {
+            id: 25,
+            email: 's@x.com',
+            updated_at: '2026-01-01T00:00:00Z',
+          }),
         ),
       ).toMatchObject({ status: 'accepted' });
-      await expect(ingest.releaseQuarantined(row.id)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    });
+
+    it('a delivery with no shop header can never be released', async () => {
+      const shop = newShop();
+      const a = await store(shop);
+      await deliver(
+        a.workspaceId,
+        customerDelivery(undefined, {
+          id: 26,
+          email: 'n@x.com',
+          updated_at: '2026-01-01T00:00:00Z',
+        }),
+      );
+      const [row] = await db.client
+        .select()
+        .from(integrationWebhookEvents)
+        .where(eq(integrationWebhookEvents.workspaceId, a.workspaceId));
+      expect(row).toMatchObject({ status: 'quarantined', error: 'store_missing: received (none)' });
+      await expect(ingest.releaseQuarantined(row.id)).rejects.toMatchObject({ code: 'CONFLICT' });
+    });
+
+    it('compliance redaction and uninstall reach a store through its verified alias, and only that store', async () => {
+      const [shop, alias, other] = [newShop(), newShop(), newShop()];
+      const a = await store(shop);
+      const o = await store(other);
+      await integrationService.addShopDomainAlias(
+        a.workspaceId,
+        alias,
+        'Shopify admin Settings > Domains shows this domain for the store',
+      );
+      await deliver(
+        a.workspaceId,
+        customerDelivery(shop, { id: 27, email: 'c@x.com', updated_at: '2026-01-01T00:00:00Z' }),
+      );
+      await deliver(
+        o.workspaceId,
+        customerDelivery(other, { id: 27, email: 'o@x.com', updated_at: '2026-01-01T00:00:00Z' }),
+      );
+
+      const compliance = moduleRef.get(ShopifyComplianceService);
+      const body = JSON.stringify({
+        shop_domain: alias,
+        customer: { id: 27 },
+        orders_to_redact: [],
+      });
+      await compliance.handle('customers/redact', body, {
+        'x-shopify-hmac-sha256': sign(body),
+        'x-shopify-webhook-id': `wh-${randomUUID()}`,
+      });
+      expect(await customerRow(a.workspaceId, '27')).toBeUndefined();
+      expect((await customerRow(o.workspaceId, '27'))?.email).toBe('o@x.com');
+
+      const uninstallBody = JSON.stringify({ myshopify_domain: alias });
+      await moduleRef.get(ShopifyUninstallService).handle(uninstallBody, {
+        'x-shopify-topic': 'app/uninstalled',
+        'x-shopify-shop-domain': alias,
+        'x-shopify-hmac-sha256': sign(uninstallBody),
+      });
+      const status = async (ws: string) =>
+        (
+          await db.client
+            .select({ s: integrations.status })
+            .from(integrations)
+            .where(eq(integrations.workspaceId, ws))
+        )[0].s;
+      expect(await status(a.workspaceId)).toBe('disconnected');
+      expect(await status(o.workspaceId)).toBe('connected');
     });
 
     it('a legacy integration (BIBA-like: no shop id) keeps working for its stored domain, case-insensitively', async () => {
@@ -336,6 +450,26 @@ describe('Shopify business webhook hardening (real DB)', { timeout: 60_000 }, ()
         ),
       ).toMatchObject({ status: 'accepted' });
     });
+  });
+
+  it('D3: a connect-time alias that another workspace already has is not recorded', async () => {
+    const taken = newShop();
+    await store(taken);
+    const workspaceId = randomUUID();
+    workspaceIds.push(workspaceId);
+    await db.client.insert(workspaces).values({ id: workspaceId, name: 'Webhook hardening spec' });
+    await integrationService.connectStore(
+      workspaceId,
+      'shopify',
+      { shopDomain: newShop(), accessToken: 't' },
+      undefined,
+      taken,
+    );
+    const [row] = await db.client
+      .select()
+      .from(integrations)
+      .where(eq(integrations.workspaceId, workspaceId));
+    expect(row.shopDomainAliases).toEqual([]);
   });
 
   it('D3 retention: a quarantined payload is cleared after 30 days while the row stays quarantined (still alerted)', async () => {

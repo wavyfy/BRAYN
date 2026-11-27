@@ -65,6 +65,7 @@ function makeDeps(overrides: {
 
   const integrationService = {
     getStoredCredentials: vi.fn(async () => (overrides.credentials === undefined ? { webhookSecret: 'shh' } : overrides.credentials)),
+    sealJson: vi.fn((value: unknown, meta: Record<string, string>) => ({ v: 1, ciphertext: 'sealed', meta })),
     // The refreshing read must never be used by webhook ingestion (a delivery must not rotate a token).
     getCredentials: vi.fn(async () => {
       throw new Error('getCredentials (refresh-on-read) must not be called by webhook ingestion');
@@ -245,6 +246,7 @@ describe('WebhookIngestService', () => {
     expect((insertChain.values as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
       status: 'quarantined',
       error: 'store_mismatch: received other.myshopify.com',
+      payload: { v: 1, ciphertext: 'sealed', meta: { shop: 'other.myshopify.com' } },
     });
     expect(eventBus.emit).not.toHaveBeenCalled();
   });

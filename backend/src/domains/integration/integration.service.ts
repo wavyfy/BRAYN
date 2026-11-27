@@ -223,6 +223,28 @@ export class IntegrationService {
       .orderBy(integrations.createdAt, integrations.id);
   }
 
+  /** Any other workspace's Shopify row (any status) whose domain or alias is `domain`. */
+  private async isDomainUsedElsewhere(workspaceId: string, domain: string): Promise<boolean> {
+    return (await this.selectShopifyIdentityRows(domain)).some((row) => row.workspaceId !== workspaceId);
+  }
+
+  /**
+   * Seals a JSON value with the credential key (AES-256-GCM) for storage, keeping a non-secret `meta` beside it; the
+   * value can only be opened inside the production runtime. Used for quarantined webhook payloads.
+   */
+  sealJson(value: unknown, meta: Record<string, string> = {}): { v: 1; ciphertext: string; meta: Record<string, string> } {
+    return { v: 1, ciphertext: encryptCredential(JSON.stringify(value), this.resolveEncryptionKey()), meta };
+  }
+
+  /** The value of a `sealJson` payload, or `undefined` when `stored` is not sealed. */
+  openSealedJson(stored: unknown): unknown {
+    const sealed = stored as { v?: unknown; ciphertext?: unknown } | null;
+    if (sealed?.v !== 1 || typeof sealed.ciphertext !== 'string') {
+      return undefined;
+    }
+    return JSON.parse(decryptCredential(sealed.ciphertext, this.resolveEncryptionKey()));
+  }
+
   private async holdsCommerceData(workspaceId: string, integrationId: string): Promise<boolean> {
     const [customer] = await this.database.client
       .select({ id: commerceCustomers.id })
@@ -255,8 +277,11 @@ export class IntegrationService {
   ): Promise<'ok' | 'owned_elsewhere'> {
     const encrypted = encryptCredential(JSON.stringify(credentials), this.resolveEncryptionKey());
     const shopDomain = credentials.shopDomain ? credentials.shopDomain.toLowerCase() : null;
-    // Shopify's current myshopify domain, when it differs from the one connected (a renamed store).
-    const alias = domainAlias && domainAlias.toLowerCase() !== shopDomain ? domainAlias.toLowerCase() : undefined;
+    // Shopify's current myshopify domain, when it differs from the one connected (a renamed store) — reported by Shopify
+    // for this token's own store, but never recorded if another workspace already has that domain.
+    const candidate = domainAlias && domainAlias.toLowerCase() !== shopDomain ? domainAlias.toLowerCase() : undefined;
+    const alias = candidate && !(await this.isDomainUsedElsewhere(workspaceId, candidate)) ? candidate : undefined;
+
     const reconnecting = sql`${integrations.status} = 'disconnected'`;
     try {
       await this.database.transaction(async (tx) => {
@@ -1091,11 +1116,23 @@ export class IntegrationService {
     return JSON.parse(decryptCredential(existing.credentials, this.resolveEncryptionKey())) as Record<string, string>;
   }
 
-  /** Ops: records an operator-confirmed alias domain of one Shopify integration's store. */
-  async addShopDomainAlias(workspaceId: string, domain: string): Promise<boolean> {
+  /**
+   * Ops: records an operator-confirmed alias domain of one Shopify integration's store. Requires written evidence that
+   * Shopify itself identifies the domain with this store (e.g. the store's Shopify admin domain settings, or the
+   * `myshopifyDomain` the store's own token returns) — a storefront redirect alone is not enough. Refused when any other
+   * workspace's Shopify row (any status) has that domain or alias: an alias must never make two workspaces hold one
+   * store (compliance erasure would reach both; webhooks would be accepted into the wrong one).
+   */
+  async addShopDomainAlias(workspaceId: string, domain: string, evidence: string): Promise<boolean> {
     const d = domain.toLowerCase();
     if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(d)) {
       throw new ValidationError('Not a myshopify.com domain.');
+    }
+    if (evidence.trim().length < 20) {
+      throw new ValidationError('Describe the Shopify evidence that this domain is the same store (at least 20 characters).');
+    }
+    if (await this.isDomainUsedElsewhere(workspaceId, d)) {
+      throw new ConflictError('That domain belongs to another workspace\'s Shopify connection; it cannot be an alias here.');
     }
     const [row] = await this.database.client
       .update(integrations)

@@ -20,7 +20,7 @@ import { ShopifyComplianceService } from '../domains/integration/providers/shopi
  *   replay <webhookId>                     reprocess a stored delivery (idempotent)
  *   resolve <webhookId> <note…>            close an exception handled outside BRAYN (clears its payload)
  *   quarantined                            Shopify business webhooks held for a shop that isn't the integration's store
- *   add-shop-alias <workspaceId> <domain>  record an operator-confirmed myshopify alias of that workspace's store
+ *   add-shop-alias <ws> <domain> <evidence…>  record a Shopify-verified alias of that workspace's store (evidence required)
  *   release-webhook <webhookEventId>       process one quarantined delivery (after confirming it is this store's)
  *   shop-ids                               Shopify rows without a stable shop id, and whether their token is expired
  *   backfill-shop-id <workspaceId> --apply ONE read-only Admin API call `{ shop { id myshopifyDomain } }`; if the
@@ -85,14 +85,20 @@ async function main() {
         );
         return;
       }
-      case 'add-shop-alias':
+      case 'add-shop-alias': {
+        // Evidence (operator text, no secrets) is required and echoed for the change record (doc30).
+        const [workspaceId, domain, ...evidence] = args;
+        const note = required(evidence.join(' '), 'evidence');
+        console.log({ workspaceId, domain, evidence: note });
         console.log({
           updated: await integrationService.addShopDomainAlias(
-            required(args[0], 'workspaceId'),
-            required(args[1], 'domain'),
+            required(workspaceId, 'workspaceId'),
+            required(domain, 'domain'),
+            note,
           ),
         });
         return;
+      }
       case 'release-webhook':
         console.log(
           await app
