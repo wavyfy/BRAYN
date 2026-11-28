@@ -74,7 +74,7 @@ export function evaluateDailyRunFreshness(
 /**
  * Daily intelligence run (doc10 — "Daily recalculation as a consistency
  * mechanism"; Milestone #5 D2/D3/D5 daily part). Triggered by an external
- * scheduler (Render Cron Job, `0 2,8,14,20 * * *`) through the internal
+ * scheduler (`.github/workflows/daily-intelligence-run.yml`) through the internal
  * endpoint — no in-process cron (D2).
  *
  * For every non-merged canonical customer, in its own workspace:
@@ -208,6 +208,9 @@ export class IntelligenceDailyRunService {
       if (kept.length === 0) throw new Error('Lease lost — this run was expired by another start.');
       lastBeat = Date.now();
     };
+    // The maintenance steps below can be slow and run before the first customer heartbeat. Refresh the lease between them;
+    // a lost lease is still detected (and stops the run) by the heartbeats in the customer loop.
+    const refreshLease = () => beat().catch(() => undefined);
 
     // Checkout-signal privacy maintenance rides on this existing daily job (no new scheduler). Its failure is logged,
     // sent to Sentry and recorded on the run row (`error`, RETENTION_ERROR_PREFIX) so the freshness check reports it —
@@ -234,6 +237,7 @@ export class IntelligenceDailyRunService {
       captureException(error);
       retentionError = `${RETENTION_ERROR_PREFIX}${error instanceof Error ? error.message : String(error)}`.slice(0, 500);
     }
+    await refreshLease();
 
     // Shopify credential keep-alive rides on the same daily job, in this runtime (it holds the credential key). Per-store
     // failures are recorded on the integration and alerted by the Shopify monitor; they never fail the intelligence run.
@@ -246,6 +250,7 @@ export class IntelligenceDailyRunService {
       });
       captureException(error);
     }
+    await refreshLease();
 
     try {
       let after: { workspaceId: string; id: string } | null = null;
