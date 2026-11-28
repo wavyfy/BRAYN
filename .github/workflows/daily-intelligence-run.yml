@@ -13,8 +13,9 @@ name: Daily intelligence run
 
 on:
   schedule:
-    # Off the top of the hour (GitHub delays/drops :00 schedules under load — Nov 24–25, 2026); still 4 slots/day.
-    - cron: '17 2,8,14,20 * * *' # UTC
+    # Off the top of the hour (GitHub delays/drops :00 schedules under load — Nov 24–25, 2026). 04:17 is a second
+    # chance before the monitor's 06:00Z freshness deadline; a slot after the day has succeeded does nothing.
+    - cron: '17 2,4,8,14,20 * * *' # UTC
   workflow_dispatch:
 
 permissions: {}

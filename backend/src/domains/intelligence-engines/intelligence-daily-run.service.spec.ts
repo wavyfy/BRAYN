@@ -63,6 +63,35 @@ function setup(pages: { workspaceId: string; id: string }[][], findCurrent: (id:
 }
 
 describe('IntelligenceDailyRunService.execute()', () => {
+  it('heartbeats after retention and after the keep-alive, so slow maintenance does not look stalled', async () => {
+    const t = setup([keys(1)]);
+    const heartbeats = () => t.sets.filter((values) => 'heartbeatAt' in values).length;
+    let beforeKeepAlive = -1;
+    let beforeCustomers = -1;
+    t.keepAlive.run.mockImplementationOnce(async () => {
+      beforeKeepAlive = heartbeats();
+      return {};
+    });
+    t.listActiveCustomerKeys.mockReset().mockImplementationOnce(async () => {
+      beforeCustomers = heartbeats();
+      return keys(1);
+    });
+
+    await t.service.execute(run);
+
+    expect(beforeKeepAlive).toBe(1);
+    expect(beforeCustomers).toBe(2);
+  });
+
+  it('never throws when a maintenance heartbeat finds the lease already taken', async () => {
+    const t = setup([keys(1)]);
+    t.lease.rows = [];
+
+    await expect(t.service.execute(run)).resolves.toBeUndefined();
+
+    expect(t.final()).toMatchObject({ status: 'failed', error: expect.stringContaining('Lease lost') });
+  });
+
   it('runs the Shopify credential keep-alive once per run; its failure never fails the intelligence run', async () => {
     const t = setup([keys(1)]);
     t.keepAlive.run.mockRejectedValueOnce(new Error('credential key not configured'));
@@ -124,8 +153,8 @@ describe('IntelligenceDailyRunService.execute()', () => {
     expect(t.listActiveCustomerKeys).toHaveBeenNthCalledWith(1, null, DAILY_RUN_PAGE_SIZE);
     expect(t.listActiveCustomerKeys).toHaveBeenNthCalledWith(2, first.at(-1), DAILY_RUN_PAGE_SIZE);
     expect(t.listActiveCustomerKeys).toHaveBeenCalledTimes(2);
-    expect(t.sets).toHaveLength(3); // two heartbeats + final
-    expect(t.sets[0]).toMatchObject({ customersProcessed: DAILY_RUN_PAGE_SIZE, heartbeatAt: expect.any(Date) });
+    expect(t.sets).toHaveLength(5); // two maintenance heartbeats + one per page + final
+    expect(t.sets[2]).toMatchObject({ customersProcessed: DAILY_RUN_PAGE_SIZE, heartbeatAt: expect.any(Date) });
     expect(t.final()).toMatchObject({ status: 'succeeded', customersProcessed: DAILY_RUN_PAGE_SIZE + 3 });
   });
 
@@ -185,7 +214,7 @@ describe('IntelligenceDailyRunService.execute() — heartbeat/lease', () => {
 
       await t.service.execute(run);
 
-      expect(t.sets).toHaveLength(5); // 3 per-customer heartbeats + page-end heartbeat + final
+      expect(t.sets).toHaveLength(7); // 2 maintenance + 3 per-customer heartbeats + page-end heartbeat + final
     } finally {
       vi.useRealTimers();
     }
